@@ -1,22 +1,61 @@
 import React, { useState } from 'react';
 import { 
-  ShieldCheck, 
   Lock, 
   User, 
   Eye, 
   EyeOff, 
-  Sparkles, 
-  CheckCircle2, 
   AlertCircle,
-  ArrowRight,
-  Crown,
-  Briefcase,
-  Headphones
+  ArrowRight
 } from 'lucide-react';
 import type { UserAccount } from '../types';
+import { loadUsersFromSupabase, autoSyncUserToSupabase } from '../utils/supabaseService';
 
 interface LoginViewProps {
   onLoginSuccess: (user: UserAccount, token: string) => void;
+}
+
+const FALLBACK_DEFAULT_USERS: UserAccount[] = [
+  {
+    id: 'usr_super_nelson',
+    nombre: 'Nelson',
+    username: 'nelson',
+    password: 'elmejor19',
+    whatsapp: '18496260800',
+    role: 'super_admin',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'usr_dueno_negocio',
+    nombre: 'Dueño Todo Lapto',
+    username: 'dueno',
+    password: 'dueno123',
+    whatsapp: '18094228738',
+    role: 'dueno',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'usr_empleado_ventas',
+    nombre: 'Asesor de Ventas',
+    username: 'empleado',
+    password: 'empleado123',
+    whatsapp: '18492588738',
+    role: 'empleado',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+];
+
+function matchUserInList(list: UserAccount[], rawUser: string): UserAccount | undefined {
+  const cleanUser = rawUser.trim().replace(/^@+/, '').toLowerCase();
+  const digitsOnly = cleanUser.replace(/\D/g, '');
+  return list.find(u => {
+    if ((u.username || '').toLowerCase().trim() === cleanUser) return true;
+    if ((u.nombre || '').toLowerCase().trim() === cleanUser) return true;
+    if (digitsOnly.length >= 10 && (u.whatsapp || '').replace(/\D/g, '').endsWith(digitsOnly.slice(-10))) return true;
+    return false;
+  });
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
@@ -28,7 +67,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
+    const cleanUsernameInput = username.trim().replace(/^@+/, '');
+    const cleanPasswordInput = password.trim();
+
+    if (!cleanUsernameInput || !cleanPasswordInput) {
       setErrorMessage('Por favor ingresa tu nombre de usuario y contraseña.');
       return;
     }
@@ -37,21 +79,87 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     setErrorMessage(null);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.trim(),
-          password: password.trim(),
-        }),
-      });
+      // 1. Primary authentication via Backend API (/api/auth/login)
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: cleanUsernameInput,
+            password: cleanPasswordInput,
+          }),
+        });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Error al iniciar sesión');
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json();
+          if (res.ok && data.success && data.user) {
+            onLoginSuccess(data.user, data.token || `vendema_tk_${data.user.id}_${Date.now()}`);
+            return;
+          }
+          // If deactivated, stop immediately
+          if (res.status === 403) {
+            throw new Error(data.message || 'Esta cuenta ha sido desactivada.');
+          }
+        }
+      } catch (apiErr: any) {
+        if (apiErr.message?.includes('desactivada')) {
+          throw apiErr;
+        }
+        // Otherwise proceed to direct Supabase + Fallback verification
       }
 
-      onLoginSuccess(data.user, data.token);
+      // 2. Direct Supabase Authentication Fallback (`public.usuarios` + Cloud Backup + Local Storage + Defaults)
+      const supabaseUsers = await loadUsersFromSupabase();
+      let localStoredUsers: UserAccount[] = [];
+      try {
+        const rawLocal = localStorage.getItem('vendema_local_users');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed)) localStoredUsers = parsed;
+        }
+      } catch {}
+
+      const combinedMap = new Map<string, UserAccount>();
+      for (const u of FALLBACK_DEFAULT_USERS) {
+        combinedMap.set(u.username.toLowerCase(), { ...u });
+      }
+      for (const u of localStoredUsers) {
+        if (u.username && u.password) {
+          combinedMap.set(u.username.toLowerCase(), { ...u });
+        }
+      }
+      for (const u of supabaseUsers) {
+        if (u.username && u.password) {
+          combinedMap.set(u.username.toLowerCase(), { ...u });
+        }
+      }
+
+      const combinedUsers = Array.from(combinedMap.values());
+      const found = matchUserInList(combinedUsers, cleanUsernameInput);
+
+      if (!found) {
+        throw new Error('Nombre de usuario no encontrado.');
+      }
+
+      if (!found.activo) {
+        throw new Error('Esta cuenta ha sido desactivada por el Super Administrador.');
+      }
+
+      if (found.password !== cleanPasswordInput) {
+        throw new Error('Contraseña incorrecta.');
+      }
+
+      const updatedUser: UserAccount = {
+        ...found,
+        lastLogin: new Date().toISOString(),
+      };
+
+      autoSyncUserToSupabase(updatedUser, combinedUsers).catch(() => {});
+
+      const { password: _pw, ...sanitizedUser } = updatedUser;
+      const token = `vendema_tk_${updatedUser.id}_${Date.now()}`;
+      onLoginSuccess(sanitizedUser as UserAccount, token);
     } catch (err: any) {
       setErrorMessage(err.message || 'Credenciales inválidas.');
     } finally {
@@ -171,4 +279,3 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     </div>
   );
 };
-

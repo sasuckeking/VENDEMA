@@ -198,12 +198,26 @@ export interface FollowUpReminder {
   notes?: string;
 }
 
+export type HolidayOverrideStatus = 'normal' | 'moved' | 'workday' | 'custom_holiday';
+
+export interface HolidayOverride {
+  id: string; // e.g. '2026-11-06' or 'custom-2026-11-10'
+  name: string; // e.g. 'Día de la Constitución'
+  originalDate: string; // 'YYYY-MM-DD'
+  status: HolidayOverrideStatus;
+  movedToDate?: string; // 'YYYY-MM-DD' when status === 'moved'
+  note?: string;
+  isCustom?: boolean;
+  updatedAt?: string;
+}
+
 export interface AppConfig {
   globalAiActive: boolean;
   aiProvider?: AIProviderConfig;
   odoo: OdooConfig;
   evolution: EvolutionConfig;
   supabase?: SupabaseConfig;
+  holidayOverrides?: HolidayOverride[];
 }
 
 export type UserRole = 'super_admin' | 'dueno' | 'empleado';

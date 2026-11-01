@@ -8,31 +8,78 @@ import {
   Headphones, 
   Phone, 
   MessageSquare, 
-  Lock, 
   Edit3, 
   Trash2, 
   CheckCircle2, 
   AlertCircle, 
   X, 
   RefreshCw,
-  ExternalLink,
   KeyRound,
-  Eye,
-  EyeOff,
-  LogOut
+  LogOut,
+  Database,
+  FileCode,
+  Copy,
+  Check,
+  Terminal
 } from 'lucide-react';
 import type { UserAccount, UserRole } from '../types';
+import { 
+  loadUsersFromSupabase, 
+  autoSyncUserToSupabase, 
+  deleteUserFromSupabase, 
+  syncAllUsersToSupabase,
+  getSupabaseSchemaSql 
+} from '../utils/supabaseService';
 
 interface UsersViewProps {
   currentUser: UserAccount;
   onLogout?: () => void;
 }
 
+const DEFAULT_FALLBACK_USERS: UserAccount[] = [
+  {
+    id: 'usr_super_nelson',
+    nombre: 'Nelson',
+    username: 'nelson',
+    password: 'elmejor19',
+    whatsapp: '18496260800',
+    role: 'super_admin',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'usr_dueno_negocio',
+    nombre: 'Dueño Todo Lapto',
+    username: 'dueno',
+    password: 'dueno123',
+    whatsapp: '18094228738',
+    role: 'dueno',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'usr_empleado_ventas',
+    nombre: 'Asesor de Ventas',
+    username: 'empleado',
+    password: 'empleado123',
+    whatsapp: '18492588738',
+    role: 'empleado',
+    activo: true,
+    createdAt: new Date().toISOString(),
+  },
+];
+
 export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) => {
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  // SQL Modal State
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+  const schemaSql = getSupabaseSchemaSql();
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -57,11 +104,50 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/users');
-      const data = await res.json();
-      if (data.success && data.users) {
-        setUsers(data.users);
+      let apiUsers: UserAccount[] = [];
+      try {
+        const res = await fetch('/api/users');
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.users)) {
+            apiUsers = data.users;
+          }
+        }
+      } catch {}
+
+      const supaUsers = await loadUsersFromSupabase();
+      let localStored: UserAccount[] = [];
+      try {
+        const raw = localStorage.getItem('vendema_local_users');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localStored = parsed;
+        }
+      } catch {}
+
+      const mergedMap = new Map<string, UserAccount>();
+      for (const u of DEFAULT_FALLBACK_USERS) {
+        mergedMap.set(u.username.toLowerCase(), { ...u });
       }
+      for (const u of localStored) {
+        if (u.username) mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
+      }
+      for (const u of supaUsers) {
+        if (u.username) mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
+      }
+      for (const u of apiUsers) {
+        if (u.username) {
+          const existing = mergedMap.get(u.username.toLowerCase());
+          mergedMap.set(u.username.toLowerCase(), { ...existing, ...u, password: existing?.password || u.password });
+        }
+      }
+
+      const finalUsers = Array.from(mergedMap.values());
+      setUsers(finalUsers);
+      try {
+        localStorage.setItem('vendema_local_users', JSON.stringify(finalUsers));
+      } catch {}
     } catch (err: any) {
       setErrorMessage('Error al cargar la lista de usuarios: ' + err.message);
     } finally {
@@ -73,6 +159,24 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
     fetchUsers();
   }, []);
 
+  const handleManualSupabaseSync = async () => {
+    setIsSyncingSupabase(true);
+    setErrorMessage(null);
+    try {
+      const res = await syncAllUsersToSupabase(users);
+      if (res.error) {
+        setSuccessToast(`Usuarios respaldados en la nube (${res.synced}). Ejecuta el "Script SQL Tabla Usuarios" en Supabase para activar la tabla dedicada 'usuarios'.`);
+      } else {
+        setSuccessToast(`¡${res.synced} usuarios sincronizados directamente en la tabla 'usuarios' de Supabase!`);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message);
+    } finally {
+      setIsSyncingSupabase(false);
+      setTimeout(() => setSuccessToast(null), 5000);
+    }
+  };
+
   const openCreateModal = () => {
     setModalMode('create');
     setSelectedUser(null);
@@ -80,7 +184,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
     setFormUsername('');
     setFormPassword('');
     setFormWhatsapp('');
-    setFormRole(isSuperAdmin ? 'empleado' : 'empleado');
+    setFormRole('empleado');
     setFormActivo(true);
     setShowPassword(false);
     setErrorMessage(null);
@@ -112,45 +216,88 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
           throw new Error('Todos los campos son obligatorios: Nombre, Usuario, Contraseña y WhatsApp.');
         }
 
-        const res = await fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            nombre: formNombre.trim(),
-            username: formUsername.trim().toLowerCase(),
-            password: formPassword.trim(),
-            whatsapp: formWhatsapp.trim(),
-            role: formRole,
-          }),
-        });
+        const cleanU = formUsername.trim().replace(/^@+/, '').toLowerCase().replace(/\s+/g, '');
+        const newUserObj: UserAccount = {
+          id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          nombre: formNombre.trim(),
+          username: cleanU,
+          password: formPassword.trim(),
+          whatsapp: formWhatsapp.trim().replace(/[^\d+]/g, ''),
+          role: formRole,
+          activo: true,
+          createdAt: new Date().toISOString(),
+        };
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.message || 'Error al crear usuario');
+        // 1. Try Backend API
+        try {
+          const res = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nombre: newUserObj.nombre,
+              username: newUserObj.username,
+              password: newUserObj.password,
+              whatsapp: newUserObj.whatsapp,
+              role: newUserObj.role,
+            }),
+          });
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const data = await res.json();
+            if (!res.ok && data.message) {
+              throw new Error(data.message);
+            }
+            if (data.user?.id) {
+              newUserObj.id = data.user.id;
+            }
+          }
+        } catch (apiErr: any) {
+          if (apiErr.message?.includes('ya existe')) throw apiErr;
         }
 
-        setSuccessToast(data.message || 'Usuario creado correctamente.');
+        // 2. Sync to Supabase & LocalStorage directly as well
+        const updatedList = [...users.filter(u => u.username.toLowerCase() !== cleanU), newUserObj];
+        setUsers(updatedList);
+        try {
+          localStorage.setItem('vendema_local_users', JSON.stringify(updatedList));
+        } catch {}
+        await autoSyncUserToSupabase(newUserObj, updatedList);
+
+        setSuccessToast(`Usuario ${newUserObj.nombre} (@${newUserObj.username}) creado y sincronizado con Supabase.`);
         setIsModalOpen(false);
         fetchUsers();
       } else if (modalMode === 'edit' && selectedUser) {
-        const res = await fetch(`/api/users/${selectedUser.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            nombre: formNombre.trim(),
-            whatsapp: formWhatsapp.trim(),
-            role: formRole,
-            activo: formActivo,
-            ...(formPassword.trim() ? { password: formPassword.trim() } : {}),
-          }),
-        });
+        const updatedUserObj: UserAccount = {
+          ...selectedUser,
+          nombre: formNombre.trim(),
+          whatsapp: formWhatsapp.trim().replace(/[^\d+]/g, ''),
+          role: selectedUser.username.toLowerCase() === 'nelson' ? 'super_admin' : formRole,
+          activo: selectedUser.username.toLowerCase() === 'nelson' ? true : formActivo,
+          ...(formPassword.trim() ? { password: formPassword.trim() } : {}),
+        };
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.message || 'Error al actualizar usuario');
-        }
+        try {
+          await fetch(`/api/users/${selectedUser.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nombre: updatedUserObj.nombre,
+              whatsapp: updatedUserObj.whatsapp,
+              role: updatedUserObj.role,
+              activo: updatedUserObj.activo,
+              ...(formPassword.trim() ? { password: formPassword.trim() } : {}),
+            }),
+          });
+        } catch {}
 
-        setSuccessToast(data.message || 'Usuario actualizado correctamente.');
+        const updatedList = users.map(u => (u.id === selectedUser.id || u.username === selectedUser.username ? updatedUserObj : u));
+        setUsers(updatedList);
+        try {
+          localStorage.setItem('vendema_local_users', JSON.stringify(updatedList));
+        } catch {}
+        await autoSyncUserToSupabase(updatedUserObj, updatedList);
+
+        setSuccessToast(`Usuario ${updatedUserObj.nombre} actualizado y sincronizado con Supabase.`);
         setIsModalOpen(false);
         fetchUsers();
       }
@@ -158,31 +305,29 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
       setErrorMessage(err.message);
     } finally {
       setIsSubmitting(false);
-      setTimeout(() => setSuccessToast(null), 3500);
+      setTimeout(() => setSuccessToast(null), 4000);
     }
   };
 
   const handleDeleteUser = async (u: UserAccount) => {
     if (u.username.toLowerCase() === 'nelson') {
-      alert('No es posible eliminar al Super Administrador principal (nelson).');
-      return;
-    }
-
-    if (!confirm(`¿Estás seguro de que deseas eliminar al usuario @${u.username} (${u.nombre})?`)) {
+      setErrorMessage('No es posible eliminar al Super Administrador principal (nelson).');
       return;
     }
 
     try {
-      const res = await fetch(`/api/users/${u.id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Error al eliminar usuario');
-      }
+      await fetch(`/api/users/${u.id}`, { method: 'DELETE' }).catch(() => {});
+      const remaining = users.filter(item => item.id !== u.id && item.username !== u.username);
+      setUsers(remaining);
+      try {
+        localStorage.setItem('vendema_local_users', JSON.stringify(remaining));
+      } catch {}
+      await deleteUserFromSupabase(u, remaining);
 
-      setSuccessToast(data.message || 'Usuario eliminado.');
-      fetchUsers();
+      setSuccessToast(`Usuario @${u.username} eliminado de forma permanente.`);
+      setTimeout(() => setSuccessToast(null), 3500);
     } catch (err: any) {
-      alert(err.message);
+      setErrorMessage(err.message);
     }
   };
 
@@ -229,16 +374,41 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
             <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
               <span>Jerarquía de Usuarios & Control de Accesos</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono">
-                RBAC Activo
+                RBAC + Supabase
               </span>
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Gestiona los accesos del Super Admin, el Dueño del Negocio y los Empleados sin correos electrónicos.
+              Gestiona y sincroniza en Supabase los accesos del Super Admin, Dueño del Negocio y Empleados.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {isSuperAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-950/70 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 text-xs font-semibold transition-colors cursor-pointer"
+                title="Ver Script SQL para crear la tabla usuarios y demás tablas en Supabase"
+              >
+                <FileCode className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Script SQL Tablas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleManualSupabaseSync}
+                disabled={isSyncingSupabase}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                title="Sincronizar todos los usuarios con Supabase"
+              >
+                <Database className={`w-3.5 h-3.5 text-emerald-400 ${isSyncingSupabase ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingSupabase ? 'Sincronizando...' : 'Subir Usuarios a Supabase'}</span>
+              </button>
+            </>
+          )}
+
           <button
             type="button"
             onClick={fetchUsers}
@@ -279,6 +449,13 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
         <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{successToast}</span>
+        </div>
+      )}
+
+      {errorMessage && !isModalOpen && (
+        <div className="p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{errorMessage}</span>
         </div>
       )}
 
@@ -327,7 +504,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
           <div>
             <h2 className="text-sm font-bold text-white">Directorio de Equipo y Credenciales</h2>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Autenticación basada estrictamente en Nombre de Usuario + Clave + WhatsApp (Sin correos electrónicos)
+              Autenticación basada estrictamente en Nombre de Usuario + Clave + WhatsApp (Sincronizado con Supabase)
             </p>
           </div>
         </div>
@@ -362,7 +539,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                 users.map(u => {
                   const isCurrent = u.username === currentUser.username;
                   const isPrincipalNelson = u.username.toLowerCase() === 'nelson';
-                  const cleanPhone = u.whatsapp.replace(/[^\d]/g, '');
+                  const cleanPhone = (u.whatsapp || '').replace(/[^\d]/g, '');
 
                   return (
                     <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
@@ -491,7 +668,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     {modalMode === 'create'
-                      ? 'Asigna nombre, usuario, contraseña y rol (sin correo)'
+                      ? 'Asigna nombre, usuario, contraseña y rol (se guarda en Supabase)'
                       : 'Actualiza los datos de acceso o el estado de la cuenta'}
                   </p>
                 </div>
@@ -536,7 +713,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                   <input
                     type="text"
                     required
-                    disabled={modalMode === 'edit'} // No cambiar username en edición
+                    disabled={modalMode === 'edit'}
                     placeholder="nelson"
                     value={formUsername}
                     onChange={e => setFormUsername(e.target.value.toLowerCase().trim().replace(/\s+/g, ''))}
@@ -676,6 +853,76 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* SQL Schema Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#0D1219] border border-white/[0.1] rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/[0.08]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-cyan-950/70 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                  <FileCode className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    Script SQL Completo para Supabase (Incluye Tabla Usuarios)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Copia y ejecuta este script en el SQL Editor de tu proyecto en Supabase para crear las 8 tablas del sistema.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="w-8 h-8 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-4 py-3 bg-cyan-950/20 border-b border-cyan-900/30 text-xs text-cyan-200/90 flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-cyan-400 shrink-0" />
+              <span>
+                <strong>Pasos:</strong> 1. Abre Supabase &gt; <strong>SQL Editor</strong> &gt; <strong>New Query</strong>. 2. Pega este código SQL. 3. Haz clic en <strong>Run</strong>.
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-[#080B10]">
+              <pre className="text-[11px] font-mono text-emerald-300 leading-relaxed p-4 rounded-xl bg-black/60 border border-white/[0.05] overflow-x-auto select-all whitespace-pre">
+                {schemaSql}
+              </pre>
+            </div>
+
+            <div className="flex items-center justify-between p-4 border-t border-white/[0.08] bg-[#0A0E14] rounded-b-2xl">
+              <span className="text-[11px] text-slate-400">
+                Crea 8 tablas: <code>usuarios</code>, <code>configuracion_sistema</code>, <code>catalogo_productos</code>, <code>pedidos</code>, <code>contactos_whatsapp</code>, <code>conversaciones_todolapto</code>, <code>recordatorios_seguimiento</code> y <code>cerebro_ia_aprendizajes</code>.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSqlModal(false)}
+                  className="px-3.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 text-xs font-semibold transition-colors"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(schemaSql);
+                    setCopiedSql(true);
+                    setTimeout(() => setCopiedSql(false), 2500);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold transition-colors shadow-md shadow-cyan-500/20"
+                >
+                  {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedSql ? '¡Copiado al Portapapeles!' : 'Copiar Script SQL'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

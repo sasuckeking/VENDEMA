@@ -19,6 +19,7 @@ import type {
   OrderStatus,
   UserAccount
 } from './types';
+import { setGlobalHolidayOverrides } from './utils/businessSchedule';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
@@ -90,7 +91,12 @@ export default function App() {
       adminPhone: '18496260800',
       connected: true,
     },
+    holidayOverrides: [],
   });
+
+  useEffect(() => {
+    setGlobalHolidayOverrides(config.holidayOverrides || []);
+  }, [config.holidayOverrides]);
 
   // State
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -456,6 +462,7 @@ export default function App() {
           }
         } catch {}
 
+        setGlobalHolidayOverrides(loadedConfig.holidayOverrides || []);
         setConfig(loadedConfig);
       }
       if (productsData?.success && productsData.products) {
@@ -527,6 +534,9 @@ export default function App() {
           if (selectedSessionRef.current) {
             handleRefreshMessages(selectedSessionRef.current, true);
           }
+        } else if (payload.type === 'config_updated' && payload.payload) {
+          setGlobalHolidayOverrides(payload.payload.holidayOverrides || []);
+          setConfig(payload.payload);
         }
       } catch {
         // Ignore parse errors
@@ -853,6 +863,7 @@ export default function App() {
         currentTab={currentTab}
         setCurrentTab={setCurrentTab}
         config={config}
+        onUpdateConfig={handleUpdateConfig}
         onToggleGlobalAi={handleToggleGlobalAi}
         isSyncing={isSyncingOdoo || isSyncingEvolution}
         currentUser={currentUser}

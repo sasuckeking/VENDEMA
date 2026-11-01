@@ -18,12 +18,30 @@ import type {
   UserRole
 } from './src/types.js';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.js';
-import { getDominicanTimeContext, buildDominicanTimePromptContext } from './src/utils/businessSchedule.js';
 import { 
+  getDominicanTimeContext, 
+  buildDominicanTimePromptContext,
+  setGlobalHolidayOverrides,
+  getHolidaysWithOverridesForYear,
+  getAvailableHolidayYears
+} from './src/utils/businessSchedule.js';
+import { 
+  DEFAULT_SUPABASE_URL,
+  DEFAULT_SUPABASE_ANON_KEY,
+  INTERNAL_USERS_BACKUP_ID,
+  INTERNAL_HOLIDAYS_BACKUP_ID,
   getSupabaseClient, 
   testSupabaseConnection, 
   getSupabaseSchemaSql, 
+  getHolidaysTableSql,
   uploadAllToSupabase,
+  loadUsersFromSupabase,
+  syncAllUsersToSupabase,
+  autoSyncUserToSupabase,
+  deleteUserFromSupabase,
+  loadHolidaysFromSupabase,
+  syncHolidaysToSupabase,
+  autoSyncConfigToSupabase,
   autoSyncOrderToSupabase,
   autoSyncMessageToSupabase,
   autoSyncCustomerToSupabase
@@ -191,11 +209,12 @@ let appConfig: AppConfig = {
     connected: true,
   },
   supabase: {
-    url: process.env.SUPABASE_URL || '',
-    anonKey: process.env.SUPABASE_ANON_KEY || '',
-    connected: false,
+    url: process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL,
+    anonKey: process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
+    connected: true,
     autoSync: true,
   },
+  holidayOverrides: [],
 };
 
 function loadPersistedConfig() {
@@ -249,9 +268,13 @@ function loadPersistedConfig() {
         appConfig.supabase = {
           ...appConfig.supabase,
           ...saved.supabase,
-          url: saved.supabase.url || process.env.SUPABASE_URL || '',
-          anonKey: saved.supabase.anonKey || process.env.SUPABASE_ANON_KEY || '',
+          url: saved.supabase.url || process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL,
+          anonKey: saved.supabase.anonKey || process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
         };
+      }
+      if (Array.isArray(saved.holidayOverrides)) {
+        appConfig.holidayOverrides = saved.holidayOverrides;
+        setGlobalHolidayOverrides(appConfig.holidayOverrides);
       }
       console.log(`[Config Loaded]: Active AI Provider = ${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`);
       if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
@@ -278,7 +301,8 @@ savePersistedConfig();
 // ---------------------------------------------------------
 // User Hierarchy & Authentication System (RBAC)
 // ---------------------------------------------------------
-const USERS_FILE_PATH = path.join(process.cwd(), '.vendema-users.json');
+const USERS_FILE_PATH = path.join(__dirname, '.vendema-users.json');
+const USERS_FALLBACK_PATH = path.join(process.cwd(), '.vendema-users.json');
 
 const DEFAULT_USERS: UserAccount[] = [
   {
@@ -315,9 +339,34 @@ const DEFAULT_USERS: UserAccount[] = [
 
 let systemUsers: UserAccount[] = [];
 
+function ensureDefaultUsersPresent() {
+  for (const defUser of DEFAULT_USERS) {
+    const idx = systemUsers.findIndex(u => u.username.toLowerCase() === defUser.username.toLowerCase());
+    if (idx === -1) {
+      if (defUser.username === 'nelson') {
+        systemUsers.unshift({ ...defUser });
+      } else {
+        systemUsers.push({ ...defUser });
+      }
+    } else if (defUser.username === 'nelson') {
+      systemUsers[idx].role = 'super_admin';
+      systemUsers[idx].activo = true;
+      if (!systemUsers[idx].password) {
+        systemUsers[idx].password = 'elmejor19';
+      }
+    } else if (!systemUsers[idx].password) {
+      systemUsers[idx].password = defUser.password;
+    }
+  }
+}
+
 function savePersistedUsers() {
   try {
-    fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(systemUsers, null, 2), 'utf-8');
+    const content = JSON.stringify(systemUsers, null, 2);
+    fs.writeFileSync(USERS_FILE_PATH, content, 'utf-8');
+    if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
+      fs.writeFileSync(USERS_FALLBACK_PATH, content, 'utf-8');
+    }
   } catch (err: any) {
     console.log('[Users Save Info]:', err.message);
   }
@@ -325,47 +374,94 @@ function savePersistedUsers() {
 
 function loadPersistedUsers() {
   try {
-    if (fs.existsSync(USERS_FILE_PATH)) {
-      const raw = fs.readFileSync(USERS_FILE_PATH, 'utf-8');
+    const targetPath = fs.existsSync(USERS_FILE_PATH)
+      ? USERS_FILE_PATH
+      : fs.existsSync(USERS_FALLBACK_PATH)
+      ? USERS_FALLBACK_PATH
+      : null;
+
+    if (targetPath) {
+      const raw = fs.readFileSync(targetPath, 'utf-8');
       const loaded = JSON.parse(raw);
       if (Array.isArray(loaded) && loaded.length > 0) {
         systemUsers = loaded;
       } else {
         systemUsers = [...DEFAULT_USERS];
-        savePersistedUsers();
       }
     } else {
       systemUsers = [...DEFAULT_USERS];
-      savePersistedUsers();
     }
   } catch (err: any) {
     console.log('[Users Load Info]:', err.message);
     systemUsers = [...DEFAULT_USERS];
   }
 
-  // Ensure nelson super_admin ALWAYS exists with the requested password elmejor19
-  const nelsonIdx = systemUsers.findIndex(u => u.username.toLowerCase() === 'nelson');
-  if (nelsonIdx === -1) {
-    systemUsers.unshift({
-      id: 'usr_super_nelson',
-      nombre: 'Nelson',
-      username: 'nelson',
-      password: 'elmejor19',
-      whatsapp: '18496260800',
-      role: 'super_admin',
-      activo: true,
-      createdAt: new Date().toISOString(),
-    });
-    savePersistedUsers();
-  } else {
-    // Preserve requested super_admin role and exact credentials
-    systemUsers[nelsonIdx].role = 'super_admin';
-    systemUsers[nelsonIdx].activo = true;
-    if (!systemUsers[nelsonIdx].password) {
-      systemUsers[nelsonIdx].password = 'elmejor19';
-    }
-  }
+  ensureDefaultUsersPresent();
+  savePersistedUsers();
   console.log(`[Users Loaded]: ${systemUsers.length} active users loaded. Super Admin: @nelson`);
+}
+
+async function hydrateAndSyncUsersWithSupabase(): Promise<void> {
+  try {
+    const remoteUsers = await loadUsersFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    if (Array.isArray(remoteUsers) && remoteUsers.length > 0) {
+      for (const ru of remoteUsers) {
+        if (!ru.username) continue;
+        const cleanU = ru.username.toLowerCase().trim();
+        const existingIdx = systemUsers.findIndex(u => u.username.toLowerCase() === cleanU);
+        if (existingIdx === -1) {
+          systemUsers.push(ru);
+        } else {
+          // Merge remote user fields if password is set
+          if (ru.password) {
+            systemUsers[existingIdx] = {
+              ...systemUsers[existingIdx],
+              ...ru,
+              username: cleanU,
+            };
+          }
+        }
+      }
+      ensureDefaultUsersPresent();
+      savePersistedUsers();
+    }
+    // Always push full user list back to Supabase (`public.usuarios` + cloud backup)
+    await syncAllUsersToSupabase(systemUsers, appConfig.supabase?.url, appConfig.supabase?.anonKey);
+  } catch (err: any) {
+    console.warn('[Supabase Users Sync Info]:', err.message);
+  }
+}
+
+async function hydrateAndSyncHolidaysWithSupabase(): Promise<void> {
+  try {
+    const remoteHolidays = await loadHolidaysFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    if (Array.isArray(remoteHolidays)) {
+      if (remoteHolidays.length > 0 || !appConfig.holidayOverrides || appConfig.holidayOverrides.length === 0) {
+        // Merge remote holiday overrides with local overrides by ID / originalDate (remote wins if newer)
+        const mergedMap = new Map<string, any>();
+        for (const loc of appConfig.holidayOverrides || []) {
+          const key = loc.id || loc.originalDate;
+          if (key) mergedMap.set(key, loc);
+        }
+        for (const rem of remoteHolidays) {
+          const key = rem.id || rem.originalDate;
+          if (key) mergedMap.set(key, rem);
+        }
+        appConfig.holidayOverrides = Array.from(mergedMap.values());
+        setGlobalHolidayOverrides(appConfig.holidayOverrides);
+        savePersistedConfig();
+      }
+    }
+    if (Array.isArray(appConfig.holidayOverrides)) {
+      await syncHolidaysToSupabase(
+        appConfig.holidayOverrides,
+        appConfig.supabase?.url,
+        appConfig.supabase?.anonKey
+      );
+    }
+  } catch (err: any) {
+    console.warn('[Supabase Holidays Sync Info]:', err.message);
+  }
 }
 
 function sanitizeUser(u: UserAccount): Omit<UserAccount, 'password'> {
@@ -3708,14 +3804,87 @@ app.get('/api/config', (req, res) => {
 
 // Real-time Dominican Republic business schedule & holiday status endpoint
 app.get('/api/business-schedule', (req, res) => {
+  const ctx = getDominicanTimeContext(new Date(), appConfig.holidayOverrides || []);
+  const year = req.query.year ? parseInt(String(req.query.year), 10) : ctx.year;
   res.json({
     success: true,
-    schedule: getDominicanTimeContext(),
+    schedule: ctx,
+    holidayOverrides: appConfig.holidayOverrides || [],
+    availableYears: getAvailableHolidayYears(ctx.year, ctx.month, appConfig.holidayOverrides || [], year),
+    holidays: getHolidaysWithOverridesForYear(year, appConfig.holidayOverrides || []),
+  });
+});
+
+app.get('/api/holidays/sql', (_req, res) => {
+  res.json({
+    success: true,
+    tableName: 'calendario_feriados',
+    sql: getHolidaysTableSql(),
+  });
+});
+
+app.post('/api/holidays/sync-supabase', async (_req, res) => {
+  try {
+    const syncRes = await syncHolidaysToSupabase(
+      appConfig.holidayOverrides || [],
+      appConfig.supabase?.url,
+      appConfig.supabase?.anonKey
+    );
+    res.json({
+      success: syncRes.synced,
+      ...syncRes,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+app.post('/api/holidays/overrides', async (req, res) => {
+  const { holidayOverrides } = req.body;
+  let dbSynced = false;
+  let tableExists = false;
+  let tableRowsSynced = 0;
+  let storage = 'local';
+  if (Array.isArray(holidayOverrides)) {
+    appConfig.holidayOverrides = holidayOverrides;
+    setGlobalHolidayOverrides(appConfig.holidayOverrides);
+    savePersistedConfig();
+    try {
+      const syncRes = await syncHolidaysToSupabase(
+        appConfig.holidayOverrides,
+        appConfig.supabase?.url,
+        appConfig.supabase?.anonKey
+      );
+      dbSynced = syncRes.synced;
+      tableExists = syncRes.tableExists;
+      tableRowsSynced = syncRes.tableRowsSynced;
+      storage = syncRes.storage;
+      if (appConfig.supabase?.autoSync !== false) {
+        autoSyncConfigToSupabase(appConfig).catch(() => {});
+      }
+    } catch {}
+    broadcastEvent('config_updated', appConfig);
+  }
+  const ctx = getDominicanTimeContext(new Date(), appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    dbSynced,
+    tableExists,
+    tableRowsSynced,
+    storage,
+    config: appConfig,
+    schedule: ctx,
+    holidayOverrides: appConfig.holidayOverrides || [],
+    availableYears: getAvailableHolidayYears(ctx.year, ctx.month, appConfig.holidayOverrides || []),
+    holidays: getHolidaysWithOverridesForYear(ctx.year, appConfig.holidayOverrides || []),
   });
 });
 
 app.post('/api/config', (req, res) => {
-  const { globalAiActive, aiProvider, odoo, evolution, supabase } = req.body;
+  const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== undefined) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
     appConfig.aiProvider = { ...appConfig.aiProvider, ...aiProvider };
@@ -3730,8 +3899,16 @@ app.post('/api/config', (req, res) => {
       getSupabaseClient(appConfig.supabase.url, appConfig.supabase.anonKey);
     }
   }
+  if (Array.isArray(holidayOverrides)) {
+    appConfig.holidayOverrides = holidayOverrides;
+    setGlobalHolidayOverrides(appConfig.holidayOverrides);
+  }
 
   savePersistedConfig();
+  if (appConfig.supabase?.autoSync !== false) {
+    autoSyncConfigToSupabase(appConfig).catch(() => {});
+  }
+  broadcastEvent('config_updated', appConfig);
   res.json({ success: true, config: appConfig });
 });
 
@@ -3773,10 +3950,10 @@ app.get('/api/supabase/schema-sql', (req, res) => {
   });
 });
 
-// Supabase: Upload and Synchronize Everything (Orders, Customers, WhatsApp Messages, Reminders & AI Insights)
+// Supabase: Upload and Synchronize Everything (Users, Config, Products, Orders, Customers, WhatsApp Messages, Reminders & AI Insights)
 app.post('/api/supabase/sync-all', async (req, res) => {
-  const url = (req.body.url || appConfig.supabase?.url || '').trim();
-  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || '').trim();
+  const url = (req.body.url || appConfig.supabase?.url || DEFAULT_SUPABASE_URL).trim();
+  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
 
   if (url && anonKey) {
     if (!appConfig.supabase) {
@@ -3790,26 +3967,29 @@ app.post('/api/supabase/sync-all', async (req, res) => {
   try {
     const stats = await uploadAllToSupabase(
       {
+        users: systemUsers,
+        config: appConfig,
+        products,
         orders: salesOrders,
         customers,
         conversations,
         reminders: followUps,
-        insights: learnedInsights,
+        insights: learnedInsights.filter(i => i.id !== INTERNAL_USERS_BACKUP_ID),
       },
-      url || appConfig.supabase?.url,
-      anonKey || appConfig.supabase?.anonKey
+      url,
+      anonKey
     );
 
     if (appConfig.supabase) {
       appConfig.supabase.lastSync = new Date().toISOString();
-      if (stats.errors.length === 0 || stats.ordersSynced > 0 || stats.customersSynced > 0) {
+      if (stats.errors.length === 0 || stats.usersSynced > 0 || stats.ordersSynced > 0 || stats.customersSynced > 0) {
         appConfig.supabase.connected = true;
       }
       savePersistedConfig();
     }
 
     res.json({
-      success: stats.errors.length === 0 || (stats.ordersSynced + stats.customersSynced + stats.messagesSynced) > 0,
+      success: stats.errors.length === 0 || (stats.usersSynced + stats.ordersSynced + stats.customersSynced + stats.messagesSynced) > 0,
       stats,
       lastSync: appConfig.supabase?.lastSync,
     });
@@ -3824,14 +4004,31 @@ app.post('/api/supabase/sync-all', async (req, res) => {
 // ---------------------------------------------------------
 // User Authentication & RBAC Hierarchy Endpoints (NO EMAIL)
 // ---------------------------------------------------------
-app.post('/api/auth/login', (req, res) => {
+function findMatchingSystemUser(rawIdentifier: string): UserAccount | undefined {
+  const cleanUser = String(rawIdentifier || '').trim().replace(/^@+/, '').toLowerCase();
+  const digitsOnly = cleanUser.replace(/\D/g, '');
+
+  return systemUsers.find(u => {
+    if (u.username.toLowerCase().trim() === cleanUser) return true;
+    if (u.nombre.toLowerCase().trim() === cleanUser) return true;
+    if (digitsOnly.length >= 10 && u.whatsapp.replace(/\D/g, '').endsWith(digitsOnly.slice(-10))) return true;
+    return false;
+  });
+}
+
+app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ success: false, message: 'Ingresa tu nombre de usuario y contraseña.' });
   }
 
-  const cleanUser = String(username).trim().toLowerCase();
-  const found = systemUsers.find(u => u.username.toLowerCase() === cleanUser);
+  let found = findMatchingSystemUser(username);
+
+  // If user is not found locally or password doesn't match, hydrate latest users from Supabase (`public.usuarios` or cloud backup)
+  if (!found || found.password !== String(password).trim()) {
+    await hydrateAndSyncUsersWithSupabase();
+    found = findMatchingSystemUser(username);
+  }
 
   if (!found) {
     return res.status(401).json({ success: false, message: 'Nombre de usuario no encontrado.' });
@@ -3847,6 +4044,7 @@ app.post('/api/auth/login', (req, res) => {
 
   found.lastLogin = new Date().toISOString();
   savePersistedUsers();
+  autoSyncUserToSupabase(found, systemUsers).catch(() => {});
 
   const token = `vendema_tk_${found.id}_${Date.now()}`;
   res.json({
@@ -3856,7 +4054,7 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
   if (!token) {
@@ -3866,7 +4064,11 @@ app.get('/api/auth/me', (req, res) => {
   const match = token.match(/^vendema_tk_(usr_[a-zA-Z0-9_]+)_/);
   if (match) {
     const userId = match[1];
-    const user = systemUsers.find(u => u.id === userId && u.activo);
+    let user = systemUsers.find(u => u.id === userId && u.activo);
+    if (!user) {
+      await hydrateAndSyncUsersWithSupabase();
+      user = systemUsers.find(u => u.id === userId && u.activo);
+    }
     if (user) {
       return res.json({ success: true, user: sanitizeUser(user) });
     }
@@ -3879,7 +4081,8 @@ app.post('/api/auth/logout', (_req, res) => {
   res.json({ success: true, message: 'Sesión cerrada correctamente.' });
 });
 
-app.get('/api/users', (_req, res) => {
+app.get('/api/users', async (_req, res) => {
+  await hydrateAndSyncUsersWithSupabase();
   res.json({
     success: true,
     users: systemUsers.map(sanitizeUser),
@@ -3887,7 +4090,7 @@ app.get('/api/users', (_req, res) => {
   });
 });
 
-app.post('/api/users', (req, res) => {
+app.post('/api/users', async (req, res) => {
   const { nombre, username, password, whatsapp, role } = req.body;
 
   if (!nombre || !username || !password || !whatsapp) {
@@ -3897,13 +4100,15 @@ app.post('/api/users', (req, res) => {
     });
   }
 
-  const cleanUsername = String(username).trim().toLowerCase().replace(/\s+/g, '');
+  const cleanUsername = String(username).trim().replace(/^@+/, '').toLowerCase().replace(/\s+/g, '');
   if (cleanUsername.length < 3) {
     return res.status(400).json({
       success: false,
       message: 'El nombre de usuario debe tener al menos 3 caracteres.',
     });
   }
+
+  await hydrateAndSyncUsersWithSupabase();
 
   if (systemUsers.some(u => u.username.toLowerCase() === cleanUsername)) {
     return res.status(400).json({
@@ -3928,15 +4133,16 @@ app.post('/api/users', (req, res) => {
 
   systemUsers.push(newUser);
   savePersistedUsers();
+  await autoSyncUserToSupabase(newUser, systemUsers);
 
   res.status(201).json({
     success: true,
-    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado con éxito.`,
+    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado y sincronizado con Supabase.`,
     user: sanitizeUser(newUser),
   });
 });
 
-app.put('/api/users/:id', (req, res) => {
+app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const userIdx = systemUsers.findIndex(u => u.id === id);
 
@@ -3967,14 +4173,16 @@ app.put('/api/users/:id', (req, res) => {
   }
 
   savePersistedUsers();
+  await autoSyncUserToSupabase(targetUser, systemUsers);
+
   res.json({
     success: true,
-    message: `Usuario ${targetUser.nombre} actualizado con éxito.`,
+    message: `Usuario ${targetUser.nombre} actualizado y sincronizado con Supabase.`,
     user: sanitizeUser(targetUser),
   });
 });
 
-app.delete('/api/users/:id', (req, res) => {
+app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const targetUser = systemUsers.find(u => u.id === id);
 
@@ -3991,6 +4199,7 @@ app.delete('/api/users/:id', (req, res) => {
 
   systemUsers = systemUsers.filter(u => u.id !== id);
   savePersistedUsers();
+  await deleteUserFromSupabase(targetUser, systemUsers);
 
   res.json({
     success: true,
@@ -5142,8 +5351,8 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
   }${orderPhoneValidationDirective}`;
 
   // Real-time Dominican Republic date, time, business hours & holiday context
-  const rdTimeContext = getDominicanTimeContext();
-  const rdTimePromptBlock = buildDominicanTimePromptContext();
+  const rdTimeContext = getDominicanTimeContext(new Date(), appConfig.holidayOverrides || []);
+  const rdTimePromptBlock = buildDominicanTimePromptContext(new Date(), appConfig.holidayOverrides || []);
 
   const filledInstruction =
     rdTimePromptBlock +
@@ -5790,8 +5999,11 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Vendemá CRM Server listening on port ${PORT}`);
 
-    // Initial real-time sync of Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
-    syncOdooInventory()
+    // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
+    hydrateAndSyncUsersWithSupabase()
+      .then(() => hydrateAndSyncHolidaysWithSupabase())
+      .then(() => autoSyncConfigToSupabase(appConfig))
+      .then(() => syncOdooInventory())
       .then(() => syncOdooCustomers())
       .then(() => syncEvolutionChats())
       .catch(e => console.error('Initial sync err:', e));

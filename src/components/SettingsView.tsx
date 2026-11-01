@@ -24,6 +24,7 @@ import {
   X
 } from 'lucide-react';
 import type { AppConfig, AIProviderType, UserAccount } from '../types';
+import { getSupabaseSchemaSql } from '../utils/supabaseService';
 
 interface SettingsViewProps {
   config: AppConfig;
@@ -394,10 +395,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       if (data.sql) {
         setSchemaSql(data.sql);
         setShowSqlModal(true);
+        return;
       }
     } catch (err: any) {
-      console.warn('Failed to load SQL:', err);
+      console.warn('Using local SQL schema generator:', err);
     }
+    setSchemaSql(getSupabaseSchemaSql());
+    setShowSqlModal(true);
   };
 
   const handleTestOdoo = async () => {
@@ -1329,7 +1333,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                   </span>
                 </h2>
                 <span className="text-[11px] text-slate-400">
-                  Respaldo y persistencia en la nube: pedidos, clientes de WhatsApp, mensajes, recordatorios y aprendizajes de IA.
+                  Respaldo y persistencia en la nube (9 tablas): usuarios, calendario_feriados, configuración, productos, pedidos, clientes de WhatsApp, mensajes, recordatorios y aprendizajes de IA.
                 </span>
               </div>
             </div>
@@ -1412,7 +1416,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                 </span>
               </div>
               {supabaseSyncResult.stats && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-[11px] font-mono mt-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-[11px] font-mono mt-2">
+                  <div className="p-2 rounded bg-black/40 border border-white/[0.04]">
+                    <span className="text-slate-400 block">Usuarios</span>
+                    <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.usersSynced ?? 0}</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40 border border-white/[0.04]">
+                    <span className="text-slate-400 block">Feriados RD</span>
+                    <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.holidaysSynced ?? 0}</span>
+                  </div>
                   <div className="p-2 rounded bg-black/40 border border-white/[0.04]">
                     <span className="text-slate-400 block">Pedidos</span>
                     <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.ordersSynced}</span>
@@ -1426,8 +1438,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                     <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.messagesSynced}</span>
                   </div>
                   <div className="p-2 rounded bg-black/40 border border-white/[0.04]">
-                    <span className="text-slate-400 block">Recordatorios</span>
-                    <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.remindersSynced}</span>
+                    <span className="text-slate-400 block">Productos</span>
+                    <span className="text-emerald-400 font-bold text-sm">{supabaseSyncResult.stats.productsSynced ?? 0}</span>
                   </div>
                   <div className="p-2 rounded bg-black/40 border border-white/[0.04]">
                     <span className="text-slate-400 block">Aprendizajes IA</span>
@@ -1661,7 +1673,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
             {/* Modal Footer */}
             <div className="flex items-center justify-between p-4 border-t border-white/[0.08] bg-[#0A0E14] rounded-b-2xl">
               <span className="text-[11px] text-slate-400">
-                Crea 5 tablas: <code>pedidos</code>, <code>contactos_whatsapp</code>, <code>conversaciones_todolapto</code>, <code>recordatorios_seguimiento</code> y <code>cerebro_ia_aprendizajes</code>.
+                Crea 9 tablas: <code>usuarios</code>, <code>calendario_feriados</code>, <code>configuracion_sistema</code>, <code>catalogo_productos</code>, <code>pedidos</code>, <code>contactos_whatsapp</code>, <code>conversaciones_todolapto</code>, <code>recordatorios_seguimiento</code> y <code>cerebro_ia_aprendizajes</code>.
               </span>
               <div className="flex items-center gap-2">
                 <button

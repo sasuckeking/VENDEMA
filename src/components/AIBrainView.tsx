@@ -11,10 +11,12 @@ import {
   Save,
   RotateCcw,
   Wrench,
-  Database
+  Database,
+  CalendarClock
 } from 'lucide-react';
 import type { AILearnedInsight, AppConfig } from '../types';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from '../masterPrompt';
+import { HolidayManagerPanel } from './HolidayManagerPanel';
 
 interface AIBrainViewProps {
   insights: AILearnedInsight[];
@@ -31,7 +33,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
   config,
   onUpdateConfig,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'learned_tactics'>('master_prompt');
+  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics'>('master_prompt');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -172,10 +174,10 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
         </div>
 
         {/* Sub-navigation Switcher */}
-        <div className="flex items-center gap-2 bg-[#121822] p-1 rounded-xl border border-white/[0.06] text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 bg-[#121822] p-1 rounded-xl border border-white/[0.06] text-xs">
           <button
             onClick={() => setActiveSubTab('master_prompt')}
-            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeSubTab === 'master_prompt'
                 ? 'bg-lime-500 text-slate-950 shadow-sm'
                 : 'text-slate-300 hover:text-white'
@@ -186,8 +188,25 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveSubTab('holidays_rd')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeSubTab === 'holidays_rd'
+                ? 'bg-amber-400 text-slate-950 shadow-sm'
+                : 'text-amber-300 hover:text-white bg-amber-500/10 border border-amber-500/20'
+            }`}
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+            <span>Días Feriados RD (Cambios de Día)</span>
+            {(config.holidayOverrides || []).filter(o => o.status !== 'normal').length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-950 text-amber-300">
+                {(config.holidayOverrides || []).filter(o => o.status !== 'normal').length}
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('learned_tactics')}
-            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeSubTab === 'learned_tactics'
                 ? 'bg-lime-500 text-slate-950 shadow-sm'
                 : 'text-slate-300 hover:text-white'
@@ -301,13 +320,21 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
                   </span>
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-[#121822] border border-white/[0.06]">
+                <div className="p-2.5 rounded-xl bg-[#121822] border border-white/[0.06] space-y-2">
                   <code className="text-emerald-400 font-mono font-bold block mb-0.5">
                     {'{{ESTADO_NEGOCIO}} · {{PROXIMA_APERTURA}}'}
                   </code>
-                  <span className="text-slate-400 text-[11px]">
-                    Estado de apertura en tiempo real (<code>🟢 ABIERTO</code> / <code>🔴 CERRADO</code>), domingos, días feriados oficiales de RD y fecha/hora exacta de próxima apertura.
+                  <span className="text-slate-400 text-[11px] block">
+                    Estado de apertura en tiempo real (<code>🟢 ABIERTO</code> / <code>🔴 CERRADO</code>), domingos, días feriados oficiales de RD (con traslados a lunes) y fecha/hora exacta de próxima apertura.
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('holidays_rd')}
+                    className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <CalendarClock className="w-3.5 h-3.5" />
+                    <span>Configurar / Mover Días Feriados RD</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -363,6 +390,8 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
             </div>
           </div>
         </div>
+      ) : activeSubTab === 'holidays_rd' ? (
+        <HolidayManagerPanel config={config} onUpdateConfig={onUpdateConfig} />
       ) : (
         <>
           {/* Actions for Learned Tactics */}
