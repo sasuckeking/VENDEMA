@@ -1,0 +1,6 @@
+{
+  "name": "Todo Lapto CRM & AI Sales Agent",
+  "description": "CRM integral con sincronización en tiempo real de inventario y pedidos, mensajería WhatsApp Evolution API, agente de ventas inteligente con aprendizaje continuo y control de intervención humana.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

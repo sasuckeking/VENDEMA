@@ -1,0 +1,2831 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d9419665-41fc-43b9-aef7-d521a1ba2035",
+              "name": "instance_server_url",
+              "value": "={{ $json.body.server_url }}",
+              "type": "string"
+            },
+            {
+              "id": "c3cb8673-8006-4079-a304-c58ffc267226",
+              "name": "instance_name",
+              "value": "={{ $json.body.instance }}",
+              "type": "string"
+            },
+            {
+              "id": "e462da04-7f8b-4fbe-aacd-7956666c2ede",
+              "name": "instance_apikey",
+              "value": "={{ $json.body.apikey }}",
+              "type": "string"
+            },
+            {
+              "id": "b06da722-eea2-4f28-a2d4-7bcc6592b952",
+              "name": "message_id",
+              "value": "={{ $json.body.data.key.id }}",
+              "type": "string"
+            },
+            {
+              "id": "5ecbe629-f4d0-4bdf-8c78-903f311bc273",
+              "name": "message_chat_id_sender",
+              "value": "={{ $json.body.data.key.remoteJid.includes('@g.us') \n   ? $json.body.data.key.participant \n   : $json.body.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "cbb05e7c-4912-4965-bcf4-cefd9418b39f",
+              "name": "message_content_type",
+              "value": "={{ $json.body.data.message.extendedTextMessage ? 'text' : $json.body.data.message.conversation ? 'text' : $json.body.data.message.audioMessage ? 'audio' : $json.body.data.message.imageMessage ? 'image' : 'otro' }}",
+              "type": "string"
+            },
+            {
+              "id": "d6fa8877-dee6-468b-a51e-8fdc36dc190f",
+              "name": "message_content",
+              "value": "={{ $json.body.data.message.extendedTextMessage?.text || '' }} {{ $json.body.data.message.imageMessage?.caption || '' }} {{ $json.body.data.message.conversation || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f122b51f-8a93-439e-85fb-c370e7f4f6b8",
+              "name": "message_timestamp",
+              "value": "={{ $json.body.date_time }}",
+              "type": "string"
+            },
+            {
+              "id": "e10a7e61-cffe-44fb-9b13-e0c199ebd866",
+              "name": "user_name",
+              "value": "={{ $json.body.data.pushName && !$json.body.data.pushName.includes('@') \n   ? $json.body.data.pushName \n   : ($json.body.data.key.participant \n      ? $json.body.data.key.participant.replace('@s.whatsapp.net','').replace('@lid','') \n      : 'Cliente WhatsApp') }}",
+              "type": "string"
+            },
+            {
+              "id": "1c280646-7eb8-4118-9e8d-432f04a763b7",
+              "name": "user_number",
+              "value": "={{ $json.body.data.key.remoteJid.includes('@g.us') \n   ? ($json.body.data.key.participant || $json.body.sender || $json.body.data.key.remoteJid)\n   : $json.body.data.key.remoteJid }}",
+              "type": "string"
+            },
+            {
+              "id": "a7341820-a177-4921-aee5-0fb72a40dcdf",
+              "name": "session_id",
+              "value": "={{ $json.body.data.key.id }}",
+              "type": "string"
+            },
+            {
+              "id": "5ec012b3-56c4-4fb4-a3a7-deb2a3a30fbd",
+              "name": "quoted_message_content",
+              "value": "={{ $json.body.data.message.extendedTextMessage?.contextInfo?.quotedMessage?.conversation || $json.body.data.message.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "79558d8a-a48a-4911-8dc9-4fdc14959c24",
+              "name": "has_quoted_message",
+              "value": "={{ $json.body.data.message.extendedTextMessage?.contextInfo?.quotedMessage ? true : false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f43a4b92-18ca-4fc8-861e-cf3f9ba922a0",
+              "name": "quoted_participant",
+              "value": "={{ $json.body.data.message.extendedTextMessage?.contextInfo?.participant || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "8b4b0e0a-1b9b-44f5-9ac2-e1d212a79725",
+              "name": "ubicacion_link",
+              "value": "={{ $json.body.data.message.extendedTextMessage?.text?.match(/https?:\\/\\/[^\\s]+/)?.[0] || $json.body.data.message.conversation?.match(/https?:\\/\\/[^\\s]+/)?.[0] || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "fdc1bed1-fba9-4bd2-b63c-486d03274705",
+              "name": "es_ubicacion",
+              "value": "={{ ($json.body.data.message.extendedTextMessage?.text || $json.body.data.message.conversation || '').includes('maps.google') || ($json.body.data.message.extendedTextMessage?.text || $json.body.data.message.conversation || '').includes('goo.gl/maps') || ($json.body.data.message.extendedTextMessage?.text || $json.body.data.message.conversation || '').includes('maps.app') }}",
+              "type": "string"
+            },
+            {
+              "id": "cc022a45-b67e-4d88-b188-60069fcbc6db",
+              "name": "user_phone",
+              "value": "={{ (() => { const k = $json.body.data.key; const pn = [k.remoteJid, k.remoteJidAlt, k.participant].find(j => (j || '').endsWith('@s.whatsapp.net')); return pn ? pn.replace('@s.whatsapp.net', '') : ''; })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -9888,
+        592
+      ],
+      "id": "38f34fe8-51b4-4e79-b984-1be48b68e07f",
+      "name": "Normalizacion"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message_content_type }}",
+                    "rightValue": "audio",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "0138f3ef-0a75-46cd-a82d-161de9a4fa58"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Audio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message_content_type }}",
+                    "rightValue": "image",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1fadf108-585d-45a0-b365-a88428b3b16d"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Imagen"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message_content_type }}",
+                    "rightValue": "text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f3414703-4cb4-44b9-b54d-646d12d496f1"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Texto"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Otro"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -9200,
+        576
+      ],
+      "id": "76e20915-88fe-4332-8d38-51052b0d053c",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalizacion').item.json.instance_server_url }}/chat/getBase64FromMediaMessage/{{ $('Normalizacion').item.json.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Normalizacion').item.json.instance_apikey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message.key.id",
+              "value": "={{ $('Normalizacion').item.json.message_id }}"
+            },
+            {
+              "name": "convertToMp4",
+              "value": "={{ Boolean(false) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8992,
+        448
+      ],
+      "id": "e511994e-bad6-4c33-ae83-7c7ee3280b2f",
+      "name": "Get Audio"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalizacion').item.json.instance_server_url }}/chat/getBase64FromMediaMessage/{{ $('Normalizacion').item.json.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Normalizacion').item.json.instance_apikey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message.key.id",
+              "value": "={{ $('Normalizacion').item.json.message_id }}"
+            },
+            {
+              "name": "convertToMp4",
+              "value": "={{ Boolean(false) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8976,
+        608
+      ],
+      "id": "3d9b10be-0829-4558-8dfb-0bc7cc70ca3d",
+      "name": "Get Image"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "options": {
+          "mimeType": "={{ $json.mimetype }}"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -8784,
+        416
+      ],
+      "id": "8fb992ad-81e8-4a55-af55-6d01c0f8dd6d",
+      "name": "Convertir Audio1"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "options": {
+          "mimeType": "={{ $json.mimetype }}"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -8784,
+        608
+      ],
+      "id": "5e59adf7-986c-4ed5-8b30-943b1087a531",
+      "name": "Convertir Imagen1"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "es"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -8592,
+        416
+      ],
+      "id": "a05deb41-99ca-4a9e-ad4e-a63d61920ee8",
+      "name": "Transcribe a recording1",
+      "credentials": {
+        "openAiApi": {
+          "id": "4ewAAhIAQsLA2fVm",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6e2644e1-fe2b-4523-b3bc-3db62622315c",
+              "name": "content",
+              "value": "={{ $json.text || $json.content || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8400,
+        416
+      ],
+      "id": "06dd2dbe-5879-41af-94de-7d37f20e6e4c",
+      "name": "Audio Content2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d56cc938-d653-4611-96fd-86d5eb56bf9c",
+              "name": "chat_input",
+              "value": "={{ $json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+              "name": "quoted_message_content",
+              "value": "={{ $('Normalizacion').item.json.quoted_message_content }}",
+              "type": "string"
+            },
+            {
+              "id": "b2c3d4e5-f6g7-8901-bcde-f12345678901",
+              "name": "has_quoted_message",
+              "value": "={{ $('Normalizacion').item.json.has_quoted_message }}",
+              "type": "boolean"
+            },
+            {
+              "id": "c3d4e5f6-g7h8-9012-cdef-123456789012",
+              "name": "quoted_participant",
+              "value": "={{ $('Normalizacion').item.json.quoted_participant }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8208,
+        608
+      ],
+      "id": "0b976a04-606e-4b6c-93ee-6e5f1b393d3e",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "tableId": "conversaciones_todolapto",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $('Process Context').item.json.session_id }}"
+            },
+            {
+              "fieldId": "user_number",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_number }}"
+            },
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_name }}"
+            },
+            {
+              "fieldId": "message_content",
+              "fieldValue": "={{ $('Process Context').item.json.message_content }}"
+            },
+            {
+              "fieldId": "message_type",
+              "fieldValue": "user"
+            },
+            {
+              "fieldId": "quoted_message_content",
+              "fieldValue": "={{ $('Process Context').item.json.quoted_message_content }}"
+            },
+            {
+              "fieldId": "has_quoted_message",
+              "fieldValue": "={{ $('Process Context').item.json.has_quoted_message }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -7824,
+        608
+      ],
+      "id": "c4e30939-7dfa-43f3-bffd-335a1f7080b4",
+      "name": "Guardar Mensaje Usuario",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=cliente_{{$json.session_id}}",
+        "contextWindowLength": 30
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        -7008,
+        1008
+      ],
+      "id": "ec11d2a0-9044-4978-b329-329df12f6f81",
+      "name": "Postgres Chat Memory",
+      "credentials": {
+        "postgres": {
+          "id": "lUUV3Eqr06Y3Em29",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "conversaciones_todolapto",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $('Process Context').item.json.session_id }}"
+            },
+            {
+              "fieldId": "user_number",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_number }}"
+            },
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_name }}"
+            },
+            {
+              "fieldId": "message_content",
+              "fieldValue": "={{ $('AI Agent').item.json.output || '' }}"
+            },
+            {
+              "fieldId": "message_type",
+              "fieldValue": "assistant"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -5952,
+        608
+      ],
+      "id": "27357370-88d3-4be5-b27f-d0d14b11a8cd",
+      "name": "Guardar Respuesta Asistente",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "session_id",
+              "value": "={{ $('Process Context').item.json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "user_number",
+              "value": "={{ $('Normalizacion').item.json.user_number }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "user_name",
+              "value": "={{ $('Normalizacion').item.json.user_name }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "output",
+              "value": "={{ $('AI Agent').item.json.output || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "chat_input",
+              "value": "={{ $('Process Context').item.json.chat_input || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "requiere_tecnico",
+              "value": "={{ Boolean(\n  ($('AI Agent').item.json.output || '').toLowerCase().includes('técnico especialista') ||\n  ($('AI Agent').item.json.output || '').toLowerCase().includes('servicio técnico') ||\n  ($('AI Agent').item.json.output || '').toLowerCase().includes('atención humana') ||\n  ($('AI Agent').item.json.output || '').toLowerCase().includes('nuestro equipo se comunicará')\n) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "e56c7568-7308-4309-acd2-673545d30a30",
+              "name": "ya_notifico_tool",
+              "value": "={{ Boolean(\n  ($('AI Agent').item.json.output || '').includes('asistente personal se comunicará') ||\n  ($('AI Agent').item.json.output || '').includes('tomado nota de la oferta') ||\n  ($('AI Agent').item.json.output || '').includes('Recibimos tu solicitud') ||\n  ($('AI Agent').item.json.output || '').includes('coordinar la revisión')\n) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "99c39c9d-645b-417e-b0bb-9e2448f6c591",
+              "name": "productos_detectados",
+              "value": "={{ (() => {   const output = ($('AI Agent').item.json.output || '').toLowerCase();   const categorias = ['laptop','monitor','mouse','teclado','tablet','tv','televisor','cargador','cable','headset','audífono','bocina','disco','ram','memoria','impresora'];   return categorias.filter(c => output.includes(c)).join(', '); })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -5584,
+        592
+      ],
+      "id": "b6fde95d-7e05-44d0-8f00-62c8f7b0af29",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst assistantMessage = input.output || '';\nconst sessionId = input.session_id || '';\nconst userNumber = input.user_number || '';\nconst userName = input.user_name || '';\nconst userMessage = input.chat_input || '';\nconst textoCompleto = (userMessage + ' ' + assistantMessage).toLowerCase();\nconst mensajeAsistenteLower = assistantMessage.toLowerCase();\n\nconst messageContentType = input.message_content_type || '';\nconst esImagen = messageContentType === 'image';\n\nconst palabrasInteres = ['cuánto cuesta','precio','disponible','tiene','laptop','monitor','mouse','teclado','tablet','me interesa','quiero','busco','necesito','recomendación','cuál','mejor','opciones','tv','televisor','aire','cargador','cable','headset','audífono','bocina','mochila','disco','ram','memoria','reloj','impresora'];\nconst hayInteres = palabrasInteres.some(p => textoCompleto.includes(p));\n\nconst palabrasCompra = ['voy a comprar','lo compro','comprar','proceder con la compra','quiero comprarlo','mi pedido','hacer el pedido','realizar pedido','confirmar pedido','datos de entrega','metodo de pago','método de pago','cómo pago','como pago','transferencia','envío','envio','delivery','recoger en tienda','ya compre','ya lo compre','ya pague','ya transferi','ya compré','ya lo compré','ya pagué','ya transferí','lo compre','lo compré','tarjeta'];\nconst compraFinalizada = palabrasCompra.some(p => textoCompleto.includes(p));\n\nconst usuarioMencionaPagoTexto = userMessage.toLowerCase().includes('transacci') || userMessage.toLowerCase().includes('monto') || userMessage.toLowerCase().includes('rd$') || userMessage.toLowerCase().includes('banco') || userMessage.toLowerCase().includes('comprobante') || userMessage.toLowerCase().includes('transferi') || userMessage.toLowerCase().includes('pague') || userMessage.toLowerCase().includes('tarjeta');\n\nconst asistenteHabloDeBank = mensajeAsistenteLower.includes('banco popular') || mensajeAsistenteLower.includes('cuenta corriente') || mensajeAsistenteLower.includes('datos para realizar el pago') || mensajeAsistenteLower.includes('comprobante') || mensajeAsistenteLower.includes('transferencia');\nconst asistenteConfirmaRecepcion = mensajeAsistenteLower.includes('comprobante recibido') || mensajeAsistenteLower.includes('pedido está siendo verificado') || mensajeAsistenteLower.includes('siendo verificado') || mensajeAsistenteLower.includes('verificaremos el pago');\n\nconst imagenEsComprobante = esImagen && asistenteHabloDeBank;\nconst textoEsComprobante = usuarioMencionaPagoTexto && asistenteConfirmaRecepcion;\nconst esComprobante = imagenEsComprobante || textoEsComprobante;\n\nconst confirmacionCECompleta = mensajeAsistenteLower.includes('pedido confirmado') && mensajeAsistenteLower.includes('contra entrega') && (mensajeAsistenteLower.includes('pago: al recibir') || mensajeAsistenteLower.includes('pago al recibir') || mensajeAsistenteLower.includes('en breve un agente'));\n\nconst usuarioConfirmoEntrega = !userMessage.toLowerCase().includes('?') && (userMessage.toLowerCase().includes('si') || userMessage.toLowerCase().includes('sí') || userMessage.toLowerCase().includes('ok') || userMessage.toLowerCase().includes('calle') || userMessage.toLowerCase().includes('sector') || userMessage.toLowerCase().includes('av.') || userMessage.toLowerCase().includes('avenida') || userMessage.toLowerCase().includes('urbanización') || userMessage.toLowerCase().includes('vivo en') || userMessage.length > 20);\n\nconst esContraEntrega = confirmacionCECompleta && usuarioConfirmoEntrega;\n\nlet productosCE = '';\nlet direccionCE = '';\n\nif (esContraEntrega) {\n  const matchProducto = assistantMessage.match(/📦 Producto:\\s*([^\\n]+)/i) || assistantMessage.match(/Producto:\\s*([^\\n]+)/i);\n  if (matchProducto) productosCE = matchProducto[1].trim();\n  const matchDireccionBot = assistantMessage.match(/📍 Dirección:\\s*([^\\n]+)/i) || assistantMessage.match(/Dirección:\\s*([^\\n]+)/i);\n  const matchDireccionUsuario = userMessage.match(/(?:vivo en|mi dirección es|dirección:|calle|sector|av\\.|avenida|urbanización)\\s*([^\\n.]+)/i);\n  if (matchDireccionBot) { direccionCE = matchDireccionBot[1].trim(); } else if (matchDireccionUsuario) { direccionCE = matchDireccionUsuario[1].trim(); } else if (userMessage.length > 15 && !userMessage.toLowerCase().includes('si') && !userMessage.toLowerCase().includes('ok')) { direccionCE = userMessage.trim(); }\n}\n\nconst categorias = ['laptop','monitor','mouse','teclado','tablet','tv','televisor','aire acondicionado','cargador','cable','headset','audífono','bocina','mochila','disco','ram','memoria','reloj','impresora'];\nconst productosMencionados = categorias.filter(c => textoCompleto.includes(c));\n\nconst preciosMencionados = assistantMessage.match(/RD\\$\\s?[\\d,]+/g) || [];\nlet precioEstimado = null;\nif (preciosMencionados.length > 0) { precioEstimado = parseFloat(preciosMencionados[0].replace(/[RD$,\\s]/g, '')); }\n\nreturn {\n  json: {\n    session_id: sessionId,\n    user_number: userNumber,\n    user_name: userName,\n    hay_interes: hayInteres,\n    compra_finalizada: compraFinalizada,\n    es_comprobante: esComprobante,\n    es_imagen: esImagen,\n    es_contra_entrega: esContraEntrega,\n    precio_estimado: precioEstimado,\n    productos_mencionados: productosMencionados,\n    productos_ce: productosCE || productosMencionados.join(', '),\n    direccion_ce: direccionCE,\n    mensaje_usuario: userMessage,\n    mensaje_asistente: assistantMessage,\n    timestamp: new Date().toISOString(),\n    _debug: { es_imagen: esImagen, asistente_hablo_de_bank: asistenteHabloDeBank, imagen_es_comprobante: imagenEsComprobante, texto_es_comprobante: textoEsComprobante }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5360,
+        576
+      ],
+      "id": "dd64149a-1222-4bd4-be60-17f05039aa0e",
+      "name": "Analizar Intención Compra"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "filter-from-me",
+              "leftValue": "={{ $json.body.data.key.fromMe }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -10128,
+        608
+      ],
+      "id": "920ec807-58e3-4469-939e-13c16785af6b",
+      "name": "¿Es mensaje del cliente?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-admin",
+              "leftValue": "={{ $('Normalizacion').item.json.user_phone }}",
+              "rightValue": "18496260800",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -9664,
+        592
+      ],
+      "id": "a259da20-df8c-44c3-8143-f7a5536884a6",
+      "name": "¿Es Admin?"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "d7f65e74-71fd-4f90-84be-2c4301aa6412",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -10320,
+        608
+      ],
+      "id": "26f1b71c-789b-4f15-8259-0cc6af531b6f",
+      "name": "Webhook",
+      "webhookId": "d7f65e74-71fd-4f90-84be-2c4301aa6412"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nconst mensaje = input.message_content.toLowerCase();\n\nconst patronesCancelacion = ['cancelar pedido','cancelar el pedido','deposito no llego','depósito no llegó','comprobante falso','rechazar pedido','pedido falso','no llegó el pago','no llego el pago'];\nconst patronesAprobacion = ['aprobar pedido','aprobar el pedido','pedido aprobado','pago verificado','pago confirmado','confirmar pedido','aprobar'];\nconst patronesRechazo = ['rechazar','rechazado','no aprobar','pago no verificado','comprobante invalido','comprobante inválido'];\n\nconst esCancelacion = patronesCancelacion.some(p => mensaje.includes(p));\nconst esAprobacion = patronesAprobacion.some(p => mensaje.includes(p));\nconst esRechazo = patronesRechazo.some(p => mensaje.includes(p));\n\nconst matchNumero = mensaje.match(/\\b1?8[0-9]{9}\\b/);\nconst numeroCliente = matchNumero ? matchNumero[0] : null;\n\nreturn [{\n  json: {\n    ...input,\n    es_cancelacion: esCancelacion,\n    es_aprobacion: esAprobacion,\n    es_rechazo: esRechazo,\n    numero_cliente: numeroCliente,\n    mensaje_admin: mensaje\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9472,
+        464
+      ],
+      "id": "80cc5518-b420-4a1e-a6c8-9f020c078d35",
+      "name": "🔍 Procesar Comando Admin"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.es_aprobacion }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Aprobar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.es_rechazo }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rechazar"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Otro"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -9120,
+        -80
+      ],
+      "id": "0a4c3a18-4b08-452e-8d29-df082c7db30c",
+      "name": "¿Qué acción admin?"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "pedidos",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "cliente_numero",
+              "condition": "eq",
+              "keyValue": "={{ $json.numero_cliente ? $json.numero_cliente + '@s.whatsapp.net' : '' }}"
+            },
+            {
+              "keyName": "estado",
+              "condition": "eq",
+              "keyValue": "pendiente"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "rechazado"
+            },
+            {
+              "fieldId": "notas_gerencia",
+              "fieldValue": "=Rechazado por admin: {{ $json.mensaje_admin }}"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -8800,
+        -176
+      ],
+      "id": "7c46c1bb-ccff-4f0d-9200-e354f894fce3",
+      "name": "❌ Rechazar Pedido Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $('🔍 Procesar Comando Admin').item.json.numero_cliente }}"
+            },
+            {
+              "name": "text",
+              "value": "=❌ *Tu pago no pudo ser verificado*\n\nLamentablemente no pudimos verificar tu comprobante de pago.\n\n¿Qué puedes hacer?\n• Envía nuevamente el comprobante original\n• Verifica que el monto y los datos sean correctos\n• Contáctanos si crees que es un error\n\n¿Necesitas ayuda? Estamos aquí para asistirte. 😊"
+            },
+            {
+              "name": "delay",
+              "value": "={{ 1000 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8592,
+        -272
+      ],
+      "id": "cfe79633-2e24-41c6-aea8-f926b97e63f4",
+      "name": "📲 Notificar Cliente Rechazo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "18492588738"
+            },
+            {
+              "name": "text",
+              "value": "✅ Pedido rechazado correctamente. Cliente notificado."
+            },
+            {
+              "name": "delay",
+              "value": "={{ 500 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8592,
+        -80
+      ],
+      "id": "7bcfb4f6-824f-469c-9c9b-17262fc632ba",
+      "name": "✅ Confirmar Admin Rechazo"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "inv-001",
+              "name": "inventario_completo",
+              "value": "={{ (() => {\n  const items = $('📦 Cargar Inventario').item.json.result\n    .filter(p => p.virtual_available > 0);\n\n  const keywordsLaptop = ['chromebook','thinkpad','ideapad','latitude','macbook','edu gear','evvo','yoga','probook','elitebook','inspiron','precision','aspire','travelmate','alienware','chrobook','c771','thinkpad x131','thinkpad 11e','thinkpad t4','thinkpad t47','thinkpad e5','thinkpad x1','hp 15-','hp envy x360','dell chromebook','dell latitude','dell inspiron','dell precision','lenovo 100e','lenovo thinkpad','lenovo ideapad','lenovo yoga','laptop lenovo','laptop dell','laptop hp','laptop evvo'];\n  const keywordsExcluir = ['cargador','bateria','batería','monitor','teclado','mouse','cartucho','impresora','memoria usb','pieza','caddy','stand','soporte','bulto','stuche','estuche','funda','candado','lock','cooling pad','bracket','hub usb','desktop','thinkcentro','estacion de acoplamiento','headset','mdp to vga','combo teclado','cover lenovo','sky devices','board lenovo','mouse pad','alfombra','liteon','ssd','ngff','solid state','tablet acer b1','xtrike','concentrador usb','hp cargador','hp-318'];\n  const keywordsRed = ['repetidor','router','antena wifi','wireless-n','ethernet adapter','rj45','300mbps','linkzone','alcatel link','hotspot'];\n  const keywordsMonitor = ['monitor','pantalla'];\n  const keywordsImpresora = ['impresora','cartucho','tinta'];\n\n  const laptops = items.filter(p => { const nombre = p.name.toLowerCase(); return keywordsLaptop.some(k => nombre.includes(k)) && !keywordsExcluir.some(k => nombre.includes(k)); });\n  const red = items.filter(p => { const nombre = p.name.toLowerCase(); return keywordsRed.some(k => nombre.includes(k)) && !laptops.find(l => l.id === p.id); });\n  const monitores = items.filter(p => { const nombre = p.name.toLowerCase(); return keywordsMonitor.some(k => nombre.includes(k)) && !laptops.find(l => l.id === p.id); });\n  const impresoras = items.filter(p => { const nombre = p.name.toLowerCase(); return keywordsImpresora.some(k => nombre.includes(k)) && !laptops.find(l => l.id === p.id); });\n  const accesorios = items.filter(p => !laptops.find(l => l.id === p.id) && !red.find(r => r.id === p.id) && !monitores.find(m => m.id === p.id) && !impresoras.find(i => i.id === p.id));\n\n  const formatear = arr => arr.sort((a, b) => a.list_price - b.list_price).map(p => '- ' + p.name + ' | ID:' + (Array.isArray(p.product_variant_id) ? p.product_variant_id[0] : '') + ' | RD$' + p.list_price + ' | Stock: ' + p.virtual_available + ' | https://todolapto.com.do' + p.website_url + (p.description_sale ? ' | ' + p.description_sale : '')).join('\\n');\n\n  return '=== LAPTOPS (' + laptops.length + ' disponibles) ===\\n' + formatear(laptops) + '\\n\\n=== REPETIDORES Y REDES (' + red.length + ' disponibles) ===\\n' + formatear(red) + '\\n\\n=== MONITORES (' + monitores.length + ' disponibles) ===\\n' + formatear(monitores) + '\\n\\n=== IMPRESORAS (' + impresoras.length + ' disponibles) ===\\n' + formatear(impresoras) + '\\n\\n=== ACCESORIOS Y OTROS ===\\n' + formatear(accesorios);\n})() }}",
+              "type": "string"
+            },
+            {
+              "id": "inv-002",
+              "name": "chat_input",
+              "value": "={{ $('Process Context').item.json.chat_input }}",
+              "type": "string"
+            },
+            {
+              "id": "inv-003",
+              "name": "session_id",
+              "value": "={{ $('Process Context').item.json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "inv-004",
+              "name": "user_name",
+              "value": "={{ $('Process Context').item.json.user_name }}",
+              "type": "string"
+            },
+            {
+              "id": "inv-005",
+              "name": "message_content",
+              "value": "={{ $('Process Context').item.json.message_content }}",
+              "type": "string"
+            },
+            {
+              "id": "968f1972-653b-4eae-b1b3-73f59104ec1c",
+              "name": "telefono_cliente",
+              "value": "={{ $('Normalizacion').first().json.user_phone || $('📇 Buscar Teléfono Guardado').first()?.json?.telefono || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -7008,
+        624
+      ],
+      "id": "55ceaf2f-64e8-44f6-b8c8-307165e9d4bc",
+      "name": "📋 Preparar Contexto"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nconst userMessage = input.mensaje_usuario || '';\nconst assistantMessage = input.mensaje_asistente || '';\nconst sessionId = input.session_id || '';\nconst userNumber = input.user_number || '';\nconst userName = input.user_name || '';\nconst textoCompleto = (userMessage + ' ' + assistantMessage).toLowerCase();\nconst patronesNoInteresado = ['no me interesa','no quiero','no gracias','ya no','muy caro','no tengo dinero','no me llama','cambié de opinión','ya compré en otro lado','no me gusta','no lo necesito','ya no lo quiero'];\nconst esNoInteresado = patronesNoInteresado.some(p => textoCompleto.includes(p));\nconst patronesFecha = [/el (\\d+)/i,/en (\\d+) d[ií]as?/i,/la pr[óo]xima semana/i,/cuando cobre/i,/cuando me paguen/i,/puede ser el/i,/lo har[ée] el/i,/te estaré contactando el/i,/te contactaré el/i];\nconst detectoFecha = patronesFecha.some(p => p.test(textoCompleto));\nlet fechaProgramada = null;\nif (detectoFecha) {\n  const ahora = new Date();\n  const matchDia = textoCompleto.match(/el (\\d+)/);\n  if (matchDia) { const dia = parseInt(matchDia[1]); fechaProgramada = new Date(ahora.getFullYear(), ahora.getMonth(), dia, 10, 0, 0); if (fechaProgramada < ahora) fechaProgramada.setMonth(fechaProgramada.getMonth() + 1); }\n  const matchDias = textoCompleto.match(/en (\\d+) d[ií]as?/);\n  if (matchDias) { fechaProgramada = new Date(ahora); fechaProgramada.setDate(fechaProgramada.getDate() + parseInt(matchDias[1])); fechaProgramada.setHours(10, 0, 0, 0); }\n  if (/la pr[óo]xima semana/i.test(textoCompleto)) { fechaProgramada = new Date(ahora); fechaProgramada.setDate(fechaProgramada.getDate() + 7); fechaProgramada.setHours(10, 0, 0, 0); }\n  if (/cuando cobre|cuando me paguen/i.test(textoCompleto)) { fechaProgramada = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 10, 0, 0); }\n}\nconst patronesCompra = ['ya compré','ya lo compré','ya pagué','ya transferí','ya compre','ya lo compre','ya pague','ya transferi','lo compre','lo compré'];\nconst compraRealizada = patronesCompra.some(p => textoCompleto.includes(p));\nreturn { json: { mensaje_asistente: assistantMessage, session_id: sessionId, user_number: userNumber, user_name: userName, es_no_interesado: esNoInteresado, detecto_fecha: detectoFecha, fecha_programada: fechaProgramada ? fechaProgramada.toISOString() : null, compra_realizada: compraRealizada, debe_ejecutar_supabase: esNoInteresado || detectoFecha || compraRealizada } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3296,
+        544
+      ],
+      "id": "1b946be1-4884-4301-9350-81f287c73b6d",
+      "name": "Detectar y Procesar Intenciones"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\nconst userMessage = input.mensaje_usuario || '';\nconst assistantMessage = input.mensaje_asistente || '';\nconst sessionId = input.session_id || '';\nconst userNumber = input.user_number || '';\nconst userName = input.user_name || '';\nconst textoCompleto = (userMessage + ' ' + assistantMessage).toLowerCase();\nconst patronesNoInteresado = ['no me interesa','no quiero','no gracias','ya no','muy caro','no tengo dinero','no me llama','cambié de opinión','ya compré en otro lado','no me gusta','no lo necesito','ya no lo quiero'];\nconst esNoInteresado = patronesNoInteresado.some(p => textoCompleto.includes(p));\nconst patronesFecha = [/el (\\d+)/i,/en (\\d+) d[ií]as?/i,/la pr[óo]xima semana/i,/cuando cobre/i,/cuando me paguen/i,/puede ser el/i,/lo har[ée] el/i,/te estaré contactando el/i,/te contactaré el/i];\nconst detectoFecha = patronesFecha.some(p => p.test(textoCompleto));\nlet fechaProgramada = null;\nif (detectoFecha) {\n  const ahora = new Date();\n  const matchDia = textoCompleto.match(/el (\\d+)/);\n  if (matchDia) { const dia = parseInt(matchDia[1]); fechaProgramada = new Date(ahora.getFullYear(), ahora.getMonth(), dia, 10, 0, 0); if (fechaProgramada < ahora) fechaProgramada.setMonth(fechaProgramada.getMonth() + 1); }\n  const matchDias = textoCompleto.match(/en (\\d+) d[ií]as?/);\n  if (matchDias) { fechaProgramada = new Date(ahora); fechaProgramada.setDate(fechaProgramada.getDate() + parseInt(matchDias[1])); fechaProgramada.setHours(10, 0, 0, 0); }\n  if (/la pr[óo]xima semana/i.test(textoCompleto)) { fechaProgramada = new Date(ahora); fechaProgramada.setDate(fechaProgramada.getDate() + 7); fechaProgramada.setHours(10, 0, 0, 0); }\n  if (/cuando cobre|cuando me paguen/i.test(textoCompleto)) { fechaProgramada = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 10, 0, 0); }\n}\nconst patronesCompra = ['ya compré','ya lo compré','ya pagué','ya transferí','ya compre','ya lo compre','ya pague','ya transferi','lo compre','lo compré'];\nconst compraRealizada = patronesCompra.some(p => textoCompleto.includes(p));\nreturn [{ json: { mensaje_asistente: assistantMessage, session_id: sessionId, user_number: userNumber, user_name: userName, es_no_interesado: esNoInteresado, detecto_fecha: detectoFecha, fecha_programada: fechaProgramada ? fechaProgramada.toISOString() : null, compra_realizada: compraRealizada, debe_ejecutar_supabase: esNoInteresado || detectoFecha || compraRealizada } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3088,
+        544
+      ],
+      "id": "bc306add-bcbf-46b5-a06b-d00ca70db34d",
+      "name": "Ejecutar Funciones Supabase"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-compra",
+              "leftValue": "={{ $('Analizar Intención Compra').item.json.compra_finalizada }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2768,
+        144
+      ],
+      "id": "c307e91a-7d87-4c0b-b50a-3d0ad0457a73",
+      "name": "¿Compra Realizada?"
+    },
+    {
+      "parameters": {
+        "tableId": "recordatorios_seguimiento",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $json.session_id }}"
+            },
+            {
+              "fieldId": "user_number",
+              "fieldValue": "={{ $json.user_number }}"
+            },
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $json.user_name }}"
+            },
+            {
+              "fieldId": "productos_interes",
+              "fieldValue": "={{ $('Analizar Intención Compra').item.json.productos_mencionados ? $('Analizar Intención Compra').item.json.productos_mencionados.join(', ') : '' }}"
+            },
+            {
+              "fieldId": "fecha_seguimiento",
+              "fieldValue": "={{ new Date(Date.now() + 24*60*60*1000).toISOString() }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "pendiente"
+            },
+            {
+              "fieldId": "origen",
+              "fieldValue": "automatico"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -3008,
+        112
+      ],
+      "id": "f01c8bee-b13e-403a-9b27-fbb6623d8dab",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "useCustomSchema": true,
+        "tableId": "recordatorios_seguimiento",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Analizar Intención Compra').item.json.session_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "cancelado"
+            },
+            {
+              "fieldId": "motivo_cancelacion",
+              "fieldValue": "Cliente realizó la compra"
+            },
+            {
+              "fieldId": "cliente_respondio",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -2528,
+        32
+      ],
+      "id": "3bab9937-f346-4f6e-8bf4-8e628ac3591f",
+      "name": "❌ Cancelar Seguimiento",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "recordatorios_seguimiento",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Analizar Intención Compra').item.json.session_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "fecha_seguimiento",
+              "fieldValue": "={{ new Date(Date.now() + 24*60*60*1000).toISOString() }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "pendiente"
+            },
+            {
+              "fieldId": "intentos_contacto",
+              "fieldValue": "=0"
+            },
+            {
+              "fieldId": "productos_interes",
+              "fieldValue": "={{ $json.productos_mencionados ? $json.productos_mencionados.join(', ') : '' }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -2528,
+        256
+      ],
+      "id": "352266e5-2864-4c4a-8da2-4688a7a30194",
+      "name": "🔄 Actualizar Fecha Seguimiento",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "recordatorios_seguimiento",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "user_number",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalizacion').item.json.user_number }}"
+            },
+            {
+              "keyName": "estado",
+              "condition": "eq",
+              "keyValue": "pendiente"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "productos_interes",
+              "fieldValue": "={{ $('Analizar Intención Compra').item.json.productos_mencionados && $('Analizar Intención Compra').item.json.productos_mencionados.length > 0 ? $('Analizar Intención Compra').item.json.productos_mencionados.join(', ') : '' }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -4672,
+        592
+      ],
+      "id": "cff76f83-53ce-42d9-a7a2-314e68fac2ba",
+      "name": "🏷️ Actualizar Producto Interés",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "check-interes",
+              "leftValue": "={{ $('Analizar Intención Compra').item.json.hay_interes }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5120,
+        576
+      ],
+      "id": "82e1ee38-0c02-4b9e-9c7d-e8490d573d3b",
+      "name": "¿Hay interés en producto?"
+    },
+    {
+      "parameters": {
+        "tableId": "recordatorios_seguimiento",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $('Process Context').item.json.session_id }}"
+            },
+            {
+              "fieldId": "user_number",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_number }}"
+            },
+            {
+              "fieldId": "user_name",
+              "fieldValue": "={{ $('Normalizacion').item.json.user_name }}"
+            },
+            {
+              "fieldId": "productos_interes",
+              "fieldValue": "={{ $('Analizar Intención Compra').item.json.productos_mencionados && $('Analizar Intención Compra').item.json.productos_mencionados.length > 0 ? $('Analizar Intención Compra').item.json.productos_mencionados.join(', ') : '' }}"
+            },
+            {
+              "fieldId": "fecha_seguimiento",
+              "fieldValue": "={{ new Date(Date.now() + 5*60*1000).toISOString() }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "pendiente"
+            },
+            {
+              "fieldId": "origen",
+              "fieldValue": "automatico"
+            },
+            {
+              "fieldId": "intentos_contacto",
+              "fieldValue": "=0"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -4896,
+        464
+      ],
+      "id": "5683e84d-ced1-41da-a3f9-91adb6664193",
+      "name": "📌 Crear Seguimiento por Interés",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🛡️ ANTI-DUPLICADO — Bloquea ejecuciones repetidas del mismo mensaje\nconst messageId = $input.item.json.body?.data?.key?.id || '';\nconst fromMe = $input.item.json.body?.data?.key?.fromMe;\nconst event = $input.item.json.body?.event || '';\n\n// 1. Filtrar mensajes propios del bot\nif (fromMe === true) {\n  return [];\n}\n\n// 2. Filtrar eventos que no sean mensajes nuevos\nif (event !== 'messages.upsert') {\n  return [];\n}\n\n// 3. Filtrar si no hay message_id\nif (!messageId) {\n  return [];\n}\n\n// 4. Deduplicación usando variable global en memoria de n8n\n// Usamos $execution.id para tener contexto de ejecución\nconst cacheKey = 'processed_msg_' + messageId;\n\n// Revisar si ya procesamos este message_id en los últimos 30 segundos\nconst ahora = Date.now();\nconst ventana = 30000; // 30 segundos\n\n// Acceder al store global de n8n (workflow static data)\nconst staticData = $getWorkflowStaticData('global');\n\nif (!staticData.mensajesProcesados) {\n  staticData.mensajesProcesados = {};\n}\n\n// Limpiar mensajes viejos (más de 60 segundos)\nfor (const id in staticData.mensajesProcesados) {\n  if (ahora - staticData.mensajesProcesados[id] > 60000) {\n    delete staticData.mensajesProcesados[id];\n  }\n}\n\n// Si ya procesamos este mensaje recientemente → bloquear\nif (staticData.mensajesProcesados[messageId] && \n    ahora - staticData.mensajesProcesados[messageId] < ventana) {\n  console.log('DUPLICADO BLOQUEADO: ' + messageId);\n  return []; // Detiene la ejecución\n}\n\n// Marcar como procesado\nstaticData.mensajesProcesados[messageId] = ahora;\n\n// Continuar con el flujo normal\nreturn [$input.item];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10528,
+        608
+      ],
+      "id": "604756f3-c15f-455a-80bd-56fed530bed6",
+      "name": "🛡️ Anti-Duplicado"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chat_input }}",
+        "options": {
+          "systemMessage": "=# TODO LAPTO — AGENTE DE VENTAS\n\n## 1. IDENTIDAD Y MISIÓN\n\nEres el asistente oficial de ventas de **Todo Lapto**.\n\nTu objetivo principal es **VENDER y ayudar al cliente a completar su compra**.\n\nAtiendes:\n\n* Ventas\n* Catálogo e inventario\n* Recomendaciones\n* Reparaciones\n* Descuentos\n* Solicitudes de fotos\n* Visitas a tienda\n* Vacantes\n* Anuncios\n* Pagos\n* Pedidos\n* Seguimiento de pedidos\n\nTú decides qué acción corresponde según el mensaje actual + historial de conversación + inventario disponible.\n\n### PRINCIPIO PRINCIPAL\n\nAntes de responder:\n\n1. Lee el mensaje actual.\n2. Revisa el historial.\n3. Revisa los datos disponibles del cliente.\n4. Determina la intención.\n5. Verifica el inventario cuando sea necesario.\n6. Decide si corresponde usar una tool.\n7. Ejecuta las tools necesarias respetando su orden.\n8. Responde al cliente únicamente con el mensaje final.\n\nNunca expliques tu razonamiento interno.\n\n---\n\n# 2. REGLAS ABSOLUTAS\n\nEstas reglas tienen prioridad sobre cualquier otra instrucción.\n\n### 2.1 INVENTARIO\n\nEl inventario proporcionado en esta conversación es la **ÚNICA FUENTE DE VERDAD** sobre:\n\n* Productos\n* Precios\n* Stock\n* Links\n* IDs de productos\n\nNunca inventes productos.\n\nNunca inventes precios.\n\nNunca inventes stock.\n\nNunca inventes links.\n\nEl campo `ID` existe únicamente para ejecutar tools.\n\n**Nunca muestres IDs internos al cliente.**\n\nSi el stock es `0`, considera que el producto no está disponible.\n\n---\n\n### 2.2 HISTORIAL\n\nUsa siempre el historial.\n\nNo vuelvas a preguntar información que el cliente ya proporcionó.\n\nEsto incluye:\n\n* Nombre\n* Producto\n* Presupuesto\n* Uso\n* Zona\n* Método de pago\n* Dirección\n* Teléfono\n* Cualquier otro dato necesario que ya esté disponible\n\nSi el cliente responde:\n\n* \"sí\"\n* \"dale\"\n* \"ok\"\n* \"ta bien\"\n* \"bueno\"\n* \"vamo\"\n* \"sí, vamos\"\n\ninterpreta la respuesta según el contexto de tu último mensaje y continúa el proceso.\n\nNo vuelvas hacia atrás innecesariamente.\n\n---\n\n### 2.3 TOOLS\n\nLas tools son internas.\n\nNunca muestres al cliente:\n\n* nombres de tools\n* IDs internos\n* JSON\n* parámetros internos\n* errores técnicos\n* respuestas internas de herramientas\n\nDespués de utilizar una tool, responde normalmente al cliente.\n\nUsa una tool solamente cuando la situación realmente corresponda.\n\nNo ejecutes la misma tool dos veces para la misma situación salvo que una nueva acción sea necesaria.\n\n---\n\n# 3. TELÉFONO DEL CLIENTE\n\nTeléfono detectado:\n\n`{{ $json.telefono_cliente || 'NO DISPONIBLE' }}`\n\n### Si el teléfono está disponible\n\nUtiliza ese mismo número en las tools.\n\nFormato:\n\n* Solo dígitos.\n* Con código de país.\n* Ejemplo: `18091234567`.\n* Si tiene 10 dígitos, antepone `1`.\n\nNo vuelvas a pedir el teléfono.\n\n### Si aparece `NO DISPONIBLE`\n\nAntes de:\n\n* notificar al equipo\n* crear un pedido\n\ndebes pedir:\n\n\"¿Me confirmas tu número de teléfono para que nuestro equipo pueda contactarte?\"\n\nEspera la respuesta.\n\nCuando el cliente proporcione el número:\n\n1. Ejecuta `guardar_telefono_cliente(telefono)` una sola vez.\n2. Usa ese teléfono posteriormente en las tools.\n\n### EXCEPCIÓN\n\nNo necesitas pedir teléfono para:\n\n* preguntas normales de venta\n* reparaciones CASO A\n\n---\n\n# 4. INVENTARIO DINÁMICO\n\nInventario disponible:\n\n`{{ $json.inventario_completo }}`\n\nAntes de responder preguntas relacionadas con productos:\n\n1. Revisa el inventario completo cuando la consulta requiera catálogo o búsqueda.\n2. No te detengas en el primer producto encontrado.\n3. Verifica precio y stock.\n4. Usa el ID únicamente internamente.\n\nEl encabezado del inventario indica la cantidad de productos por categoría.\n\nCuando sea necesario presentar una categoría completa, verifica que hayas recorrido todos los productos correspondientes.\n\n---\n\n# 5. REGLA DE LISTAS COMPLETAS\n\nCuando el cliente solicite un catálogo o lista completa:\n\nDEBES:\n\n* Mostrar todos los productos correspondientes.\n* Numerar cada producto.\n* Mostrar cada producto en su propio bloque.\n* Llegar hasta el último producto.\n* Mostrar nombre, precio, stock y link cuando corresponda.\n\nNO PUEDES:\n\n* resumir\n* truncar\n* decir \"...y más\"\n* decir \"entre otros\"\n* preguntar si quiere ver el resto\n* mostrar solamente algunos productos\n\nNunca escribas:\n\n\"y más...\"\n\n\"hay otros modelos...\"\n\n\"¿quieres ver más?\"\n\n---\n\n# 6. DETECCIÓN DE INTENCIÓN\n\nAntes de responder, clasifica mentalmente el mensaje en una de estas categorías:\n\n1. Venta / producto\n2. Catálogo\n3. Recomendación\n4. Comparación\n5. Pedido\n6. Pago\n7. Comprobante\n8. Reparación\n9. Descuento\n10. Fotos\n11. Visita a tienda\n12. Vacante\n13. Producto no encontrado\n14. Anuncio\n15. Información de tienda\n16. Garantía\n17. Venta de equipo usado al negocio\n18. Imagen / video / documento / sticker / ubicación\n19. Otro\n\nDespués aplica las reglas específicas de esa intención.\n\n---\n\n# 7. CATÁLOGO DE LAPTOPS\n\nCuando el cliente diga algo como:\n\n* \"qué laptops tienen\"\n* \"cuáles tienen\"\n* \"muéstrame las laptops\"\n* \"catálogo\"\n* \"qué computadoras tienen\"\n* \"las más económicas\"\n* \"qué equipos tienen\"\n\nhaz lo siguiente:\n\n### PASO 1\n\nRecorre el inventario completo.\n\n### PASO 2\n\nIdentifica productos que correspondan a laptops.\n\nIncluye productos cuyo nombre contenga términos como:\n\n* laptop\n* chromebook\n* notebook\n* ThinkPad\n* IdeaPad\n* Yoga\n* Latitude\n* Inspiron\n* Precision\n* ProBook\n* EliteBook\n* Pavilion\n* ENVY\n* Aspire\n* TravelMate\n* Alienware\n* EDU GEAR\n* Lenovo N22\n* Lenovo N24\n* EVVO\n\n### PASO 3\n\nExcluye productos que no sean laptops.\n\n### PASO 4\n\nOrdénalos de menor a mayor precio.\n\n### PASO 5\n\nMuestra TODOS los modelos.\n\nFormato:\n\n🖥️ *Catálogo completo de laptops — Todo Lapto*\n\n*(X modelos disponibles)*\n\n1️⃣ *NOMBRE COMPLETO*\n💰 RD$PRECIO | 📦 STOCK unidad(es)\n🔗 LINK\n\n2️⃣ *NOMBRE COMPLETO*\n💰 RD$PRECIO | 📦 STOCK unidad(es)\n🔗 LINK\n\nContinúa hasta el último producto.\n\nFinaliza:\n\n*¿Cuál te interesa? Te ayudo a procesarlo ahora mismo.* 🛒\n\n---\n\n# 8. VENTA ACTIVA\n\nTu objetivo no es únicamente informar.\n\nTu objetivo es avanzar la conversación hacia una compra.\n\nDespués de proporcionar:\n\n* producto\n* precio\n* stock\n\ntermina con una pregunta de cierre.\n\nEjemplos:\n\n\"¿Te lo aparto ahora mismo?\"\n\n\"¿Avanzamos con tu pedido?\"\n\nNo dejes una respuesta de producto únicamente informativa si puedes avanzar hacia el cierre.\n\n---\n\n# 9. RECOMENDACIONES\n\nSi el cliente pregunta:\n\n\"¿Cuál me recomiendas?\"\n\ny todavía NO indicó:\n\n* uso\n* presupuesto\n\npregunta:\n\n\"¿Para qué la vas a usar principalmente (trabajo, estudio, gaming) y qué presupuesto tienes en mente?\"\n\nNo envíes el catálogo completo antes de obtener esos datos si la intención es una recomendación personalizada.\n\n### SI EL CLIENTE YA DIO USO Y PRESUPUESTO\n\nSelecciona una opción disponible que encaje con esos datos.\n\nExplica brevemente por qué.\n\nNo presentes una lista interminable de opciones si puedes recomendar una concreta.\n\nTermina con cierre.\n\n---\n\n# 10. COMPARACIONES\n\nSi el cliente compara dos o más productos:\n\n1. Compara las opciones disponibles.\n2. Considera el uso indicado por el cliente.\n3. Recomienda UNA opción.\n4. Explica en una línea el motivo.\n5. Lleva directamente al cierre.\n\nNo dejes al cliente indeciso.\n\n---\n\n# 11. UPSELL\n\nCuando el cliente confirme que quiere una laptop:\n\nANTES de pedir el método de pago:\n\nBusca un accesorio relevante disponible en el inventario.\n\nEjemplos:\n\n* mouse\n* mochila\n* cargador\n* base enfriadora\n\nOfrece solamente UN accesorio.\n\nFormato:\n\n\"🎒 Por cierto, tenemos [ACCESORIO] a RD$[PRECIO] — ¿lo agregamos?\"\n\nSi responde que no:\n\nContinúa el pedido.\n\nNo vuelvas a insistir con otro accesorio.\n\n---\n\n# 12. URGENCIA\n\nSolo utiliza urgencia cuando esté respaldada por el inventario.\n\nSi quedan:\n\n* 1 unidad\n* 2 unidades\n\npuedes decir:\n\n\"Nos queda solo 1 unidad disponible.\"\n\nNunca inventes escasez.\n\n---\n\n# 13. MÉTODO DE PAGO\n\nRegla crítica:\n\n**No preguntes el método de pago más de una vez.**\n\nSi ya aparece en el historial, utiliza ese método.\n\nSi el cliente responde afirmativamente a la pregunta de pago, interpreta su respuesta según el contexto y continúa.\n\nSi necesitas preguntar:\n\n\"¿Prefieres efectivo, transferencia o tarjeta?\"\n\nNo repitas nuevamente la lista completa después.\n\n---\n\n# 14. ZONAS DE ENTREGA\n\n### SANTO DOMINGO Y ÁREA METROPOLITANA\n\nSe permite contra entrega.\n\nIncluye:\n\n* Santo Domingo\n* Santo Domingo Este\n* Santo Domingo Oeste\n* Santo Domingo Norte\n* Los Alcarrizos\n* Pedro Brand\n* Boca Chica\n* San Cristóbal cercano\n\n### FUERA DE ESA ZONA\n\nNo existe contra entrega.\n\nEsto incluye:\n\n* Santiago\n* La Vega\n* Puerto Plata\n* San Francisco de Macorís\n* Higüey\n* Barahona\n* San Pedro de Macorís\n* Cibao\n* cualquier otra provincia fuera del Gran Santo Domingo\n\nSi el cliente está fuera de Santo Domingo responde EXACTAMENTE:\n\n\"🚚 Para envíos fuera de Santo Domingo, el pago debe ser por transferencia bancaria antes del envío. Una vez confirmado el pago, coordinamos el envío por empresa de mensajería hasta tu dirección. ¿Te interesa continuar con la transferencia?\"\n\nNunca ofrezcas contra entrega fuera de Santo Domingo.\n\n---\n\n# 15. PROCESO DE PEDIDO\n\n## PASO 1 — DETERMINAR ZONA Y PAGO\n\n### Si está en Santo Domingo\n\nSi todavía no conoce el método de pago:\n\n\"¿Cómo prefieres pagar? 😊\n1️⃣ *Efectivo* — pagas en efectivo cuando llegue el producto\n2️⃣ *Transferencia* — pagas antes y coordinamos el envío\n3️⃣ *Tarjeta* — pagas con tarjeta al recibir o visitando nuestra tienda\"\n\n### Si está fuera de Santo Domingo\n\nSolo transferencia.\n\nUtiliza el mensaje definido en ZONAS DE ENTREGA.\n\n---\n\n# 16. PEDIDO — CONTRA ENTREGA\n\nSolo permitido dentro de Santo Domingo y área metropolitana.\n\nAntes de crear el pedido debes tener:\n\n* producto\n* precio\n* nombre\n* dirección\n* teléfono si era necesario solicitarlo\n\nConfirma:\n\n\"✅ Perfecto, tengo todo listo:\n📦 Producto: [NOMBRE]\n💰 Precio: RD$[PRECIO]\n👤 Nombre: [NOMBRE CLIENTE]\n📍 Dirección: [DIRECCIÓN]\n🚚 Pago: Al recibir en efectivo\n\n¿Confirmamos el pedido? 🛒\"\n\nSolo cuando el cliente confirme:\n\n### ORDEN OBLIGATORIO DE TOOLS\n\n1. `odoo_buscar_cliente`\n\n2. Si no existe:\n   `odoo_crear_cliente`\n\n3. `odoo_crear_cotizacion`\n\nParámetros:\n\n* `partner_id`\n* `metodo_pago=\"Contra Entrega\"`\n* `direccion`\n* `product_id` = ID interno del inventario\n* `precio` = número sin comas\n* `nombre_producto`\n\n4. `registrar_pedido`\n\nParámetros:\n\n* producto = `\"NOMBRE RD$PRECIO\"`\n* dirección\n* metodo_pago = `\"contra entrega\"`\n* estado = `\"aprobado\"`\n* odoo_order_id\n\n5. `notificar_equipo`\n\nTipo:\n\n`🚚 NUEVO PEDIDO CONTRA ENTREGA`\n\nResumen:\n\n* producto\n* precio\n* dirección\n* ID de cotización\n\n### SOLO SI TODAS LAS OPERACIONES NECESARIAS TIENEN ÉXITO\n\nResponde:\n\n\"✅ *¡Tu pedido está confirmado!*\n📦 [PRODUCTO]\n📍 [DIRECCIÓN]\n🚚 Contra entrega\n🧾 Ref. de pedido: #[ID de cotización]\n\nNuestro equipo coordinará la entrega contigo. ¡Gracias por tu compra! 🎉\"\n\n---\n\n# 17. PEDIDO — TRANSFERENCIA\n\nCuando el cliente seleccione transferencia:\n\n1. Verifica dirección.\n2. Ejecuta `odoo_buscar_cliente`.\n3. Si no existe, ejecuta `odoo_crear_cliente`.\n4. Ejecuta `odoo_crear_cotizacion`.\n5. Ejecuta `registrar_pedido`.\n6. Ejecuta `notificar_equipo`.\n\n### CONFIGURACIÓN\n\n`odoo_crear_cotizacion`:\n\n`metodo_pago=\"Transferencia\"`\n\n`registrar_pedido`:\n\n`metodo_pago=\"transferencia\"`\n\n`estado=\"pendiente\"`\n\n`notificar_equipo`:\n\nTipo:\n\n`💳 NUEVO PEDIDO TRANSFERENCIA (esperando comprobante)`\n\nDespués responde:\n\n\"✅ *¡Perfecto! Datos para realizar tu pago:*\n\n🏦 *Banreservas* — Cta. Corriente: 9603638702 | Todo Lapto' SRL\n🏦 *Popular* — Cta. Ahorro: 852768712 | Dorys María Viola Suero\n🏦 *BHD* — Cta. Ahorro: 2923412015 | Juana Lucía Rodríguez V.\n🏦 *Santa Cruz* — Cta: 11432010004309 | Todo Lapto' SRL\n📋 RNC: 1-30-12345-6\n\n💡 Pasos:\n1️⃣ Transfiere el monto exacto\n2️⃣ Toma captura del comprobante\n3️⃣ Envíala aquí 📸\n\n🧾 Ref. de pedido: #[ID de cotización]\n\n¡En cuanto la recibamos procesamos tu pedido! 🎉\"\n\n---\n\n# 18. ANTI-DUPLICADO DE PEDIDOS\n\nAntes de crear un pedido:\n\nRevisa el historial.\n\nSi ya aparece:\n\n\"Ref. de pedido\"\n\npara el mismo producto y pedido:\n\nNO vuelvas a crear:\n\n* cliente\n* cotización\n* pedido\n* notificación\n\nSimplemente continúa la conversación utilizando la referencia existente.\n\n---\n\n# 19. ERROR EN PEDIDOS\n\nSi una tool de pedido:\n\n* falla\n* devuelve error\n* no devuelve el ID necesario\n\nNO confirmes el pedido.\n\nResponde:\n\n\"Dame un momento para confirmar tu pedido con nuestro sistema y te aviso enseguida 😊\"\n\nLuego notifica al equipo.\n\nEn el resumen incluye:\n\n`FALLÓ el registro automático`\n\nmás:\n\n* producto\n* precio\n* dirección\n* demás datos disponibles\n\n---\n\n# 20. REPARACIONES\n\n## CASO A — PREGUNTA GENERAL\n\nEjemplo:\n\n\"¿Reparan laptops?\"\n\nNO uses tool.\n\nResponde EXACTAMENTE:\n\n\"🔧 *¡Sí, reparamos laptops!*\n\n¿Cuál es el problema con tu equipo? Cuéntanos y te conectamos con nuestro técnico especialista. 😊\"\n\n---\n\n## CASO B — PROBLEMA ESPECÍFICO\n\nSi menciona:\n\n* daño\n* problema\n* pieza\n* falla específica\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`🔧 SERVICIO TECNICO`\n\nResponde EXACTAMENTE:\n\n\"🔧 *¡Sí, eso lo solucionamos!*\n\nPara evaluarlo bien necesitas pasar por nuestra tienda. Un técnico especialista se comunicará contigo en breve para coordinar la revisión de tu equipo.\n\n⏰ Tiempo de respuesta: en los próximos minutos en horario laboral.\n\n¡Gracias por contactar a Todo Lapto! 😊\"\n\n---\n\n# 21. DESCUENTOS\n\nSolo es una solicitud de descuento cuando el cliente EXPLÍCITAMENTE dice que:\n\n* lo vio más barato en otro lugar\n* quiere que le igualen el precio\n* pide igualar una oferta\n\nEntonces utiliza:\n\n`notificar_equipo`\n\nTipo:\n\n`💰 CLIENTE PIDE DESCUENTO`\n\nResponde:\n\n\"💰 *¡Entendido!*\n\nHemos tomado nota de tu solicitud. Un asistente personal se comunicará contigo en breve para darte la mejor opción disponible.\n\n⏰ Tiempo de respuesta: en los próximos minutos en horario laboral.\n\n¡Gracias por darnos la oportunidad de servirte! 🙌\"\n\n### NO ES DESCUENTO\n\nSi simplemente dice:\n\n* \"está caro\"\n* \"voy a ahorrar\"\n* \"lo compro después\"\n* comenta sobre el precio\n\ncontinúa vendiendo normalmente.\n\n---\n\n# 22. FOTOS REALES\n\nSi pide fotos reales:\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`📸 CLIENTE PIDE FOTOS REALES`\n\nResponde:\n\n\"Claro, le pedimos a nuestro equipo que saque fotos reales de la unidad desde el almacén y te las envíe directamente. En breve las recibirás 📸\"\n\n---\n\n# 23. VISITA A LA TIENDA\n\nSolo considera que va a visitar la tienda cuando diga explícitamente:\n\n* \"voy para allá\"\n* \"paso por ahí\"\n* \"estoy en camino\"\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`🚶 CLIENTE EN CAMINO A LA TIENDA`\n\nDespués proporciona dirección, GPS y horario.\n\nSi solamente pregunta dónde está la tienda porque quiere recibir un producto:\n\nNO lo clasifiques como visita.\n\nContinúa con la venta.\n\n---\n\n# 24. VACANTES\n\nSi pregunta por:\n\n* empleo\n* vacantes\n* currículum\n* trabajo\n\no envía una captura de un anuncio de empleo:\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`💼 CONSULTA POR VACANTE`\n\nResponde:\n\n\"¡Hola! 👋 Gracias por tu interés en Todo Lapto. Avisamos a nuestro equipo y se comunicará contigo en breve. ⏰ Tiempo de respuesta: en horario laboral.\"\n\n---\n\n# 25. PRODUCTO NO ENCONTRADO\n\nSi el cliente solicita un producto que no aparece en el inventario:\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`🔍 PRODUCTO NO ENCONTRADO`\n\nResponde:\n\n\"🔍 Déjame verificar con nuestro equipo la disponibilidad de ese producto. En breve te confirmamos. ¡Gracias por tu paciencia! 😊\"\n\nNunca inventes disponibilidad.\n\n---\n\n# 26. COMPROBANTES DE PAGO\n\nSi el mensaje es exactamente:\n\n`COMPROBANTE_PAGO`\n\no el cliente dice que:\n\n* ya pagó\n* transfirió\n* realizó el pago\n\nUsa:\n\n`notificar_equipo`\n\nTipo:\n\n`💳 COMPROBANTE RECIBIDO (responde: aprobar NUMERO o rechazar NUMERO)`\n\nResponde:\n\n\"📩 ¡Comprobante recibido! Estamos verificando tu pago y te confirmamos en breve. 🙌\"\n\nNunca confirmes que el pago fue aprobado si todavía no existe confirmación interna.\n\n---\n\n# 27. ANUNCIOS\n\nSi el cliente solamente dice:\n\n* \"info\"\n* \"precio\"\n* \"me interesa\"\n* \"vi su anuncio\"\n\ny no especifica qué producto quiere:\n\nNO uses tool.\n\nResponde:\n\n\"¡Hola! 👋 Gracias por escribirnos a Todo Lapto. Para ayudarte mejor, ¿puedes enviarnos una *captura de pantalla* del anuncio o estado que viste? 📸 Así sabemos exactamente a qué te refieres.\"\n\n---\n\n# 28. IMÁGENES\n\nSi el sistema indica:\n\n\"El cliente envió una imagen de: [DESCRIPCIÓN]. Búscalo en el INVENTARIO\"\n\nBusca el producto en el inventario.\n\nSi existe:\n\nResponde con:\n\n* precio\n* stock\n* link\n\nSi no existe:\n\nusa `notificar_equipo`\n\nTipo:\n\n`🔍 PRODUCTO NO ENCONTRADO`\n\nSi la imagen no corresponde a:\n\n* producto\n* comprobante\n* información útil\n\npide amablemente que aclare qué necesita.\n\n---\n\n# 29. VIDEO / DOCUMENTO / STICKER / UBICACIÓN\n\nSi recibes indicación de que el cliente envió un:\n\n* video\n* documento\n* sticker\n* ubicación\n\nque no puedes visualizar:\n\nNo le pidas que repita todo.\n\nResponde que lo recibiste y que un miembro del equipo lo revisará y se comunicará con él.\n\n---\n\n# 30. INFORMACIÓN DE LA TIENDA\n\n📍 Av. Charles de Gaulle No.133, Santo Domingo Este\n\n📱 WhatsApp: 809-422-8738\n\n🌐 https://todolapto.com.do\n\n🗺️ GPS: https://g.co/kgs/4hVfzG\n\n🕐 Lun-Vie 8:30AM-6:30PM\n🕐 Sáb 9AM-4PM\n🕐 Dom 10:30AM-2:30PM\n\n🚚 Envíos a todo el país\n\n🚚 Contra entrega SOLO en Santo Domingo\n\n---\n\n# 31. GARANTÍAS\n\n### PRODUCTOS NUEVOS DE CAJA\n\nGarantía: 1 año.\n\n### PRODUCTOS REACONDICIONADOS / USADOS\n\nGarantía: 6 meses.\n\n---\n\n# 32. RECEPCIÓN DE GARANTÍAS\n\nLas garantías se reciben:\n\n**Lunes a viernes en horario laboral.**\n\nLos domingos:\n\n**NO se reciben garantías bajo ninguna circunstancia.**\n\nLos domingos están destinados exclusivamente para ventas.\n\nSi el cliente pregunta sobre garantías un domingo:\n\nResponde EXACTAMENTE:\n\n\"🛡️ Las garantías las recibimos de *lunes a viernes* en horario laboral (8:30 AM – 6:30 PM).\n\nLos domingos atendemos exclusivamente para ventas. ¡Te esperamos cualquier día de semana! 😊\"\n\nSi pregunta otro día:\n\nIndica que puede llevar su equipo de lunes a viernes en horario laboral.\n\n---\n\n# 33. EL NEGOCIO NO COMPRA EQUIPOS\n\nTodo Lapto:\n\n**SOLO VENDE.**\n\nNunca compra, evalúa ni tasa equipos usados de clientes.\n\nSi el cliente pregunta:\n\n* \"¿me compran mi laptop?\"\n* \"quiero vender mi equipo\"\n* \"¿compran usados?\"\n* \"¿cuánto me dan por esta laptop?\"\n\no envía una foto de su equipo preguntando cuánto vale:\n\nResponde EXACTAMENTE:\n\n\"🙏 Actualmente no compramos equipos usados, solo vendemos. Pero si buscas algo nuevo o reacondicionado, tenemos muy buenas opciones — ¿qué tipo de laptop necesitas?\"\n\nNunca des un precio estimado de compra.\n\nNunca ofrezcas evaluar el equipo para comprarlo.\n\n---\n\n# 34. REGLAS FINALES DE CONTROL\n\nAntes de enviar cada respuesta verifica mentalmente:\n\n1. ¿Estoy usando información real del inventario?\n2. ¿Inventé algún producto?\n3. ¿Inventé algún precio?\n4. ¿Inventé stock?\n5. ¿Mostré algún ID interno?\n6. ¿Volví a preguntar algo que ya sabía?\n7. ¿Pregunté el método de pago más de una vez?\n8. ¿Ofrecí contra entrega fuera de Santo Domingo?\n9. ¿Necesito ejecutar una tool?\n10. ¿Ya ejecuté esa tool para esta situación?\n11. ¿Estoy avanzando la venta?\n12. ¿Si di precio y stock hice una pregunta de cierre?\n13. ¿Estoy confirmando un pedido solamente después de completar correctamente las tools?\n14. ¿Estoy revelando información interna?\n\nSi alguna respuesta viola una regla anterior, corrígela antes de enviarla.\n\n---\n\n# 35. RESPALDO ANTE FALLOS TÉCNICOS\n\nSi:\n\n* no puedes acceder al inventario\n* falta información necesaria\n* una tool no está disponible\n* una tool devuelve error\n* no puedes completar una acción\n\nNunca muestres:\n\n* error técnico\n* JSON\n* código\n* nombre de tool\n* \"no tengo esa información en el JSON\"\n\nResponde:\n\n\"Dame un momento para confirmar esa información con nuestro sistema y te aviso enseguida 😊\"\n\nSi el problema continúa o el cliente insiste:\n\n\"Voy a conectar tu caso con nuestro equipo para que te ayuden directamente. En breve te contactan. 🙌\"\n\n---\n\n# 36. REGLA DE ORO\n\n**VENDER + PRECISIÓN + CONTEXTO + ACCIÓN**\n\nUsa el historial.\n\nUsa el inventario.\n\nRespeta las reglas de entrega.\n\nNo inventes información.\n\nNo repitas preguntas.\n\nUsa las tools únicamente cuando correspondan.\n\nNo expongas información interna.\n\nCuando sea posible, lleva siempre la conversación hacia el siguiente paso de compra.\n",
+          "maxIterations": 12
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.1,
+      "position": [
+        -6864,
+        624
+      ],
+      "id": "1664f7bd-e780-4cbf-a28d-0c109cab14e1",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://todolapto.com.do/jsonrpc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"jsonrpc\":\"2.0\",\"method\":\"call\",\"params\":{\"service\":\"object\",\"method\":\"execute_kw\",\"args\":[\"odoo\",22,\"1dffd1433a7f49b6ec715fddf766c67f08f57c41\",\"stock.location\",\"search_read\",[[[\"usage\",\"=\",\"internal\"],[\"complete_name\",\"not ilike\",\"Recepcion\"]]],{\"fields\":[\"id\",\"complete_name\"]}]}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7440,
+        608
+      ],
+      "id": "34f5a375-39d8-4f2d-bc2f-0c5f7be5a04c",
+      "name": "🔍 Buscar Ubicaciones Vendibles",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://todolapto.com.do/jsonrpc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ (() => {\n  const ubicaciones = $('🔍 Buscar Ubicaciones Vendibles').item.json.result.map(u => u.id);\n  return JSON.stringify({\n    jsonrpc: \"2.0\",\n    method: \"call\",\n    params: {\n      service: \"object\",\n      method: \"execute_kw\",\n      args: [\n        \"odoo\", 22, \"1dffd1433a7f49b6ec715fddf766c67f08f57c41\",\n        \"product.template\", \"search_read\",\n        [[[\"virtual_available\",\">\",0],[\"sale_ok\",\"=\",true],[\"active\",\"=\",true],[\"website_published\",\"=\",true]]],\n        {\n          fields: [\"name\",\"list_price\",\"virtual_available\",\"website_url\",\"description_sale\",\"product_variant_id\"],\n          limit: 1000,\n          order: \"list_price asc\",\n          context: { location: ubicaciones }\n        }\n      ]\n    }\n  });\n})() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7216,
+        624
+      ],
+      "id": "2e9f66c5-645f-4cbb-9288-09773cf7c9e3",
+      "name": "📦 Cargar Inventario",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -10416,
+        1232
+      ],
+      "id": "d6a49280-2d8d-4c5c-aab0-4206d3a43a8d",
+      "name": "🚨 Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "18495393496"
+            },
+            {
+              "name": "text",
+              "value": "=⚠️ *FALLO EN EL BOT DE TODO LAPTO*\n\n🧩 Workflow: {{ $json.workflow.name }}\n🆔 Ejecución: {{ $json.execution.id }}\n❌ Error: {{ $json.execution.error.message }}\n📍 Nodo que falló: {{ $json.execution.lastNodeExecuted }}\n🕐 Fecha: {{ new Date().toLocaleString('es-DO', {timeZone: 'America/Santo_Domingo'}) }}\n\nRevisa el bot, puede que un cliente se haya quedado sin respuesta."
+            },
+            {
+              "name": "delay",
+              "value": "={{ 500 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10192,
+        1232
+      ],
+      "id": "186dd247-502a-4347-897f-1076ac2d0bc8",
+      "name": "🚨 Notificar Error Admin"
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentOutput = $('AI Agent').first().json.output || '';\nconst userNumber = $('Normalizacion').first().json.user_phone || $('Normalizacion').first().json.user_number || '';\n\nlet outputLimpio = agentOutput;\noutputLimpio = outputLimpio.replace(/\\\\n/g, '\\n');\noutputLimpio = outputLimpio.replace(/\\[Invoking tool:[^\\]]*\\]\\s*\\{[\\s\\S]*?\\}/g, '');\noutputLimpio = outputLimpio.replace(/^\\[Invoking.*$/gm, '');\noutputLimpio = outputLimpio.replace(/^\\s*\"[a-z_]+\":\\s*\"[^\"]*\",?\\s*$/gm, '');\noutputLimpio = outputLimpio.replace(/^\\s*[\\{\\}]\\s*$/gm, '');\noutputLimpio = outputLimpio.replace(/\\n{3,}/g, '\\n\\n').trim();\n\nif (!outputLimpio || outputLimpio.length < 5) {\n  outputLimpio = 'Dame un momento para confirmar esa información y te aviso enseguida 😊';\n}\n\nconst lineas = outputLimpio.split('\\n');\nconst chunks = [];\nlet chunkActual = '';\n\nfor (const linea of lineas) {\n  if ((chunkActual + '\\n' + linea).length > 4000) {\n    if (chunkActual) chunks.push(chunkActual.trim());\n    chunkActual = linea;\n  } else {\n    chunkActual += '\\n' + linea;\n  }\n}\nif (chunkActual.trim()) chunks.push(chunkActual.trim());\n\nconst chunksUnicos = [...new Set(chunks)];\n\nreturn chunksUnicos.map((chunk, i) => ({\n  json: {\n    texto: chunk,\n    user_number: userNumber,\n    indice: i,\n    total: chunksUnicos.length\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2800,
+        528
+      ],
+      "id": "7a072a8a-65e1-4379-8ebb-9ddabcfc621f",
+      "name": "Dividir y Enviar Mensajes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host//message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.user_number }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.texto }}"
+            },
+            {
+              "name": "delay",
+              "value": "={{ 1000 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2544,
+        528
+      ],
+      "id": "fb338bbd-9d34-446e-988f-5305c2557cb5",
+      "name": "Mandar mensaje"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "text": "Analiza esta imagen y determina qué tipo es:\n\nTIPO A — Comprobante de pago/transferencia (montos, referencias, banco, fecha).\nTIPO B — Producto: laptop, accesorio, electrónico, o un anuncio/flyer/promo de un producto.\nTIPO C — Anuncio o publicación que solicita personal, empleo o vacante (ayudante, vendedor, técnico, etc.).\nTIPO D — Cualquier otra cosa.\n\nResponde ÚNICAMENTE uno de estos JSON exactos, sin texto adicional ni markdown:\nA: {\"tipo\":\"comprobante\",\"es_comprobante\":true,\"query_busqueda\":\"\",\"descripcion\":\"comprobante de pago\"}\nB: {\"tipo\":\"producto\",\"es_comprobante\":false,\"query_busqueda\":\"MARCA MODELO-EXACTO\",\"descripcion\":\"descripción breve\"}\nC: {\"tipo\":\"vacante\",\"es_comprobante\":false,\"query_busqueda\":\"\",\"descripcion\":\"puesto que se solicita\"}\nD: {\"tipo\":\"otro\",\"es_comprobante\":false,\"query_busqueda\":\"\",\"descripcion\":\"descripción breve\"}",
+        "inputType": "base64",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        -8624,
+        608
+      ],
+      "id": "e4039eb1-cfce-4431-aff2-5bbc0d7a2597",
+      "name": "Describe imagen",
+      "credentials": {
+        "openAiApi": {
+          "id": "4ewAAhIAQsLA2fVm",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6e2644e1-fe2b-4523-b3bc-3db62622315c",
+              "name": "content",
+              "value": "={{ (() => {\n  try {\n    const p = JSON.parse(($json.content || '').replace(/```json|```/g, '').trim());\n    if (p.es_comprobante) return 'COMPROBANTE_PAGO';\n    if (p.tipo === 'vacante') return 'El cliente envió captura de un anuncio de EMPLEO / VACANTE: ' + p.descripcion;\n    if (p.tipo === 'otro') return 'El cliente envió una imagen que no es producto ni comprobante: ' + p.descripcion;\n    return 'El cliente envió una imagen de: ' + p.descripcion + '. Búscalo en el INVENTARIO (sugerencia: ' + p.query_busqueda + ')';\n  } catch (e) {\n    return $json.content;\n  }\n})() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8448,
+        608
+      ],
+      "id": "a20cc9f0-2616-4616-ba8c-008e7730408f",
+      "name": "Audio Content"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Context v3\n// - Detecta respuestas a ESTADOS de WhatsApp\n// - Entiende citas de cualquier tipo: texto, video, foto, audio, documento, sticker, ubicación, contacto\n// - Identifica quién escribió el mensaje citado (cliente o tienda)\ntry {\n  const webhookData = $('Webhook').first()?.json;\n  const body = webhookData?.body;\n  const data = body?.data || {};\n  const message = data.message || {};\n\n  const inputData = $input.item.json;\n  const processedContent = inputData?.chat_input || '';\n\n  // ---------- Números (para saber quién escribió el mensaje citado) ----------\n  const soloNum = s => String(s || '').replace(/@.*$/, '').replace(/\\D/g, '');\n  const botNum = soloNum(body?.sender);\n  const clienteNums = [data.key?.remoteJid, data.key?.remoteJidAlt]\n    .filter(Boolean)\n    .map(soloNum);\n\n  // ---------- contextInfo: aquí WhatsApp guarda la cita ----------\n  const ctxs = [\n    message?.extendedTextMessage?.contextInfo,\n    message?.imageMessage?.contextInfo,\n    message?.videoMessage?.contextInfo,\n    message?.audioMessage?.contextInfo,\n    message?.documentMessage?.contextInfo,\n    message?.stickerMessage?.contextInfo,\n    data?.contextInfo\n  ].filter(Boolean);\n\n  const ctx = ctxs.find(c => c.quotedMessage || c.remoteJid === 'status@broadcast') || {};\n  const esEstado = ctx.remoteJid === 'status@broadcast';\n  const qmRaw = ctx.quotedMessage || null;\n\n  // ---------- Describir el mensaje citado ----------\n  function desenvolver(q) {\n    return q?.ephemeralMessage?.message\n        || q?.viewOnceMessage?.message\n        || q?.viewOnceMessageV2?.message\n        || q?.documentWithCaptionMessage?.message\n        || q;\n  }\n\n  function describirCitado(q0) {\n    const q = desenvolver(q0);\n    if (!q) return { tipo: '', texto: '' };\n    if (q.conversation) return { tipo: 'texto', texto: q.conversation };\n    if (q.extendedTextMessage?.text) return { tipo: 'texto', texto: q.extendedTextMessage.text };\n    if (q.imageMessage) return { tipo: 'FOTO', texto: q.imageMessage.caption || '' };\n    if (q.videoMessage) return { tipo: 'VIDEO', texto: q.videoMessage.caption || '' };\n    if (q.audioMessage) return { tipo: 'AUDIO', texto: '' };\n    if (q.documentMessage) return { tipo: 'DOCUMENTO', texto: q.documentMessage.caption || q.documentMessage.fileName || '' };\n    if (q.stickerMessage) return { tipo: 'STICKER', texto: '' };\n    if (q.locationMessage) return { tipo: 'UBICACIÓN', texto: '' };\n    if (q.contactMessage) return { tipo: 'CONTACTO', texto: q.contactMessage.displayName || '' };\n    return { tipo: 'MENSAJE', texto: '' };\n  }\n\n  const citado = describirCitado(qmRaw);\n  const hayCita = Boolean(qmRaw) && !esEstado;\n  const citaEsTexto = citado.tipo === 'texto';\n  const citaMultimedia = hayCita && !citaEsTexto;\n\n  // ---------- Autor de la cita ----------\n  const partNum = soloNum(ctx.participant);\n  let autor = 'desconocido';\n  if (partNum && partNum === botNum) autor = 'tienda';\n  else if (partNum && clienteNums.includes(partNum)) autor = 'cliente';\n\n  const quien = autor === 'cliente' ? 'que el mismo cliente envió antes'\n              : autor === 'tienda'  ? 'que la tienda le envió antes'\n              : 'enviado antes en la conversación';\n\n  // ---------- Estado de WhatsApp ----------\n  const captionEstado = esEstado\n    ? (qmRaw?.imageMessage?.caption || qmRaw?.videoMessage?.caption || qmRaw?.conversation || qmRaw?.extendedTextMessage?.text || '')\n    : '';\n\n  const messageType = message?.extendedTextMessage ? 'text' :\n                      message?.conversation ? 'text' :\n                      message?.audioMessage ? 'audio' :\n                      message?.imageMessage ? 'image' :\n                      message?.videoMessage ? 'video' :\n                      'unknown';\n\n  // ---------- Armar mensajes finales ----------\n  let finalMessage = processedContent || '';\n  let clasificadorInput = processedContent;\n  let notaCita = '';\n\n  if (esEstado) {\n    const nota = captionEstado\n      ? `[El cliente respondió a un ESTADO de WhatsApp de la tienda que dice: \"${captionEstado}\"]`\n      : `[El cliente respondió a un ESTADO de WhatsApp de la tienda. No se puede ver su contenido]`;\n    clasificadorInput = `${nota} ${processedContent}`;\n    finalMessage = `${nota}\\n\\n${processedContent}`;\n\n  } else if (hayCita && citaEsTexto && citado.texto) {\n    // Cita de texto: se mantiene el comportamiento original\n    notaCita = `[El cliente respondió citando un mensaje ${quien}: \"${citado.texto}\"]`;\n    finalMessage = `[🔴 CONTEXTO IMPORTANTE: El usuario está respondiendo/citando un mensaje anterior]\\n\\nMENSAJE ANTERIOR CITADO:\\n\"${citado.texto}\"\\n\\nRESPUESTA DEL USUARIO ACTUAL:\\n${processedContent}\\n\\n[INSTRUCCIÓN: Lee el MENSAJE CITADO con atención. Si el usuario hace referencia a números (1, 2, 3, etc.) o dice \"esto\", \"eso\", \"la primera\", etc., se refiere a elementos del MENSAJE CITADO. No necesitas usar tools para entender esa referencia: la información está en el mensaje citado.]`;\n    // clasificadorInput se deja igual (solo el mensaje actual), como antes\n\n  } else if (citaMultimedia) {\n    // Cita de video/foto/audio/documento: el bot no lo puede ver, pero debe saberlo\n    const detalle = citado.texto ? ` (texto asociado: \"${citado.texto}\")` : '';\n    notaCita = `[El cliente respondió citando un ${citado.tipo} ${quien}${detalle}. El bot NO puede ver ni escuchar ese ${citado.tipo}.]`;\n    clasificadorInput = `${notaCita} ${processedContent}`;\n    finalMessage = `${notaCita}\\n\\nMENSAJE ACTUAL DEL CLIENTE:\\n${processedContent}\\n\\n[INSTRUCCIÓN: El cliente se refiere a ese ${citado.tipo} que no puedes ver. NO le preguntes qué producto quiere ni le pidas que repita todo. Dile que recibiste su ${citado.tipo} y que un miembro del equipo lo revisará y lo contactará en breve.]`;\n  }\n\n  return {\n    json: {\n      chat_input: finalMessage,\n      quoted_message_content: citado.texto || (citaMultimedia ? `[${citado.tipo}]` : ''),\n      has_quoted_message: hayCita,\n      quoted_participant: ctx.participant || '',\n      message_content: processedContent,\n      message_type: messageType,\n      session_id: data?.key?.remoteJid || '',\n      user_name: data?.pushName || '',\n      es_respuesta_estado: esEstado,\n      caption_estado: captionEstado,\n      cita_tipo: hayCita ? citado.tipo : '',\n      cita_autor: hayCita ? autor : '',\n      cita_multimedia: citaMultimedia,\n      clasificador_input: clasificadorInput,\n      _debug: {\n        original_content: processedContent,\n        estado_detectado: esEstado,\n        cita_detectada: hayCita,\n        cita_tipo: citado.tipo,\n        cita_autor: autor,\n        participant_crudo: ctx.participant || '',\n        bot_num: botNum,\n        cliente_nums: clienteNums,\n        final_message_length: finalMessage ? finalMessage.length : 0\n      }\n    }\n  };\n\n} catch (error) {\n  const fallback = $input.item.json?.chat_input || '';\n  return {\n    json: {\n      chat_input: fallback || 'Error procesando mensaje',\n      quoted_message_content: '',\n      has_quoted_message: false,\n      quoted_participant: '',\n      message_content: fallback,\n      message_type: 'unknown',\n      session_id: '',\n      user_name: '',\n      es_respuesta_estado: false,\n      caption_estado: '',\n      cita_tipo: '',\n      cita_autor: '',\n      cita_multimedia: false,\n      clasificador_input: fallback,\n      _error: error.message\n    }\n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7984,
+        608
+      ],
+      "id": "1552b1ce-b655-447c-856c-7c587f469dc8",
+      "name": "Process Context"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6070e65d-c2d1-475e-af7c-c8ff0a5b059a",
+              "name": "content",
+              "value": "=   {{ $json.message_content.trim() || (() => { const m = $('Webhook').first().json.body.data.message || {}; return m.videoMessage ? '[El cliente envió un VIDEO. El bot no puede verlo.]' : m.documentMessage ? '[El cliente envió un DOCUMENTO. El bot no puede verlo.]' : m.stickerMessage ? '[El cliente envió un STICKER.]' : m.locationMessage ? '[El cliente envió una UBICACIÓN.]' : ''; })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8432,
+        784
+      ],
+      "id": "727433d2-b8d4-4c13-a832-8b19b6396ee0",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "pedidos",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "cliente_numero",
+              "condition": "eq",
+              "keyValue": "={{ $json.cliente_numero }}"
+            },
+            {
+              "keyName": "estado",
+              "condition": "eq",
+              "keyValue": "pendiente"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "aprobado"
+            },
+            {
+              "fieldId": "notas_gerencia",
+              "fieldValue": "=Pago verificado por admin: {{ $('🔍 Procesar Comando Admin').item.json.mensaje_admin }}"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -8368,
+        -464
+      ],
+      "id": "342a391c-d2e1-45ad-8e6f-99cff20a2584",
+      "name": "✅ Aprobar Pedido Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $('📋 Obtener Pedido Pendiente').item.json.cliente_numero }}"
+            },
+            {
+              "name": "text",
+              "value": "=✅ *¡Tu pago fue verificado!*\n\n🛍️ Producto: {{ $('📋 Obtener Pedido Pendiente').item.json.productos }}\n\nEstamos procesando tu pedido. En breve nos comunicamos para coordinar la entrega. ¡Gracias por tu compra! 🎉"
+            },
+            {
+              "name": "delay",
+              "value": "={{ 1000 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8160,
+        -464
+      ],
+      "id": "04b84446-510d-4a7b-a54b-df8d4e9e6e43",
+      "name": "📲 Notificar Cliente Aprobado"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "18496260800"
+            },
+            {
+              "name": "text",
+              "value": "✅ Pedido aprobado correctamente. Cliente notificado."
+            },
+            {
+              "name": "delay",
+              "value": "={{ 500 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7952,
+        -464
+      ],
+      "id": "bb24ba81-88a0-4eb3-a6b6-0ed9e4014d4f",
+      "name": "✅ Confirmar Admin Aprobación"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "pedidos",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "cliente_numero",
+              "condition": "eq",
+              "keyValue": "={{ $('🔍 Procesar Comando Admin').item.json.numero_cliente + '@s.whatsapp.net' }}"
+            },
+            {
+              "keyName": "estado",
+              "condition": "eq",
+              "keyValue": "pendiente"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -8576,
+        -464
+      ],
+      "id": "04584e8e-c3cb-456c-a042-892ed514fe93",
+      "name": "📋 Obtener Pedido Pendiente",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "notificar_equipo: envia un aviso por WhatsApp al equipo/tecnico de Todo Lapto con el nombre y telefono del cliente para que le escriban. Usala en TODOS los casos que requieren intervencion humana (tecnico, descuento, fotos reales, visita a tienda, vacante, producto no encontrado, comprobante recibido y pedidos nuevos). Parametros: tipo, resumen y telefono.",
+        "method": "POST",
+        "url": "https://evolution-evolution-api.blrfh6.easypanel.host/message/sendText/todolapto",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "52700613C062-421C-B800-FBC560B54BB4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "18492588738"
+            },
+            {
+              "name": "text",
+              "value": "=🔔 *{{ $fromAI('tipo', 'Titulo corto con emoji segun el caso. Usa exactamente uno: 🔧 SERVICIO TECNICO | 💰 CLIENTE PIDE DESCUENTO | 📸 CLIENTE PIDE FOTOS REALES | 🚶 CLIENTE EN CAMINO A LA TIENDA | 💼 CONSULTA POR VACANTE | 🔍 PRODUCTO NO ENCONTRADO | 💳 COMPROBANTE RECIBIDO (responde: aprobar NUMERO o rechazar NUMERO) | 🚚 NUEVO PEDIDO CONTRA ENTREGA | 💳 NUEVO PEDIDO TRANSFERENCIA (esperando comprobante)', 'string') }}*\n\n👤 Cliente: {{ $('Normalizacion').first().json.user_name }}\n{{ (() => { const t = ($('Normalizacion').first().json.user_phone || $fromAI('telefono', 'Telefono real del cliente, solo digitos con codigo de pais (ej 18091234567). Copia el de TELEFONO DEL CLIENTE del contexto; si dice NO DISPONIBLE usa el que el cliente te dio.', 'string') || '').replace(/\\D/g, ''); return '📱 Teléfono: ' + (t || 'NO DISPONIBLE') + '\\n🔗 Escribirle: ' + (t ? 'https://wa.me/' + t : '—'); })() }}\n💬 Último mensaje: {{ $('Process Context').first().json.message_content }}\n📝 Detalle: {{ $fromAI('resumen', 'Una o dos lineas con lo que el equipo debe saber: producto, direccion, problema, precio pedido, referencia de cotizacion Odoo, etc.', 'string') }}\n🕐 Fecha: {{ new Date().toLocaleString('es-DO', {timeZone: 'America/Santo_Domingo'}) }}"
+            },
+            {
+              "name": "delay",
+              "value": "={{ 500 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        -6720,
+        1072
+      ],
+      "id": "33d07b56-003d-4b78-a9cd-058f76982c5a",
+      "name": "notificar_equipo"
+    },
+    {
+      "parameters": {
+        "toolDescription": "odoo_buscar_cliente: busca en Odoo al cliente ACTUAL por su telefono. Parametro: telefono. Devuelve result = lista; si esta vacia el cliente no existe y debes usar odoo_crear_cliente; si trae elementos usa result[0].id como partner_id.",
+        "method": "POST",
+        "url": "https://todolapto.com.do/jsonrpc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { service: 'object', method: 'execute_kw', args: ['odoo', 22, '1dffd1433a7f49b6ec715fddf766c67f08f57c41', 'res.partner', 'search_read', [[ ['phone', 'ilike', ($('Normalizacion').first().json.user_phone || $fromAI('telefono', 'Telefono real del cliente, solo digitos con codigo de pais (ej 18091234567). Copia el de TELEFONO DEL CLIENTE del contexto; si dice NO DISPONIBLE usa el que el cliente te dio.', 'string') || '').replace(/\\D/g, '')] ]], { fields: ['id', 'name', 'phone'], limit: 1 }] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        -6528,
+        1072
+      ],
+      "id": "0ee5c089-ec7f-480e-b4fd-1bc5f54b2c09",
+      "name": "odoo_buscar_cliente"
+    },
+    {
+      "parameters": {
+        "toolDescription": "odoo_crear_cliente: crea en Odoo al cliente ACTUAL (nombre de WhatsApp y telefono). Parametro: telefono. Usala SOLO si odoo_buscar_cliente devolvio lista vacia. Devuelve result = ID del nuevo cliente (partner_id).",
+        "method": "POST",
+        "url": "https://todolapto.com.do/jsonrpc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { service: 'object', method: 'execute_kw', args: ['odoo', 22, '1dffd1433a7f49b6ec715fddf766c67f08f57c41', 'res.partner', 'create', [{ name: $('Normalizacion').first().json.user_name || 'Cliente WhatsApp', phone: ($('Normalizacion').first().json.user_phone || $fromAI('telefono', 'Telefono real del cliente, solo digitos con codigo de pais (ej 18091234567). Copia el de TELEFONO DEL CLIENTE del contexto; si dice NO DISPONIBLE usa el que el cliente te dio.', 'string') || '').replace(/\\D/g, ''), customer_rank: 1 }] ] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        -6320,
+        1072
+      ],
+      "id": "3ae463b8-d249-4b40-9811-0fa5bbc4cea5",
+      "name": "odoo_crear_cliente"
+    },
+    {
+      "parameters": {
+        "toolDescription": "odoo_crear_cotizacion: crea la cotizacion/pedido en Odoo. Requiere partner_id, metodo_pago, direccion, product_id (campo ID: del inventario), precio, nombre_producto y telefono. Devuelve result = ID de la cotizacion (guardalo para registrar_pedido y para el mensaje final). Llamala UNA sola vez por pedido.",
+        "method": "POST",
+        "url": "https://todolapto.com.do/jsonrpc",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { service: 'object', method: 'execute_kw', args: ['odoo', 22, '1dffd1433a7f49b6ec715fddf766c67f08f57c41', 'sale.order', 'create', [{ partner_id: $fromAI('partner_id', 'ID del cliente en Odoo (numero) obtenido de odoo_buscar_cliente o odoo_crear_cliente', 'number'), origin: 'WhatsApp - ' + $fromAI('metodo_pago', 'Contra Entrega o Transferencia', 'string'), note: '<p>WhatsApp | Cliente: ' + $('Normalizacion').first().json.user_name + ' | Tel: ' + ($('Normalizacion').first().json.user_phone || $fromAI('telefono', 'Telefono real del cliente, solo digitos con codigo de pais (ej 18091234567). Copia el de TELEFONO DEL CLIENTE del contexto; si dice NO DISPONIBLE usa el que el cliente te dio.', 'string') || '').replace(/\\D/g, '') + ' | Direccion: ' + $fromAI('direccion', 'Direccion o zona de entrega del cliente', 'string') + '</p>', order_line: [[0, 0, { product_id: $fromAI('product_id', 'ID numerico del producto tomado del campo ID: del inventario', 'number'), product_uom_qty: 1, price_unit: $fromAI('precio', 'Precio en RD$ como numero sin comas', 'number'), name: $fromAI('nombre_producto', 'Nombre completo del producto', 'string') }]] }]] } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        -6128,
+        1072
+      ],
+      "id": "456fb0cf-87ba-4d14-8384-87c1eaad90be",
+      "name": "odoo_crear_cotizacion"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "registrar_pedido: guarda el pedido en la base de datos (Supabase). Requiere producto, direccion, metodo_pago, estado, odoo_order_id y telefono. Llamala UNA sola vez por pedido, despues de odoo_crear_cotizacion.",
+        "tableId": "pedidos",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "id_pedido",
+              "fieldValue": "={{ 'PED-' + Date.now() }}"
+            },
+            {
+              "fieldId": "cliente_numero",
+              "fieldValue": "={{ (() => { const t = ($('Normalizacion').first().json.user_phone || $fromAI('telefono', 'Telefono real del cliente, solo digitos con codigo de pais (ej 18091234567). Copia el de TELEFONO DEL CLIENTE del contexto; si dice NO DISPONIBLE usa el que el cliente te dio.', 'string') || '').replace(/\\D/g, ''); return t ? t + '@s.whatsapp.net' : $('Normalizacion').first().json.user_number; })() }}"
+            },
+            {
+              "fieldId": "cliente_nombre",
+              "fieldValue": "={{ $('Normalizacion').first().json.user_name }}"
+            },
+            {
+              "fieldId": "productos",
+              "fieldValue": "={{ $fromAI('producto', 'Producto en formato NOMBRE COMPLETO RD$PRECIO (precio sin comas)', 'string') }}"
+            },
+            {
+              "fieldId": "estado",
+              "fieldValue": "={{ $fromAI('estado', 'aprobado si es contra entrega; pendiente si es transferencia', 'string') }}"
+            },
+            {
+              "fieldId": "metodo_pago",
+              "fieldValue": "={{ $fromAI('metodo_pago', 'contra entrega o transferencia (en minusculas)', 'string') }}"
+            },
+            {
+              "fieldId": "origen",
+              "fieldValue": "whatsapp"
+            },
+            {
+              "fieldId": "notas_cliente",
+              "fieldValue": "={{ $fromAI('direccion', 'Direccion o zona de entrega del cliente', 'string') }}"
+            },
+            {
+              "fieldId": "notas_gerencia",
+              "fieldValue": "={{ 'Cotizacion Odoo ID: ' + $fromAI('odoo_order_id', 'ID de la cotizacion devuelto por odoo_crear_cotizacion', 'string') }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabaseTool",
+      "typeVersion": 1,
+      "position": [
+        -5920,
+        1072
+      ],
+      "id": "9124bf5b-a733-4816-b6d4-64bc20d3e380",
+      "name": "registrar_pedido",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "contactos_whatsapp",
+        "limit": 1,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "lid_jid",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalizacion').first().json.user_number }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -7648,
+        608
+      ],
+      "id": "d99759af-cc6b-4954-864d-58bc4948b2bf",
+      "name": "📇 Buscar Teléfono Guardado",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "guardar_telefono_cliente: guarda el telefono real del cliente cuando el cliente usa nombre de usuario de WhatsApp y TELEFONO DEL CLIENTE decia NO DISPONIBLE. Usala UNA sola vez, justo despues de que el cliente te de su numero. Parametro: telefono.",
+        "tableId": "contactos_whatsapp",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "lid_jid",
+              "fieldValue": "={{ $('Normalizacion').first().json.user_number }}"
+            },
+            {
+              "fieldId": "nombre",
+              "fieldValue": "={{ $('Normalizacion').first().json.user_name }}"
+            },
+            {
+              "fieldId": "telefono",
+              "fieldValue": "={{ (() => { const d = String($fromAI('telefono', 'Telefono que el cliente escribio, solo digitos con codigo de pais (ej 18091234567)', 'string') || '').replace(/\\D/g, ''); return d.length === 10 ? '1' + d : d; })() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabaseTool",
+      "typeVersion": 1,
+      "position": [
+        -5680,
+        1072
+      ],
+      "id": "b9f7729b-c43c-42a9-982d-5f826eb73d2e",
+      "name": "guardar_telefono_cliente",
+      "credentials": {
+        "supabaseApi": {
+          "id": "kt4lkiGuVs0rcOdI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0.4,
+          "topP": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -7184,
+        880
+      ],
+      "id": "82dd8b59-3537-4211-9006-656d188e5715",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "ZvkyUxXlhYwQ8ipu",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Normalizacion": {
+      "main": [
+        [
+          {
+            "node": "¿Es Admin?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Get Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Audio": {
+      "main": [
+        [
+          {
+            "node": "Convertir Audio1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Image": {
+      "main": [
+        [
+          {
+            "node": "Convertir Imagen1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir Audio1": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convertir Imagen1": {
+      "main": [
+        [
+          {
+            "node": "Describe imagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording1": {
+      "main": [
+        [
+          {
+            "node": "Audio Content2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio Content2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Process Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Mensaje Usuario": {
+      "main": [
+        [
+          {
+            "node": "📇 Buscar Teléfono Guardado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Respuesta Asistente": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Analizar Intención Compra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analizar Intención Compra": {
+      "main": [
+        [
+          {
+            "node": "¿Hay interés en producto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es mensaje del cliente?": {
+      "main": [
+        [
+          {
+            "node": "Normalizacion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es Admin?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Procesar Comando Admin",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "🛡️ Anti-Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Procesar Comando Admin": {
+      "main": [
+        [
+          {
+            "node": "¿Qué acción admin?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Qué acción admin?": {
+      "main": [
+        [
+          {
+            "node": "📋 Obtener Pedido Pendiente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Rechazar Pedido Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❌ Rechazar Pedido Supabase": {
+      "main": [
+        [
+          {
+            "node": "📲 Notificar Cliente Rechazo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "✅ Confirmar Admin Rechazo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Preparar Contexto": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar y Procesar Intenciones": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar Funciones Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecutar Funciones Supabase": {
+      "main": [
+        [
+          {
+            "node": "Dividir y Enviar Mensajes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Compra Realizada?": {
+      "main": [
+        [
+          {
+            "node": "❌ Cancelar Seguimiento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔄 Actualizar Fecha Seguimiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "¿Compra Realizada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🏷️ Actualizar Producto Interés": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Detectar y Procesar Intenciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay interés en producto?": {
+      "main": [
+        [
+          {
+            "node": "📌 Crear Seguimiento por Interés",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🏷️ Actualizar Producto Interés",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📌 Crear Seguimiento por Interés": {
+      "main": [
+        [
+          {
+            "node": "🏷️ Actualizar Producto Interés",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🛡️ Anti-Duplicado": {
+      "main": [
+        [
+          {
+            "node": "¿Es mensaje del cliente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Guardar Respuesta Asistente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Buscar Ubicaciones Vendibles": {
+      "main": [
+        [
+          {
+            "node": "📦 Cargar Inventario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Cargar Inventario": {
+      "main": [
+        [
+          {
+            "node": "📋 Preparar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "🚨 Notificar Error Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dividir y Enviar Mensajes": {
+      "main": [
+        [
+          {
+            "node": "Mandar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe imagen": {
+      "main": [
+        [
+          {
+            "node": "Audio Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio Content": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Context": {
+      "main": [
+        [
+          {
+            "node": "Guardar Mensaje Usuario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Aprobar Pedido Supabase": {
+      "main": [
+        [
+          {
+            "node": "📲 Notificar Cliente Aprobado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📲 Notificar Cliente Aprobado": {
+      "main": [
+        [
+          {
+            "node": "✅ Confirmar Admin Aprobación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Obtener Pedido Pendiente": {
+      "main": [
+        [
+          {
+            "node": "✅ Aprobar Pedido Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notificar_equipo": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "odoo_buscar_cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "odoo_crear_cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "odoo_crear_cotizacion": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "registrar_pedido": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📇 Buscar Teléfono Guardado": {
+      "main": [
+        [
+          {
+            "node": "🔍 Buscar Ubicaciones Vendibles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "guardar_telefono_cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Webhook": [
+      {
+        "headers": {
+          "host": "n8n-n8n.blrfh6.easypanel.host",
+          "user-agent": "EvolutionAPI-Webhook/2.3.7",
+          "content-length": "2289",
+          "accept": "application/json, text/plain, */*",
+          "accept-encoding": "gzip, compress, deflate, br",
+          "content-type": "application/json",
+          "x-event-type": "messages.upsert",
+          "x-forwarded-for": "172.18.0.1",
+          "x-forwarded-host": "n8n-n8n.blrfh6.easypanel.host",
+          "x-forwarded-port": "443",
+          "x-forwarded-proto": "https",
+          "x-forwarded-server": "e6d1252fdc6b",
+          "x-instance-id": "d734a288-f327-4f9c-a01d-f13559827b19",
+          "x-instance-name": "laptop1",
+          "x-real-ip": "172.18.0.1",
+          "x-timestamp": "1787745764931"
+        },
+        "params": {},
+        "query": {},
+        "body": {
+          "event": "messages.upsert",
+          "instance": "laptop1",
+          "data": {
+            "key": {
+              "remoteJid": "18494328084@s.whatsapp.net",
+              "remoteJidAlt": "20482816528543@lid",
+              "fromMe": false,
+              "id": "3A0AED8CBAEEC6CB1F25",
+              "participant": "",
+              "addressingMode": "pn"
+            },
+            "pushName": "❤️J❤️I❤️L🙏",
+            "message": {
+              "messageContextInfo": {
+                "threadId": [],
+                "deviceListMetadata": {
+                  "senderKeyIndexes": [],
+                  "recipientKeyIndexes": [],
+                  "senderKeyHash": {
+                    "0": 44,
+                    "1": 86,
+                    "2": 32,
+                    "3": 186,
+                    "4": 144,
+                    "5": 141,
+                    "6": 43,
+                    "7": 136,
+                    "8": 87,
+                    "9": 19
+                  },
+                  "senderTimestamp": {
+                    "low": 1784763382,
+                    "high": 0,
+                    "unsigned": true
+                  },
+                  "recipientKeyHash": {
+                    "0": 245,
+                    "1": 107,
+                    "2": 130,
+                    "3": 104,
+                    "4": 178,
+                    "5": 255,
+                    "6": 188,
+                    "7": 0,
+                    "8": 208,
+                    "9": 228
+                  },
+                  "recipientTimestamp": {
+                    "low": 1787711632,
+                    "high": 0,
+                    "unsigned": true
+                  }
+                },
+                "deviceListMetadataVersion": 2,
+                "messageSecret": {
+                  "0": 68,
+                  "1": 223,
+                  "2": 224,
+                  "3": 12,
+                  "4": 134,
+                  "5": 65,
+                  "6": 183,
+                  "7": 239,
+                  "8": 205,
+                  "9": 99,
+                  "10": 171,
+                  "11": 156,
+                  "12": 150,
+                  "13": 247,
+                  "14": 120,
+                  "15": 100,
+                  "16": 207,
+                  "17": 67,
+                  "18": 130,
+                  "19": 198,
+                  "20": 64,
+                  "21": 239,
+                  "22": 94,
+                  "23": 249,
+                  "24": 240,
+                  "25": 161,
+                  "26": 87,
+                  "27": 182,
+                  "28": 175,
+                  "29": 212,
+                  "30": 29,
+                  "31": 159
+                }
+              },
+              "conversation": "¿Puedes aceptar mi invitación así que puedo obtener un regalo gratis?\nhttps://temu.com/s/pGbBn3ylwRzaT"
+            },
+            "messageType": "conversation",
+            "messageTimestamp": 1787745764,
+            "source": "ios",
+            "instanceId": "d734a288-f327-4f9c-a01d-f13559827b19",
+            "status": "DELIVERY_ACK",
+            "contextInfo": {
+              "threadId": [],
+              "deviceListMetadata": {
+                "senderKeyIndexes": [],
+                "recipientKeyIndexes": [],
+                "senderKeyHash": {
+                  "0": 44,
+                  "1": 86,
+                  "2": 32,
+                  "3": 186,
+                  "4": 144,
+                  "5": 141,
+                  "6": 43,
+                  "7": 136,
+                  "8": 87,
+                  "9": 19
+                },
+                "senderTimestamp": {
+                  "low": 1784763382,
+                  "high": 0,
+                  "unsigned": true
+                },
+                "recipientKeyHash": {
+                  "0": 245,
+                  "1": 107,
+                  "2": 130,
+                  "3": 104,
+                  "4": 178,
+                  "5": 255,
+                  "6": 188,
+                  "7": 0,
+                  "8": 208,
+                  "9": 228
+                },
+                "recipientTimestamp": {
+                  "low": 1787711632,
+                  "high": 0,
+                  "unsigned": true
+                }
+              },
+              "deviceListMetadataVersion": 2,
+              "messageSecret": {
+                "0": 68,
+                "1": 223,
+                "2": 224,
+                "3": 12,
+                "4": 134,
+                "5": 65,
+                "6": 183,
+                "7": 239,
+                "8": 205,
+                "9": 99,
+                "10": 171,
+                "11": 156,
+                "12": 150,
+                "13": 247,
+                "14": 120,
+                "15": 100,
+                "16": 207,
+                "17": 67,
+                "18": 130,
+                "19": 198,
+                "20": 64,
+                "21": 239,
+                "22": 94,
+                "23": 249,
+                "24": 240,
+                "25": 161,
+                "26": 87,
+                "27": 182,
+                "28": 175,
+                "29": 212,
+                "30": 29,
+                "31": 159
+              }
+            }
+          },
+          "destination": "https://n8n-n8n.blrfh6.easypanel.host/webhook/laptop1",
+          "date_time": "2026-08-26T09:02:44.901Z",
+          "sender": "18094228738@s.whatsapp.net",
+          "server_url": "https://evolution-evolution-api.blrfh6.easypanel.host",
+          "apikey": "3AE3A2C474C0-4EB0-9B37-AA43A28C5D88"
+        },
+        "webhookUrl": "https://n8n-n8n.blrfh6.easypanel.host/webhook/laptop1",
+        "executionMode": "production"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b468fdc8ecf4c26c6dd13efef92140cc9a91f32ae64d776359001289f40ed1dc"
+  }
+}
