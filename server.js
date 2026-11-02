@@ -7009,3 +7009,9 @@ async function startServer() {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 startServer();
+var server_default = app;
+export {
+  app,
+  server_default as default,
+  startServer
+};
