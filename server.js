@@ -2131,11 +2131,23 @@ async function autoSyncCustomerToSupabase(customer) {
 
 // server.ts
 dotenv.config();
+if (typeof PhusionPassenger !== "undefined") {
+  try {
+    PhusionPassenger.configure({ autoInstall: false });
+  } catch {
+  }
+}
 process.on("uncaughtException", (err) => {
   console.error("[Process Error] Uncaught Exception:", err);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[Process Error] Unhandled Rejection:", reason);
+});
+process.on("exit", (code) => {
+  console.log(`[Process Exit] Node process exiting with code: ${code}`);
+});
+process.on("beforeExit", (code) => {
+  console.log(`[Process BeforeExit] Event loop is empty! code: ${code}`);
 });
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
@@ -2434,9 +2446,15 @@ function ensureDefaultUsersPresent() {
 function savePersistedUsers() {
   try {
     const content = JSON.stringify(systemUsers, null, 2);
-    fs.writeFileSync(USERS_FILE_PATH, content, "utf-8");
-    if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
-      fs.writeFileSync(USERS_FALLBACK_PATH, content, "utf-8");
+    let existingContent = "";
+    if (fs.existsSync(USERS_FILE_PATH)) {
+      existingContent = fs.readFileSync(USERS_FILE_PATH, "utf-8");
+    }
+    if (content !== existingContent) {
+      fs.writeFileSync(USERS_FILE_PATH, content, "utf-8");
+      if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
+        fs.writeFileSync(USERS_FALLBACK_PATH, content, "utf-8");
+      }
     }
   } catch (err) {
     console.log("[Users Save Info]:", err.message);
@@ -6965,7 +6983,10 @@ async function startServer() {
       });
     }, 1e3 * 60 * 5);
   };
-  if (typeof PORT === "number") {
+  if (typeof PhusionPassenger !== "undefined") {
+    console.log(`[Hostinger / Passenger]: Detected PhusionPassenger runtime. Binding to passenger socket.`);
+    server.listen("passenger", onListening);
+  } else if (typeof PORT === "number") {
     server.listen(PORT, onListening);
   } else {
     server.listen(PORT, onListening);

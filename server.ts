@@ -50,12 +50,26 @@ import {
 
 dotenv.config();
 
+// Phusion Passenger (Hostinger / cPanel) integration: disable auto-install to allow explicit binding
+declare const PhusionPassenger: any;
+if (typeof PhusionPassenger !== 'undefined') {
+  try {
+    PhusionPassenger.configure({ autoInstall: false });
+  } catch {}
+}
+
 // Global process error handlers to prevent container crashes on network/background glitches
 process.on('uncaughtException', (err) => {
   console.error('[Process Error] Uncaught Exception:', err);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[Process Error] Unhandled Rejection:', reason);
+});
+process.on('exit', (code) => {
+  console.log(`[Process Exit] Node process exiting with code: ${code}`);
+});
+process.on('beforeExit', (code) => {
+  console.log(`[Process BeforeExit] Event loop is empty! code: ${code}`);
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -405,9 +419,15 @@ function ensureDefaultUsersPresent() {
 function savePersistedUsers() {
   try {
     const content = JSON.stringify(systemUsers, null, 2);
-    fs.writeFileSync(USERS_FILE_PATH, content, 'utf-8');
-    if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
-      fs.writeFileSync(USERS_FALLBACK_PATH, content, 'utf-8');
+    let existingContent = '';
+    if (fs.existsSync(USERS_FILE_PATH)) {
+      existingContent = fs.readFileSync(USERS_FILE_PATH, 'utf-8');
+    }
+    if (content !== existingContent) {
+      fs.writeFileSync(USERS_FILE_PATH, content, 'utf-8');
+      if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
+        fs.writeFileSync(USERS_FALLBACK_PATH, content, 'utf-8');
+      }
     }
   } catch (err: any) {
     console.log('[Users Save Info]:', err.message);
@@ -6095,7 +6115,11 @@ async function startServer() {
     }, 1000 * 60 * 5);
   };
 
-  if (typeof PORT === 'number') {
+  if (typeof PhusionPassenger !== 'undefined') {
+    // Explicitly bind to Passenger's IPC socket in Hostinger
+    console.log(`[Hostinger / Passenger]: Detected PhusionPassenger runtime. Binding to passenger socket.`);
+    server.listen('passenger', onListening);
+  } else if (typeof PORT === 'number') {
     // Listen on default interface to bind to both IPv4 and IPv6 for Hostinger / Nginx reverse proxy
     server.listen(PORT, onListening);
   } else {
