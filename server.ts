@@ -63,7 +63,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.set('trust proxy', true);
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const rawPort = process.env.PORT;
+const isNumericPort = rawPort && !isNaN(Number(rawPort));
+const PORT: number | string = isNumericPort ? Number(rawPort) : (rawPort || 3000);
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -6056,12 +6058,12 @@ async function startServer() {
     });
   }
 
-  const activeServers: http.Server[] = [];
+  // Primary Server instance - strictly ONE listen call for Hostinger / Passenger / Docker compatibility
+  const server = http.createServer(app);
 
-  // Primary Server on PORT (default 3000)
-  const primaryServer = http.createServer(app);
-  primaryServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Vendemá CRM Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
+  const onListening = () => {
+    const listenTarget = typeof PORT === 'number' ? `http://0.0.0.0:${PORT}` : String(PORT);
+    console.log(`🚀 Vendemá CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
 
     // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
     hydrateAndSyncUsersWithSupabase()
@@ -6085,38 +6087,30 @@ async function startServer() {
     setInterval(() => {
       syncOdooCustomers().catch(() => {});
     }, 1000 * 60 * 5);
-  });
+  };
 
-  primaryServer.on('error', (err: any) => {
-    console.error(`[Server Listen Error on primary port ${PORT}]:`, err.message);
-  });
-  activeServers.push(primaryServer);
-
-  // Auxiliary listeners for port 80 and 8080 (in case Coolify/Traefik reverse proxy routes to 80/8080)
-  const auxPorts = [80, 8080].filter(p => p !== PORT);
-  for (const p of auxPorts) {
-    try {
-      const auxServer = http.createServer(app);
-      auxServer.on('error', () => {
-        // Silently ignore if port is restricted or in use
-      });
-      auxServer.listen(p, '0.0.0.0', () => {
-        console.log(`🚀 Auxiliary listener active on http://0.0.0.0:${p} (Traefik/Reverse Proxy compatibility)`);
-      });
-      activeServers.push(auxServer);
-    } catch {}
+  if (typeof PORT === 'number') {
+    server.listen(PORT, '0.0.0.0', onListening);
+  } else {
+    // Passenger Unix domain socket or named pipe
+    server.listen(PORT, onListening);
   }
 
-  // Graceful shutdown handling for Docker / Traefik / orchestrators
+  server.on('error', (err: any) => {
+    console.error(`[Server Listen Error on ${PORT}]:`, err.message);
+  });
+
+  // Graceful shutdown handling for Hostinger / Passenger / Docker
   const shutdown = (signal: string) => {
     console.log(`[Server] Received ${signal}. Closing gracefully...`);
-    for (const s of activeServers) {
-      try {
-        s.close();
-      } catch {}
-    }
-    console.log('[Server] HTTP servers closed cleanly.');
-    process.exit(0);
+    server.close(() => {
+      console.log('[Server] HTTP server closed cleanly.');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('[Server] Forcing shutdown after timeout.');
+      process.exit(1);
+    }, 4000).unref();
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -2141,7 +2141,9 @@ var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var app = express();
 app.set("trust proxy", true);
-var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
+var rawPort = process.env.PORT;
+var isNumericPort = rawPort && !isNaN(Number(rawPort));
+var PORT = isNumericPort ? Number(rawPort) : rawPort || 3e3;
 var ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "default_gemini_key",
   httpOptions: {
@@ -6937,10 +6939,10 @@ async function startServer() {
       }
     });
   }
-  const activeServers = [];
-  const primaryServer = http.createServer(app);
-  primaryServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`\u{1F680} Vendem\xE1 CRM Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
+  const server = http.createServer(app);
+  const onListening = () => {
+    const listenTarget = typeof PORT === "number" ? `http://0.0.0.0:${PORT}` : String(PORT);
+    console.log(`\u{1F680} Vendem\xE1 CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
     hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial sync err:", e));
     setInterval(() => {
       syncEvolutionChats().catch(() => {
@@ -6954,34 +6956,25 @@ async function startServer() {
       syncOdooCustomers().catch(() => {
       });
     }, 1e3 * 60 * 5);
-  });
-  primaryServer.on("error", (err) => {
-    console.error(`[Server Listen Error on primary port ${PORT}]:`, err.message);
-  });
-  activeServers.push(primaryServer);
-  const auxPorts = [80, 8080].filter((p) => p !== PORT);
-  for (const p of auxPorts) {
-    try {
-      const auxServer = http.createServer(app);
-      auxServer.on("error", () => {
-      });
-      auxServer.listen(p, "0.0.0.0", () => {
-        console.log(`\u{1F680} Auxiliary listener active on http://0.0.0.0:${p} (Traefik/Reverse Proxy compatibility)`);
-      });
-      activeServers.push(auxServer);
-    } catch {
-    }
+  };
+  if (typeof PORT === "number") {
+    server.listen(PORT, "0.0.0.0", onListening);
+  } else {
+    server.listen(PORT, onListening);
   }
+  server.on("error", (err) => {
+    console.error(`[Server Listen Error on ${PORT}]:`, err.message);
+  });
   const shutdown = (signal) => {
     console.log(`[Server] Received ${signal}. Closing gracefully...`);
-    for (const s of activeServers) {
-      try {
-        s.close();
-      } catch {
-      }
-    }
-    console.log("[Server] HTTP servers closed cleanly.");
-    process.exit(0);
+    server.close(() => {
+      console.log("[Server] HTTP server closed cleanly.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error("[Server] Forcing shutdown after timeout.");
+      process.exit(1);
+    }, 4e3).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
