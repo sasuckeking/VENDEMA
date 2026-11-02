@@ -6088,22 +6088,24 @@ async function startServer() {
   const server = http.createServer(app);
 
   const onListening = () => {
-    const listenTarget = typeof PORT === 'number' ? `port ${PORT} (IPv4/IPv6 dual-stack)` : String(PORT);
+    const listenTarget = typeof PORT === 'number' ? `http://0.0.0.0:${PORT}` : String(PORT);
     console.log(`🚀 Vendemá CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
 
-    // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
-    hydrateAndSyncUsersWithSupabase()
-      .then(() => hydrateAndSyncHolidaysWithSupabase())
-      .then(() => autoSyncConfigToSupabase(appConfig))
-      .then(() => syncOdooInventory())
-      .then(() => syncOdooCustomers())
-      .then(() => syncEvolutionChats())
-      .catch(e => console.error('Initial sync err:', e));
+    // Defer heavy network syncs by 3.5 seconds to let Hostinger healthchecks and initial page requests succeed instantly
+    setTimeout(() => {
+      hydrateAndSyncUsersWithSupabase()
+        .then(() => hydrateAndSyncHolidaysWithSupabase())
+        .then(() => autoSyncConfigToSupabase(appConfig))
+        .then(() => syncOdooInventory())
+        .then(() => syncOdooCustomers())
+        .then(() => syncEvolutionChats())
+        .catch(e => console.error('Initial background sync err:', e));
+    }, 3500);
 
-    // Continuous background polling every 3.5 seconds for real-time WhatsApp messages & AI Sales Bot replies
+    // Continuous background polling every 5 seconds for real-time WhatsApp messages & AI Sales Bot replies
     setInterval(() => {
       syncEvolutionChats().catch(() => {});
-    }, 3500);
+    }, 5000);
 
     setInterval(() => {
       syncOdooInventory().catch(() => {});
@@ -6120,8 +6122,8 @@ async function startServer() {
     console.log(`[Hostinger / Passenger]: Detected PhusionPassenger runtime. Binding to passenger socket.`);
     server.listen('passenger', onListening);
   } else if (typeof PORT === 'number') {
-    // Listen on default interface to bind to both IPv4 and IPv6 for Hostinger / Nginx reverse proxy
-    server.listen(PORT, onListening);
+    // Listen on 0.0.0.0 to ensure Nginx reverse proxy routes all requests reliably
+    server.listen(PORT, '0.0.0.0', onListening);
   } else {
     // Passenger Unix domain socket or named pipe
     server.listen(PORT, onListening);

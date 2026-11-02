@@ -6967,13 +6967,15 @@ async function startServer() {
   }
   const server = http.createServer(app);
   const onListening = () => {
-    const listenTarget = typeof PORT === "number" ? `port ${PORT} (IPv4/IPv6 dual-stack)` : String(PORT);
+    const listenTarget = typeof PORT === "number" ? `http://0.0.0.0:${PORT}` : String(PORT);
     console.log(`\u{1F680} Vendem\xE1 CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
-    hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial sync err:", e));
+    setTimeout(() => {
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial background sync err:", e));
+    }, 3500);
     setInterval(() => {
       syncEvolutionChats().catch(() => {
       });
-    }, 3500);
+    }, 5e3);
     setInterval(() => {
       syncOdooInventory().catch(() => {
       });
@@ -6987,7 +6989,7 @@ async function startServer() {
     console.log(`[Hostinger / Passenger]: Detected PhusionPassenger runtime. Binding to passenger socket.`);
     server.listen("passenger", onListening);
   } else if (typeof PORT === "number") {
-    server.listen(PORT, onListening);
+    server.listen(PORT, "0.0.0.0", onListening);
   } else {
     server.listen(PORT, onListening);
   }
