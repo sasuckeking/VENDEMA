@@ -6912,7 +6912,11 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, "dist");
+    const publicPath = path.join(__dirname, "public");
     app.use(express.static(distPath));
+    if (fs.existsSync(publicPath)) {
+      app.use(express.static(publicPath));
+    }
     app.get("*", (req, res) => {
       if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
         return res.status(404).json({ error: "Endpoint no encontrado" });
@@ -6944,5 +6948,25 @@ async function startServer() {
   server.on("error", (err) => {
     console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
   });
+  if (PORT !== 80) {
+    try {
+      const port80Server = app.listen(80, "0.0.0.0", () => {
+        console.log(`\u{1F680} Secondary listener active on http://0.0.0.0:80 (Traefik/Reverse Proxy compatibility)`);
+      });
+      port80Server.on("error", (err) => {
+      });
+    } catch {
+    }
+  }
+  if (PORT !== 8080 && PORT !== 80) {
+    try {
+      const port8080Server = app.listen(8080, "0.0.0.0", () => {
+        console.log(`\u{1F680} Secondary listener active on http://0.0.0.0:8080 (Traefik/Reverse Proxy compatibility)`);
+      });
+      port8080Server.on("error", (err) => {
+      });
+    } catch {
+    }
+  }
 }
 startServer();
