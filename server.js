@@ -6911,7 +6911,15 @@ app.post("/api/webhook/evolution", async (req, res) => {
   }
 });
 async function startServer() {
-  const distPath = fs.existsSync(path.join(process.cwd(), "dist")) ? path.join(process.cwd(), "dist") : path.join(__dirname, "dist");
+  const candidateDirs = [
+    path.join(process.cwd(), "dist"),
+    path.join(__dirname, "dist"),
+    path.join(process.cwd(), "public_html"),
+    path.join(__dirname, "public_html"),
+    process.cwd(),
+    __dirname
+  ];
+  const distPath = candidateDirs.find((dir) => fs.existsSync(path.join(dir, "index.html"))) || path.join(__dirname, "dist");
   const hasDist = fs.existsSync(path.join(distPath, "index.html"));
   const isDev = process.env.NODE_ENV === "development" && !hasDist;
   if (isDev) {
@@ -6941,7 +6949,7 @@ async function startServer() {
   }
   const server = http.createServer(app);
   const onListening = () => {
-    const listenTarget = typeof PORT === "number" ? `http://0.0.0.0:${PORT}` : String(PORT);
+    const listenTarget = typeof PORT === "number" ? `port ${PORT} (IPv4/IPv6 dual-stack)` : String(PORT);
     console.log(`\u{1F680} Vendem\xE1 CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
     hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial sync err:", e));
     setInterval(() => {
@@ -6958,7 +6966,7 @@ async function startServer() {
     }, 1e3 * 60 * 5);
   };
   if (typeof PORT === "number") {
-    server.listen(PORT, "0.0.0.0", onListening);
+    server.listen(PORT, onListening);
   } else {
     server.listen(PORT, onListening);
   }

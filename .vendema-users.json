@@ -7,8 +7,8 @@
     "whatsapp": "18496260800",
     "role": "super_admin",
     "activo": true,
-    "createdAt": "2026-11-01T13:31:47.477Z",
-    "lastLogin": "2026-11-01T13:31:50.565Z"
+    "createdAt": "2026-11-01T15:26:56.815464+00:00",
+    "lastLogin": "2026-11-02T13:52:53.625+00:00"
   },
   {
     "id": "usr_dueno_negocio",
@@ -18,7 +18,7 @@
     "whatsapp": "18094228738",
     "role": "dueno",
     "activo": true,
-    "createdAt": "2026-11-01T13:31:47.477Z"
+    "createdAt": "2026-11-01T15:26:56.815464+00:00"
   },
   {
     "id": "usr_empleado_ventas",
@@ -28,6 +28,6 @@
     "whatsapp": "18492588738",
     "role": "empleado",
     "activo": true,
-    "createdAt": "2026-11-01T13:31:47.477Z"
+    "createdAt": "2026-11-01T15:26:56.815464+00:00"
   }
 ]

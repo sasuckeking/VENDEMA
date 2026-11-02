@@ -6024,9 +6024,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
 // Mount Vite middlewares & Start Background Real-Time Syncs
 // ---------------------------------------------------------
 async function startServer() {
-  const distPath = fs.existsSync(path.join(process.cwd(), 'dist'))
-    ? path.join(process.cwd(), 'dist')
-    : path.join(__dirname, 'dist');
+  const candidateDirs = [
+    path.join(process.cwd(), 'dist'),
+    path.join(__dirname, 'dist'),
+    path.join(process.cwd(), 'public_html'),
+    path.join(__dirname, 'public_html'),
+    process.cwd(),
+    __dirname,
+  ];
+  const distPath = candidateDirs.find(dir => fs.existsSync(path.join(dir, 'index.html'))) || path.join(__dirname, 'dist');
   const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
 
   // Use Vite only when explicitly running development AND dist build is not present
@@ -6062,7 +6068,7 @@ async function startServer() {
   const server = http.createServer(app);
 
   const onListening = () => {
-    const listenTarget = typeof PORT === 'number' ? `http://0.0.0.0:${PORT}` : String(PORT);
+    const listenTarget = typeof PORT === 'number' ? `port ${PORT} (IPv4/IPv6 dual-stack)` : String(PORT);
     console.log(`🚀 Vendemá CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
 
     // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
@@ -6090,7 +6096,8 @@ async function startServer() {
   };
 
   if (typeof PORT === 'number') {
-    server.listen(PORT, '0.0.0.0', onListening);
+    // Listen on default interface to bind to both IPv4 and IPv6 for Hostinger / Nginx reverse proxy
+    server.listen(PORT, onListening);
   } else {
     // Passenger Unix domain socket or named pipe
     server.listen(PORT, onListening);
