@@ -12,13 +12,10 @@ import {
   LogOut,
   Crown,
   Briefcase,
-  Headphones,
-  CalendarClock,
-  X
+  Headphones
 } from 'lucide-react';
 import type { AppConfig, UserAccount } from '../types';
-import { getDominicanTimeContext, setGlobalHolidayOverrides } from '../utils/businessSchedule';
-import { HolidayManagerPanel } from './HolidayManagerPanel';
+import { setGlobalHolidayOverrides } from '../utils/businessSchedule';
 
 interface NavbarProps {
   currentTab: string;
@@ -40,19 +37,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onLogout,
 }) => {
-  const [rdTime, setRdTime] = useState(() => getDominicanTimeContext(new Date(), config.holidayOverrides || []));
-  const [holidayModalOpen, setHolidayModalOpen] = useState(false);
-
   useEffect(() => {
     setGlobalHolidayOverrides(config.holidayOverrides || []);
-    setRdTime(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
-    const timer = setInterval(() => {
-      setRdTime(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
-    }, 20000);
-    return () => clearInterval(timer);
   }, [config.holidayOverrides]);
-
-  const activeHolidayShiftsCount = (config.holidayOverrides || []).filter(o => o.status !== 'normal').length;
 
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isDueno = currentUser?.role === 'dueno';
@@ -204,21 +191,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             />
           </button>
 
-          {/* Dominican Republic Business Time & Holiday Shift Manager Button */}
-          <button
-            type="button"
-            onClick={() => setHolidayModalOpen(true)}
-            className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] hover:border-amber-500/40 text-[11px] transition-all cursor-pointer"
-            title={`Horario Todo Lapto: Lunes a Sábado de 8:30 AM a 6:00 PM (RD)\n${rdTime.fullDateStr} · ${rdTime.time12}\n${rdTime.statusDetail}\n\n👉 Clic para configurar cambios de días feriados en RD (ej. mover feriado de viernes a lunes)`}
-          >
-            <CalendarClock className="w-3.5 h-3.5 text-amber-400" />
-            <span className="font-mono text-slate-200 font-semibold">{rdTime.time12}</span>
-            <span className="text-amber-300 text-[10px] font-semibold hidden md:inline">
-              Feriados RD{activeHolidayShiftsCount > 0 ? ` (${activeHolidayShiftsCount})` : ''}
-            </span>
-            <span className={`w-2 h-2 rounded-full ${rdTime.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-          </button>
-
           {/* User Profile Pill & Logout */}
           {currentUser && (
             <div className="flex items-center gap-2 pl-2 border-l border-white/[0.08]">
@@ -297,36 +269,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Global Dominican Republic Holiday Manager Modal */}
-      {holidayModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-[#090D12] border border-white/[0.1] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.08] bg-[#0F141C]">
-              <div className="flex items-center gap-2.5">
-                <CalendarClock className="w-5 h-5 text-amber-400" />
-                <h3 className="text-sm font-bold text-white">
-                  Configuración de Días Feriados en RD (Cambios de Día / Lunes Feriados)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setHolidayModalOpen(false)}
-                className="p-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-4 sm:p-6 overflow-y-auto">
-              <HolidayManagerPanel
-                config={config}
-                onUpdateConfig={onUpdateConfig || (async () => {})}
-                compact
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };
