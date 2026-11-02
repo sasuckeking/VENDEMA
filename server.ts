@@ -65,7 +65,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: process.env.GEMINI_API_KEY || 'default_gemini_key',
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
@@ -134,7 +134,7 @@ app.get('/api/events', (req, res) => {
 const CONFIG_FILE_PATH = path.join(__dirname, '.vendema-config.json');
 const ENV_FILE_PATH = path.join(__dirname, '.env');
 
-function syncCredentialsToEnv(cfg: AppConfig) {
+function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
   try {
     const vars: Record<string, string> = {
       // Supabase Credentials
@@ -160,11 +160,17 @@ function syncCredentialsToEnv(cfg: AppConfig) {
       GEMINI_API_KEY: cfg.aiProvider?.geminiApiKey || process.env.GEMINI_API_KEY || '',
     };
 
-    // Update in-memory process.env immediately
+    // Update in-memory process.env immediately for runtime use
     for (const [key, val] of Object.entries(vars)) {
       if (val) {
         process.env[key] = val;
       }
+    }
+
+    // Do NOT touch .env unless explicitly requested.
+    // In Docker/Easypanel/Coolify with dotenvx, writing .env triggers process watchers to restart in an infinite loop!
+    if (!persistToFile) {
+      return;
     }
 
     let existingContent = '';
@@ -201,8 +207,11 @@ function syncCredentialsToEnv(cfg: AppConfig) {
       updatedLines.push(`APP_URL="${process.env.APP_URL}"`);
     }
 
-    fs.writeFileSync(ENV_FILE_PATH, updatedLines.join('\n').trim() + '\n', 'utf-8');
-    console.log('[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env');
+    const newContent = updatedLines.join('\n').trim() + '\n';
+    if (newContent !== existingContent.trim() + '\n') {
+      fs.writeFileSync(ENV_FILE_PATH, newContent, 'utf-8');
+      console.log('[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env');
+    }
   } catch (err: any) {
     console.warn('[Env Sync Info]:', err.message);
   }
@@ -316,17 +325,16 @@ function loadPersistedConfig() {
   }
 }
 
-function savePersistedConfig() {
+function savePersistedConfig(persistToEnv = false) {
   try {
     fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(appConfig, null, 2), 'utf-8');
-    syncCredentialsToEnv(appConfig);
+    syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err: any) {
     console.log('[Config Save Info]:', err.message);
   }
 }
 
 loadPersistedConfig();
-savePersistedConfig();
 
 // ---------------------------------------------------------
 // User Hierarchy & Authentication System (RBAC)
@@ -6072,30 +6080,21 @@ async function startServer() {
     console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
   });
 
-  // Secondary listeners for port 80 and 8080:
-  // Many hosting panels (Easypanel, Coolify, Traefik) default the domain target port to 80 or 8080.
-  // Listening on these auxiliary ports if available prevents 503 Bad Gateway / Service Unavailable.
-  if (PORT !== 80) {
-    try {
-      const port80Server = app.listen(80, '0.0.0.0', () => {
-        console.log(`🚀 Secondary listener active on http://0.0.0.0:80 (Traefik/Reverse Proxy compatibility)`);
-      });
-      port80Server.on('error', (err: any) => {
-        // Ignored if port 80 is restricted or already allocated
-      });
-    } catch {}
-  }
+  // Graceful shutdown handling for Docker / Traefik / orchestrators
+  const shutdown = (signal: string) => {
+    console.log(`[Server] Received ${signal}. Closing gracefully...`);
+    server.close(() => {
+      console.log('[Server] HTTP server closed cleanly.');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('[Server] Forcing shutdown after timeout.');
+      process.exit(1);
+    }, 5000).unref();
+  };
 
-  if (PORT !== 8080 && PORT !== 80) {
-    try {
-      const port8080Server = app.listen(8080, '0.0.0.0', () => {
-        console.log(`🚀 Secondary listener active on http://0.0.0.0:8080 (Traefik/Reverse Proxy compatibility)`);
-      });
-      port8080Server.on('error', (err: any) => {
-        // Ignored if port 8080 is restricted or already allocated
-      });
-    } catch {}
-  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer();

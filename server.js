@@ -2141,7 +2141,7 @@ var __dirname = path.dirname(__filename);
 var app = express();
 var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
 var ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  apiKey: process.env.GEMINI_API_KEY || "default_gemini_key",
   httpOptions: {
     headers: {
       "User-Agent": "aistudio-build"
@@ -2196,7 +2196,7 @@ app.get("/api/events", (req, res) => {
 });
 var CONFIG_FILE_PATH = path.join(__dirname, ".vendema-config.json");
 var ENV_FILE_PATH = path.join(__dirname, ".env");
-function syncCredentialsToEnv(cfg) {
+function syncCredentialsToEnv(cfg, persistToFile = false) {
   try {
     const vars = {
       // Supabase Credentials
@@ -2222,6 +2222,9 @@ function syncCredentialsToEnv(cfg) {
       if (val) {
         process.env[key] = val;
       }
+    }
+    if (!persistToFile) {
+      return;
     }
     let existingContent = "";
     if (fs.existsSync(ENV_FILE_PATH)) {
@@ -2250,8 +2253,11 @@ function syncCredentialsToEnv(cfg) {
     if (process.env.APP_URL && !updatedLines.some((l) => l.startsWith("APP_URL="))) {
       updatedLines.push(`APP_URL="${process.env.APP_URL}"`);
     }
-    fs.writeFileSync(ENV_FILE_PATH, updatedLines.join("\n").trim() + "\n", "utf-8");
-    console.log("[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env");
+    const newContent = updatedLines.join("\n").trim() + "\n";
+    if (newContent !== existingContent.trim() + "\n") {
+      fs.writeFileSync(ENV_FILE_PATH, newContent, "utf-8");
+      console.log("[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env");
+    }
   } catch (err) {
     console.warn("[Env Sync Info]:", err.message);
   }
@@ -2357,16 +2363,15 @@ function loadPersistedConfig() {
     console.log("[Config Load Info]:", err.message);
   }
 }
-function savePersistedConfig() {
+function savePersistedConfig(persistToEnv = false) {
   try {
     fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(appConfig, null, 2), "utf-8");
-    syncCredentialsToEnv(appConfig);
+    syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err) {
     console.log("[Config Save Info]:", err.message);
   }
 }
 loadPersistedConfig();
-savePersistedConfig();
 var USERS_FILE_PATH = path.join(__dirname, ".vendema-users.json");
 var USERS_FALLBACK_PATH = path.join(process.cwd(), ".vendema-users.json");
 var DEFAULT_USERS = [
@@ -6948,25 +6953,18 @@ async function startServer() {
   server.on("error", (err) => {
     console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
   });
-  if (PORT !== 80) {
-    try {
-      const port80Server = app.listen(80, "0.0.0.0", () => {
-        console.log(`\u{1F680} Secondary listener active on http://0.0.0.0:80 (Traefik/Reverse Proxy compatibility)`);
-      });
-      port80Server.on("error", (err) => {
-      });
-    } catch {
-    }
-  }
-  if (PORT !== 8080 && PORT !== 80) {
-    try {
-      const port8080Server = app.listen(8080, "0.0.0.0", () => {
-        console.log(`\u{1F680} Secondary listener active on http://0.0.0.0:8080 (Traefik/Reverse Proxy compatibility)`);
-      });
-      port8080Server.on("error", (err) => {
-      });
-    } catch {
-    }
-  }
+  const shutdown = (signal) => {
+    console.log(`[Server] Received ${signal}. Closing gracefully...`);
+    server.close(() => {
+      console.log("[Server] HTTP server closed cleanly.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error("[Server] Forcing shutdown after timeout.");
+      process.exit(1);
+    }, 5e3).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 startServer();
