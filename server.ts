@@ -49,6 +49,14 @@ import {
 
 dotenv.config();
 
+// Global process error handlers to prevent container crashes on network/background glitches
+process.on('uncaughtException', (err) => {
+  console.error('[Process Error] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process Error] Unhandled Rejection:', reason);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -67,6 +75,28 @@ const ai = new GoogleGenAI({
 
 app.use(express.json({ limit: '35mb' }));
 app.use(express.urlencoded({ extended: true, limit: '35mb' }));
+
+// Permissive CORS & reverse proxy support for custom domains
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Immediate Health Check endpoints for container orchestrators (Easypanel, Coolify, Docker, Cloud Run)
+app.get(['/health', '/api/health', '/ping'], (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'Vendemá CRM & Ventas',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    port: PORT,
+  });
+});
 
 // ---------------------------------------------------------
 // Server-Sent Events (SSE) Real-Time Broadcast Clients
@@ -5982,7 +6012,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
 // Mount Vite middlewares & Start Background Real-Time Syncs
 // ---------------------------------------------------------
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (isDev) {
     const { createServer } = await import('vite');
     const vite = await createServer({
       server: { middlewareMode: true },
@@ -5990,14 +6022,23 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/')) {
+        return res.status(404).json({ error: 'Endpoint no encontrado' });
+      }
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Build frontend no encontrado en dist/. Por favor ejecuta npm run build.');
+      }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Vendemá CRM Server listening on port ${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Vendemá CRM Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
 
     // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
     hydrateAndSyncUsersWithSupabase()
@@ -6021,6 +6062,10 @@ async function startServer() {
     setInterval(() => {
       syncOdooCustomers().catch(() => {});
     }, 1000 * 60 * 5);
+  });
+
+  server.on('error', (err: any) => {
+    console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
   });
 }
 
