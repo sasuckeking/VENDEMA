@@ -1,5 +1,6 @@
 // server.ts
 import express from "express";
+import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -2139,6 +2140,7 @@ process.on("unhandledRejection", (reason) => {
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var app = express();
+app.set("trust proxy", true);
 var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
 var ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "default_gemini_key",
@@ -6907,7 +6909,9 @@ app.post("/api/webhook/evolution", async (req, res) => {
   }
 });
 async function startServer() {
-  const isDev = process.env.NODE_ENV === "development";
+  const distPath = fs.existsSync(path.join(process.cwd(), "dist")) ? path.join(process.cwd(), "dist") : path.join(__dirname, "dist");
+  const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+  const isDev = process.env.NODE_ENV === "development" && !hasDist;
   if (isDev) {
     const { createServer } = await import("vite");
     const vite = await createServer({
@@ -6916,7 +6920,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, "dist");
     const publicPath = path.join(__dirname, "public");
     app.use(express.static(distPath));
     if (fs.existsSync(publicPath)) {
@@ -6934,7 +6937,9 @@ async function startServer() {
       }
     });
   }
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  const activeServers = [];
+  const primaryServer = http.createServer(app);
+  primaryServer.listen(PORT, "0.0.0.0", () => {
     console.log(`\u{1F680} Vendem\xE1 CRM Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
     hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial sync err:", e));
     setInterval(() => {
@@ -6950,19 +6955,33 @@ async function startServer() {
       });
     }, 1e3 * 60 * 5);
   });
-  server.on("error", (err) => {
-    console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
+  primaryServer.on("error", (err) => {
+    console.error(`[Server Listen Error on primary port ${PORT}]:`, err.message);
   });
+  activeServers.push(primaryServer);
+  const auxPorts = [80, 8080].filter((p) => p !== PORT);
+  for (const p of auxPorts) {
+    try {
+      const auxServer = http.createServer(app);
+      auxServer.on("error", () => {
+      });
+      auxServer.listen(p, "0.0.0.0", () => {
+        console.log(`\u{1F680} Auxiliary listener active on http://0.0.0.0:${p} (Traefik/Reverse Proxy compatibility)`);
+      });
+      activeServers.push(auxServer);
+    } catch {
+    }
+  }
   const shutdown = (signal) => {
     console.log(`[Server] Received ${signal}. Closing gracefully...`);
-    server.close(() => {
-      console.log("[Server] HTTP server closed cleanly.");
-      process.exit(0);
-    });
-    setTimeout(() => {
-      console.error("[Server] Forcing shutdown after timeout.");
-      process.exit(1);
-    }, 5e3).unref();
+    for (const s of activeServers) {
+      try {
+        s.close();
+      } catch {
+      }
+    }
+    console.log("[Server] HTTP servers closed cleanly.");
+    process.exit(0);
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

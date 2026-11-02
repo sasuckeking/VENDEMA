@@ -12,13 +12,13 @@ import type {
   ProductItem,
   HolidayOverride,
   HolidayOverrideStatus
-} from '../types.js';
+} from '../types.ts';
 import {
   getDominicanTimeContext,
   getAvailableHolidayYears,
   getHolidaysWithOverridesForYear,
   formatHumanDateShortRD
-} from './businessSchedule.js';
+} from './businessSchedule.ts';
 
 export const DEFAULT_SUPABASE_URL = 'https://idpsjmyjhkabuenqdpyf.supabase.co';
 export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlkcHNqbXlqaGthYnVlbnFkcHlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1MzE3NDEsImV4cCI6MjEwOTEwNzc0MX0.rH7p8Ipg2pLn0T4-ZN0Onk3oAKtRrVIoqQ6ukKeJTnA';

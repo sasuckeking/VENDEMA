@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -16,15 +17,15 @@ import type {
   QuotedMessage,
   UserAccount,
   UserRole
-} from './src/types.js';
-import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.js';
+} from './src/types.ts';
+import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.ts';
 import { 
   getDominicanTimeContext, 
   buildDominicanTimePromptContext,
   setGlobalHolidayOverrides,
   getHolidaysWithOverridesForYear,
   getAvailableHolidayYears
-} from './src/utils/businessSchedule.js';
+} from './src/utils/businessSchedule.ts';
 import { 
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
@@ -45,7 +46,7 @@ import {
   autoSyncOrderToSupabase,
   autoSyncMessageToSupabase,
   autoSyncCustomerToSupabase
-} from './src/utils/supabaseService.js';
+} from './src/utils/supabaseService.ts';
 
 dotenv.config();
 
@@ -61,6 +62,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Initialize Gemini Client
@@ -6020,7 +6022,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
 // Mount Vite middlewares & Start Background Real-Time Syncs
 // ---------------------------------------------------------
 async function startServer() {
-  const isDev = process.env.NODE_ENV === 'development';
+  const distPath = fs.existsSync(path.join(process.cwd(), 'dist'))
+    ? path.join(process.cwd(), 'dist')
+    : path.join(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  // Use Vite only when explicitly running development AND dist build is not present
+  const isDev = process.env.NODE_ENV === 'development' && !hasDist;
 
   if (isDev) {
     const { createServer } = await import('vite');
@@ -6030,7 +6038,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
     const publicPath = path.join(__dirname, 'public');
     app.use(express.static(distPath));
     if (fs.existsSync(publicPath)) {
@@ -6049,7 +6056,11 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  const activeServers: http.Server[] = [];
+
+  // Primary Server on PORT (default 3000)
+  const primaryServer = http.createServer(app);
+  primaryServer.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Vendemá CRM Server listening on http://0.0.0.0:${PORT} (PID: ${process.pid})`);
 
     // Initial real-time sync of Users & Holiday Calendar with Supabase, Odoo Inventory, Odoo Customers, and Evolution API WhatsApp Chats
@@ -6076,21 +6087,36 @@ async function startServer() {
     }, 1000 * 60 * 5);
   });
 
-  server.on('error', (err: any) => {
-    console.error(`[Server Listen Error on port ${PORT}]:`, err.message);
+  primaryServer.on('error', (err: any) => {
+    console.error(`[Server Listen Error on primary port ${PORT}]:`, err.message);
   });
+  activeServers.push(primaryServer);
+
+  // Auxiliary listeners for port 80 and 8080 (in case Coolify/Traefik reverse proxy routes to 80/8080)
+  const auxPorts = [80, 8080].filter(p => p !== PORT);
+  for (const p of auxPorts) {
+    try {
+      const auxServer = http.createServer(app);
+      auxServer.on('error', () => {
+        // Silently ignore if port is restricted or in use
+      });
+      auxServer.listen(p, '0.0.0.0', () => {
+        console.log(`🚀 Auxiliary listener active on http://0.0.0.0:${p} (Traefik/Reverse Proxy compatibility)`);
+      });
+      activeServers.push(auxServer);
+    } catch {}
+  }
 
   // Graceful shutdown handling for Docker / Traefik / orchestrators
   const shutdown = (signal: string) => {
     console.log(`[Server] Received ${signal}. Closing gracefully...`);
-    server.close(() => {
-      console.log('[Server] HTTP server closed cleanly.');
-      process.exit(0);
-    });
-    setTimeout(() => {
-      console.error('[Server] Forcing shutdown after timeout.');
-      process.exit(1);
-    }, 5000).unref();
+    for (const s of activeServers) {
+      try {
+        s.close();
+      } catch {}
+    }
+    console.log('[Server] HTTP servers closed cleanly.');
+    process.exit(0);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
