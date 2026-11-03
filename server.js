@@ -6986,29 +6986,91 @@ async function startServer() {
   }
   if (!viteMounted) {
     const distPath = candidateDist || path.join(process.cwd(), "dist");
-    console.log(`[Server]: Production mode - serving static files from ${distPath}`);
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-    }
     const publicPath = path.join(process.cwd(), "public");
-    if (fs.existsSync(publicPath)) {
-      app.use(express.static(publicPath));
-    }
+    console.log(`[Server]: Production mode - serving static files via direct buffer from ${distPath}`);
+    const MIME_TYPES = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".mjs": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+      ".ttf": "font/ttf",
+      ".txt": "text/plain; charset=utf-8",
+      ".webmanifest": "application/manifest+json"
+    };
+    const staticMemoryCache = /* @__PURE__ */ new Map();
+    const readStaticAsset = (relPath) => {
+      const cleanRel = relPath.replace(/^\/+/, "");
+      if (!cleanRel || cleanRel.includes("..")) return null;
+      if (staticMemoryCache.has(cleanRel)) {
+        return staticMemoryCache.get(cleanRel);
+      }
+      const searchRoots = [distPath, path.join(__dirname, "dist"), publicPath, path.join(__dirname, "public")];
+      for (const rootDir of searchRoots) {
+        const fullPath = path.join(rootDir, cleanRel);
+        try {
+          if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+            const ext = path.extname(fullPath).toLowerCase();
+            const mime = MIME_TYPES[ext] || "application/octet-stream";
+            const buffer = fs.readFileSync(fullPath);
+            if (buffer.length < 5 * 1024 * 1024) {
+              staticMemoryCache.set(cleanRel, { buffer, mime });
+            }
+            return { buffer, mime };
+          }
+        } catch {
+        }
+      }
+      return null;
+    };
+    app.get(["/favicon.ico", "/favicon.svg"], (_req, res) => {
+      const asset = readStaticAsset("favicon.svg") || readStaticAsset("favicon.ico");
+      if (asset) {
+        res.setHeader("Content-Type", asset.mime);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.status(200).send(asset.buffer);
+      }
+      return res.status(204).end();
+    });
     app.get("*", (req, res) => {
       if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
         return res.status(404).json({ error: "Endpoint no encontrado" });
       }
-      const indexPath = candidateDist ? path.join(candidateDist, "index.html") : path.join(distPath, "index.html");
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath, (err) => {
-          if (err && !res.headersSent) {
-            console.error("[SendFile Error]:", err.message);
-            res.status(200).send('<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo.</p></body></html>');
+      const reqPath = decodeURIComponent(req.path || "/");
+      if (reqPath !== "/" && reqPath !== "/index.html") {
+        const asset = readStaticAsset(reqPath);
+        if (asset) {
+          res.setHeader("Content-Type", asset.mime);
+          if (reqPath.startsWith("/assets/")) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=3600");
           }
-        });
-      } else {
-        res.status(200).send('<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo. Por favor ejecuta <code>npm run build</code> en el servidor para generar los archivos est\xE1ticos de la interfaz.</p></body></html>');
+          return res.status(200).send(asset.buffer);
+        }
+        const ext = path.extname(reqPath).toLowerCase();
+        if (ext && ext !== ".html") {
+          return res.status(404).send("Asset not found");
+        }
       }
+      const indexAsset = readStaticAsset("index.html");
+      if (indexAsset) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        return res.status(200).send(indexAsset.buffer);
+      }
+      return res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(
+        '<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo. Por favor ejecuta <code>npm run build</code> para generar los archivos de la interfaz.</p></body></html>'
+      );
     });
   }
   const server = http.createServer(app);
