@@ -407,6 +407,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         <img
                           src={imgUrl}
                           alt={p.name}
+                          referrerPolicy="no-referrer"
                           loading="lazy"
                           onError={() => setFailedImages(prev => ({ ...prev, [p.id]: true }))}
                           className="w-full h-full object-contain p-1 bg-white/95 hover:scale-105 transition-transform"
@@ -565,6 +566,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               <img
                 src={`https://todolapto.com.do/web/image/product.template/${previewProduct.id}/image_512`}
                 alt={previewProduct.name}
+                referrerPolicy="no-referrer"
                 className="max-h-full max-w-full object-contain"
               />
             </div>

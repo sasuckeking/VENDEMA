@@ -56,6 +56,36 @@ interface LiveInboxProps {
   globalAiActive: boolean;
 }
 
+const ContactAvatar: React.FC<{
+  src?: string;
+  name?: string;
+  className?: string;
+  fallbackClassName?: string;
+}> = ({
+  src,
+  name,
+  className = 'w-10 h-10 rounded-full object-cover border border-white/[0.08]',
+  fallbackClassName = 'w-10 h-10 rounded-full bg-[#18212E] border border-white/[0.06] flex items-center justify-center font-bold text-slate-200 text-sm shrink-0',
+}) => {
+  const [hasError, setHasError] = useState(false);
+  const initial = (name || 'C').trim().charAt(0).toUpperCase() || 'C';
+
+  if (!src || hasError) {
+    return <div className={fallbackClassName}>{initial}</div>;
+  }
+
+  return (
+    <img
+      src={src}
+      alt={name || 'Avatar'}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      className={className}
+      onError={() => setHasError(true)}
+    />
+  );
+};
+
 export const LiveInbox: React.FC<LiveInboxProps> = ({
   conversations,
   selectedSessionId,
@@ -651,20 +681,10 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                 >
                   {/* Avatar */}
                   <div className="relative shrink-0">
-                    {conv.profilePicUrl ? (
-                      <img
-                        src={conv.profilePicUrl}
-                        alt={conv.customerName}
-                        className="w-10 h-10 rounded-full object-cover border border-white/[0.08]"
-                        onError={e => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-[#18212E] border border-white/[0.06] flex items-center justify-center font-bold text-slate-200 text-sm">
-                        {conv.customerName.charAt(0).toUpperCase() || 'C'}
-                      </div>
-                    )}
+                    <ContactAvatar
+                      src={conv.profilePicUrl}
+                      name={conv.customerName}
+                    />
                     {/* Status dot */}
                     <span
                       title={isAiOn ? 'IA respondiendo' : 'Pausada: Agente humano'}
@@ -739,17 +759,12 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
           {/* Header of Active Chat */}
           <div className="p-3.5 border-b border-white/[0.06] bg-[#0C1017]/80 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              {activeConversation.profilePicUrl ? (
-                <img
-                  src={activeConversation.profilePicUrl}
-                  alt={activeConversation.customerName}
-                  className="w-9 h-9 rounded-full object-cover border border-white/[0.08] shrink-0"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-[#18212E] border border-white/[0.08] flex items-center justify-center font-bold text-slate-200 text-sm shrink-0">
-                  {activeConversation.customerName.charAt(0) || 'C'}
-                </div>
-              )}
+              <ContactAvatar
+                src={activeConversation.profilePicUrl}
+                name={activeConversation.customerName}
+                className="w-9 h-9 rounded-full object-cover border border-white/[0.08] shrink-0"
+                fallbackClassName="w-9 h-9 rounded-full bg-[#18212E] border border-white/[0.08] flex items-center justify-center font-bold text-slate-200 text-sm shrink-0"
+              />
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-sm font-bold text-slate-100 truncate">
@@ -978,6 +993,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                           <img
                             src={msg.quotedMessage.mediaUrl}
                             alt="Cita"
+                            referrerPolicy="no-referrer"
                             className="w-10 h-10 rounded-lg object-cover shrink-0 border border-white/10"
                           />
                         )}
@@ -1062,6 +1078,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                           <img
                             src={msg.mediaUrl}
                             alt="Imagen de WhatsApp"
+                            referrerPolicy="no-referrer"
                             loading="lazy"
                             className="max-h-64 w-full object-contain cursor-pointer hover:opacity-95 transition-opacity"
                             onClick={() => setSelectedImageModal(msg.mediaUrl || null)}
@@ -1639,6 +1656,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
               <img
                 src={selectedImageModal}
                 alt="Adjunto de WhatsApp"
+                referrerPolicy="no-referrer"
                 className="object-contain max-h-[70vh] w-auto"
               />
             </div>

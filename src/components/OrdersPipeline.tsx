@@ -214,6 +214,7 @@ export const OrdersPipeline: React.FC<OrdersPipelineProps> = ({
                           <img
                             src={order.receiptImage}
                             alt="Comprobante"
+                            referrerPolicy="no-referrer"
                             className="w-full h-full object-cover"
                           />
                           <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] text-amber-300 font-medium">
@@ -330,6 +331,7 @@ export const OrdersPipeline: React.FC<OrdersPipelineProps> = ({
                   <img
                     src={selectedOrder.receiptImage}
                     alt="Comprobante"
+                    referrerPolicy="no-referrer"
                     className="object-contain max-h-56 w-auto"
                   />
                 </div>

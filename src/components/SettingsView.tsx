@@ -1016,13 +1016,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                       <img
                         src={qrStatus.profilePicUrl}
                         alt="WhatsApp Profile"
+                        referrerPolicy="no-referrer"
                         className="w-10 h-10 rounded-full object-cover border border-lime-500/40"
+                        onError={e => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                          const fallback = (e.target as HTMLImageElement).nextElementSibling as HTMLElement;
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
                       />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-lime-950 text-lime-400 flex items-center justify-center font-bold text-sm">
-                        W
-                      </div>
-                    )}
+                    ) : null}
+                    <div
+                      style={{ display: qrStatus.profilePicUrl ? 'none' : 'flex' }}
+                      className="w-10 h-10 rounded-full bg-lime-950 text-lime-400 items-center justify-center font-bold text-sm"
+                    >
+                      W
+                    </div>
                     <div className="text-xs">
                       <span className="text-slate-400 block text-[10px]">Cuenta Vinculada Activa:</span>
                       <span className="font-bold text-white block">

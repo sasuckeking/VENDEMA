@@ -6040,25 +6040,55 @@ app.post('/api/webhook/evolution', async (req, res) => {
   }
 });
 
+// Image Proxy endpoint to avoid browser 403 Forbidden issues on external CDNs (WhatsApp / Meta / Odoo)
+app.get('/api/proxy-image', async (req, res) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    return res.status(400).send('URL requerida');
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+
+    const upstream = await fetch(targetUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      },
+    });
+    clearTimeout(timeout);
+
+    if (!upstream.ok) {
+      return res.status(upstream.status === 403 || upstream.status === 404 ? 204 : upstream.status).end();
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+    const buffer = await upstream.arrayBuffer();
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(Buffer.from(buffer));
+  } catch {
+    return res.status(204).end();
+  }
+});
+
 // ---------------------------------------------------------
 // Mount Vite middlewares & Start Background Real-Time Syncs
 // ---------------------------------------------------------
 async function startServer() {
-  const candidateDirs = [
+  const isProduction = process.env.NODE_ENV === 'production';
+  const candidateDist = [
     path.join(process.cwd(), 'dist'),
     path.join(__dirname, 'dist'),
     path.join(process.cwd(), 'public_html'),
     path.join(__dirname, 'public_html'),
-    process.cwd(),
-    __dirname,
-  ];
-  const distPath = candidateDirs.find(dir => fs.existsSync(path.join(dir, 'index.html'))) || path.join(__dirname, 'dist');
-  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  ].find(dir => fs.existsSync(path.join(dir, 'index.html')));
 
-  // Use Vite only when explicitly running development AND dist build is not present
-  const isDev = process.env.NODE_ENV === 'development' && !hasDist;
-
-  if (isDev) {
+  if (!isProduction || !candidateDist) {
+    // In development or if pre-built dist is missing, mount Vite dev middleware
+    console.log('[Server]: Running Vite development middleware with hot reload & module compilation');
     const { createServer } = await import('vite');
     const vite = await createServer({
       server: { middlewareMode: true },
@@ -6066,8 +6096,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    console.log(`[Server]: Serving production static build from: ${candidateDist}`);
+    app.use(express.static(candidateDist));
     const publicPath = path.join(__dirname, 'public');
-    app.use(express.static(distPath));
     if (fs.existsSync(publicPath)) {
       app.use(express.static(publicPath));
     }
@@ -6075,7 +6106,7 @@ async function startServer() {
       if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/')) {
         return res.status(404).json({ error: 'Endpoint no encontrado' });
       }
-      const indexPath = path.join(distPath, 'index.html');
+      const indexPath = path.join(candidateDist, 'index.html');
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
