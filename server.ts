@@ -454,7 +454,7 @@ function loadPersistedUsers() {
   }
 
   ensureDefaultUsersPresent();
-  savePersistedUsers();
+  // Do NOT write to disk on server boot to prevent file watchers (tsx / nodemon / Hostinger) from restarting in an infinite loop
   console.log(`[Users Loaded]: ${systemUsers.length} active users loaded. Super Admin: @nelson`);
 }
 

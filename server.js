@@ -2473,7 +2473,6 @@ function loadPersistedUsers() {
     systemUsers = [...DEFAULT_USERS];
   }
   ensureDefaultUsersPresent();
-  savePersistedUsers();
   console.log(`[Users Loaded]: ${systemUsers.length} active users loaded. Super Admin: @nelson`);
 }
 async function hydrateAndSyncUsersWithSupabase() {
