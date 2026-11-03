@@ -55,9 +55,11 @@ declare const PhusionPassenger: any;
 
 // Global process error handlers to prevent container crashes on network/background glitches
 process.on('uncaughtException', (err) => {
+  console.log('[Process Error] Uncaught Exception:', err?.message || err);
   console.error('[Process Error] Uncaught Exception:', err);
 });
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', (reason: any) => {
+  console.log('[Process Error] Unhandled Rejection:', reason?.message || reason);
   console.error('[Process Error] Unhandled Rejection:', reason);
 });
 process.on('exit', (code) => {
@@ -279,9 +281,6 @@ let appConfig: AppConfig = {
 
 function loadPersistedConfig() {
   try {
-    if (fs.existsSync(ENV_FILE_PATH)) {
-      dotenv.config({ path: ENV_FILE_PATH, override: true });
-    }
 
     if (fs.existsSync(CONFIG_FILE_PATH)) {
       const raw = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
@@ -348,7 +347,14 @@ function loadPersistedConfig() {
 
 function savePersistedConfig(persistToEnv = false) {
   try {
-    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(appConfig, null, 2), 'utf-8');
+    const content = JSON.stringify(appConfig, null, 2);
+    let existing = '';
+    if (fs.existsSync(CONFIG_FILE_PATH)) {
+      existing = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
+    }
+    if (content !== existing) {
+      fs.writeFileSync(CONFIG_FILE_PATH, content, 'utf-8');
+    }
     syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err: any) {
     console.log('[Config Save Info]:', err.message);
@@ -488,7 +494,6 @@ async function hydrateAndSyncUsersWithSupabase(): Promise<void> {
         }
       }
       ensureDefaultUsersPresent();
-      savePersistedUsers();
     }
     // Always push full user list back to Supabase (`public.usuarios` + cloud backup)
     await syncAllUsersToSupabase(systemUsers, appConfig.supabase?.url, appConfig.supabase?.anonKey);
@@ -514,7 +519,6 @@ async function hydrateAndSyncHolidaysWithSupabase(): Promise<void> {
         }
         appConfig.holidayOverrides = Array.from(mergedMap.values());
         setGlobalHolidayOverrides(appConfig.holidayOverrides);
-        savePersistedConfig();
       }
     }
     if (Array.isArray(appConfig.holidayOverrides)) {
@@ -6139,14 +6143,36 @@ async function startServer() {
     });
   }
 
-  // Primary Server instance
+  // Primary Server instance - strictly ONE listen call for Hostinger (lsnode / Passenger) & Cloud compatibility
   const server = http.createServer(app);
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
 
+  let isServerListening = false;
+
+  // Make app.listen idempotent so LiteSpeed lsnode.js / Passenger wrappers that call app.listen() on exported app
+  // never trigger "http.Server.listen() was called more than once"
+  app.listen = ((...args: any[]) => {
+    if (isServerListening) {
+      const cb = args.find((a: any) => typeof a === 'function');
+      if (cb) process.nextTick(cb);
+      return server;
+    }
+    isServerListening = true;
+    return server.listen(...args);
+  }) as any;
+
   const onListening = () => {
-    const listenTarget = typeof PORT === 'number' ? `puerto ${PORT}` : String(PORT);
-    console.log(`🚀 Vendemá CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
+    const addr = server.address();
+    const addrStr =
+      typeof addr === 'string'
+        ? `socket ${addr}`
+        : addr
+        ? `${addr.address}:${addr.port} (${addr.family})`
+        : `puerto ${PORT}`;
+    console.log(
+      `🚀 Vendemá CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || 'default(3000)'} (PID: ${process.pid})`
+    );
 
     // Defer heavy network syncs by 3.5 seconds to let Hostinger healthchecks and initial page requests succeed instantly
     setTimeout(() => {
@@ -6156,7 +6182,7 @@ async function startServer() {
         .then(() => syncOdooInventory())
         .then(() => syncOdooCustomers())
         .then(() => syncEvolutionChats())
-        .catch(e => console.error('Initial background sync err:', e));
+        .catch(e => console.log('Initial background sync info:', e?.message || e));
     }, 3500);
 
     // Continuous background polling every 5 seconds for real-time WhatsApp messages & AI Sales Bot replies
@@ -6174,46 +6200,17 @@ async function startServer() {
     }, 1000 * 60 * 5);
   };
 
-  const isPassenger = 
-    typeof PhusionPassenger !== 'undefined' || 
-    Boolean(process.env.PASSENGER_APP_ENV) || 
-    Boolean(process.env.PHUSION_PASSENGER) ||
-    process.env.PORT === 'passenger';
-
-  if (isPassenger) {
-    console.log(`[Hostinger / Passenger]: Detected Phusion Passenger environment. Listening on passenger.`);
-    try {
-      server.listen('passenger', onListening);
-    } catch {
-      server.listen(PORT, onListening);
-    }
-  } else if (typeof PORT === 'number') {
-    // Listen on dual-stack (both IPv4 127.0.0.1 and IPv6 ::1) so Nginx never times out
-    server.listen(PORT, onListening);
-
-    // In Hostinger / Cloud deployments, spin up secondary listener on 8080 if primary is 3000
-    // so that if Nginx proxy is configured for 8080 or 3000, it NEVER times out (504)
-    const backupPort = PORT === 3000 ? 8080 : (PORT === 8080 ? 3000 : null);
-    if (backupPort) {
-      try {
-        const backupServer = http.createServer(app);
-        backupServer.keepAliveTimeout = 65000;
-        backupServer.headersTimeout = 66000;
-        backupServer.listen(backupPort, () => {
-          console.log(`🚀 Backup listener active on port ${backupPort}`);
-        });
-        backupServer.on('error', () => {
-          // Port may already be bound by another service, ignore safely
-        });
-      } catch {}
-    }
-  } else {
-    server.listen(PORT, onListening);
-  }
-
   server.on('error', (err: any) => {
+    console.log(`[Server Listen Error on ${PORT}]:`, err.message);
     console.error(`[Server Listen Error on ${PORT}]:`, err.message);
   });
+
+  if (!isServerListening) {
+    isServerListening = true;
+    // Call server.listen with (PORT, callback) only — no hardcoded host IP —
+    // so both dual-stack TCP (IPv4+IPv6) and LiteSpeed/Passenger Unix sockets bind cleanly.
+    server.listen(PORT, onListening);
+  }
 
   // Graceful shutdown handling for Hostinger / Passenger / Docker
   const shutdown = (signal: string) => {

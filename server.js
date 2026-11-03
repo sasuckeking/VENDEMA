@@ -2132,9 +2132,11 @@ async function autoSyncCustomerToSupabase(customer) {
 // server.ts
 dotenv.config();
 process.on("uncaughtException", (err) => {
+  console.log("[Process Error] Uncaught Exception:", err?.message || err);
   console.error("[Process Error] Uncaught Exception:", err);
 });
 process.on("unhandledRejection", (reason) => {
+  console.log("[Process Error] Unhandled Rejection:", reason?.message || reason);
   console.error("[Process Error] Unhandled Rejection:", reason);
 });
 process.on("exit", (code) => {
@@ -2318,9 +2320,6 @@ var appConfig = {
 };
 function loadPersistedConfig() {
   try {
-    if (fs.existsSync(ENV_FILE_PATH)) {
-      dotenv.config({ path: ENV_FILE_PATH, override: true });
-    }
     if (fs.existsSync(CONFIG_FILE_PATH)) {
       const raw = fs.readFileSync(CONFIG_FILE_PATH, "utf-8");
       const saved = JSON.parse(raw);
@@ -2381,7 +2380,14 @@ function loadPersistedConfig() {
 }
 function savePersistedConfig(persistToEnv = false) {
   try {
-    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(appConfig, null, 2), "utf-8");
+    const content = JSON.stringify(appConfig, null, 2);
+    let existing = "";
+    if (fs.existsSync(CONFIG_FILE_PATH)) {
+      existing = fs.readFileSync(CONFIG_FILE_PATH, "utf-8");
+    }
+    if (content !== existing) {
+      fs.writeFileSync(CONFIG_FILE_PATH, content, "utf-8");
+    }
     syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err) {
     console.log("[Config Save Info]:", err.message);
@@ -2502,7 +2508,6 @@ async function hydrateAndSyncUsersWithSupabase() {
         }
       }
       ensureDefaultUsersPresent();
-      savePersistedUsers();
     }
     await syncAllUsersToSupabase(systemUsers, appConfig.supabase?.url, appConfig.supabase?.anonKey);
   } catch (err) {
@@ -2525,7 +2530,6 @@ async function hydrateAndSyncHolidaysWithSupabase() {
         }
         appConfig.holidayOverrides = Array.from(mergedMap.values());
         setGlobalHolidayOverrides(appConfig.holidayOverrides);
-        savePersistedConfig();
       }
     }
     if (Array.isArray(appConfig.holidayOverrides)) {
@@ -7010,11 +7014,24 @@ async function startServer() {
   const server = http.createServer(app);
   server.keepAliveTimeout = 65e3;
   server.headersTimeout = 66e3;
+  let isServerListening = false;
+  app.listen = ((...args) => {
+    if (isServerListening) {
+      const cb = args.find((a) => typeof a === "function");
+      if (cb) process.nextTick(cb);
+      return server;
+    }
+    isServerListening = true;
+    return server.listen(...args);
+  });
   const onListening = () => {
-    const listenTarget = typeof PORT === "number" ? `puerto ${PORT}` : String(PORT);
-    console.log(`\u{1F680} Vendem\xE1 CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
+    const addr = server.address();
+    const addrStr = typeof addr === "string" ? `socket ${addr}` : addr ? `${addr.address}:${addr.port} (${addr.family})` : `puerto ${PORT}`;
+    console.log(
+      `\u{1F680} Vendem\xE1 CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || "default(3000)"} (PID: ${process.pid})`
+    );
     setTimeout(() => {
-      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial background sync err:", e));
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.log("Initial background sync info:", e?.message || e));
     }, 3500);
     setInterval(() => {
       syncEvolutionChats().catch(() => {
@@ -7029,36 +7046,14 @@ async function startServer() {
       });
     }, 1e3 * 60 * 5);
   };
-  const isPassenger = typeof PhusionPassenger !== "undefined" || Boolean(process.env.PASSENGER_APP_ENV) || Boolean(process.env.PHUSION_PASSENGER) || process.env.PORT === "passenger";
-  if (isPassenger) {
-    console.log(`[Hostinger / Passenger]: Detected Phusion Passenger environment. Listening on passenger.`);
-    try {
-      server.listen("passenger", onListening);
-    } catch {
-      server.listen(PORT, onListening);
-    }
-  } else if (typeof PORT === "number") {
-    server.listen(PORT, onListening);
-    const backupPort = PORT === 3e3 ? 8080 : PORT === 8080 ? 3e3 : null;
-    if (backupPort) {
-      try {
-        const backupServer = http.createServer(app);
-        backupServer.keepAliveTimeout = 65e3;
-        backupServer.headersTimeout = 66e3;
-        backupServer.listen(backupPort, () => {
-          console.log(`\u{1F680} Backup listener active on port ${backupPort}`);
-        });
-        backupServer.on("error", () => {
-        });
-      } catch {
-      }
-    }
-  } else {
-    server.listen(PORT, onListening);
-  }
   server.on("error", (err) => {
+    console.log(`[Server Listen Error on ${PORT}]:`, err.message);
     console.error(`[Server Listen Error on ${PORT}]:`, err.message);
   });
+  if (!isServerListening) {
+    isServerListening = true;
+    server.listen(PORT, onListening);
+  }
   const shutdown = (signal) => {
     console.log(`[Server] Received ${signal}. Closing gracefully...`);
     server.close(() => {
