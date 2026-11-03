@@ -2131,12 +2131,6 @@ async function autoSyncCustomerToSupabase(customer) {
 
 // server.ts
 dotenv.config();
-if (typeof PhusionPassenger !== "undefined") {
-  try {
-    PhusionPassenger.configure({ autoInstall: false });
-  } catch {
-  }
-}
 process.on("uncaughtException", (err) => {
   console.error("[Process Error] Uncaught Exception:", err);
 });
@@ -6957,6 +6951,7 @@ app.get("/api/proxy-image", async (req, res) => {
   }
 });
 async function startServer() {
+  const isAiStudio = Boolean(process.env.AISTUDIO_APPLET_ID);
   const isProduction = process.env.NODE_ENV === "production";
   const candidateDist = [
     path.join(process.cwd(), "dist"),
@@ -6964,18 +6959,29 @@ async function startServer() {
     path.join(process.cwd(), "public_html"),
     path.join(__dirname, "public_html")
   ].find((dir) => fs.existsSync(path.join(dir, "index.html")));
-  if (!isProduction || !candidateDist) {
-    console.log("[Server]: Running Vite development middleware with hot reload & module compilation");
-    const { createServer } = await import("vite");
-    const vite = await createServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    console.log(`[Server]: Serving production static build from: ${candidateDist}`);
-    app.use(express.static(candidateDist));
-    const publicPath = path.join(__dirname, "public");
+  const shouldUseVite = isAiStudio && !isProduction;
+  let viteMounted = false;
+  if (shouldUseVite) {
+    try {
+      console.log("[Server]: Running Vite development middleware for AI Studio live preview");
+      const { createServer } = await import("vite");
+      const vite = await createServer({
+        server: { middlewareMode: true },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+      viteMounted = true;
+    } catch (viteErr) {
+      console.warn("[Server]: Could not mount Vite middleware, falling back to static:", viteErr.message);
+    }
+  }
+  if (!viteMounted) {
+    const distPath = candidateDist || path.join(process.cwd(), "dist");
+    console.log(`[Server]: Production mode - serving static files from ${distPath}`);
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+    }
+    const publicPath = path.join(process.cwd(), "public");
     if (fs.existsSync(publicPath)) {
       app.use(express.static(publicPath));
     }
@@ -6983,11 +6989,11 @@ async function startServer() {
       if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
         return res.status(404).json({ error: "Endpoint no encontrado" });
       }
-      const indexPath = path.join(candidateDist, "index.html");
+      const indexPath = candidateDist ? path.join(candidateDist, "index.html") : path.join(distPath, "index.html");
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
-        res.status(404).send("Build frontend no encontrado en dist/. Por favor ejecuta npm run build.");
+        res.status(200).send('<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo. Por favor ejecuta <code>npm run build</code> en el servidor para generar los archivos est\xE1ticos de la interfaz.</p></body></html>');
       }
     });
   }
@@ -7011,9 +7017,14 @@ async function startServer() {
       });
     }, 1e3 * 60 * 5);
   };
-  if (typeof PhusionPassenger !== "undefined") {
-    console.log(`[Hostinger / Passenger]: Detected PhusionPassenger runtime. Binding to passenger socket.`);
-    server.listen("passenger", onListening);
+  const isPassenger = typeof PhusionPassenger !== "undefined" || Boolean(process.env.PASSENGER_APP_ENV) || Boolean(process.env.PHUSION_PASSENGER) || process.env.PORT === "passenger";
+  if (isPassenger) {
+    console.log(`[Hostinger / Passenger]: Detected Phusion Passenger environment. Listening on passenger.`);
+    try {
+      server.listen("passenger", onListening);
+    } catch {
+      server.listen(PORT, onListening);
+    }
   } else if (typeof PORT === "number") {
     server.listen(PORT, "0.0.0.0", onListening);
   } else {
