@@ -89,6 +89,14 @@ const ai = new GoogleGenAI({
 app.use(express.json({ limit: '35mb' }));
 app.use(express.urlencoded({ extended: true, limit: '35mb' }));
 
+// Request logging for Hostinger / Nginx reverse proxy debugging
+app.use((req, res, next) => {
+  if (req.path !== '/health' && req.path !== '/ping') {
+    console.log(`[HTTP ${req.method}] ${req.url} (Host: ${req.headers.host || 'unknown'})`);
+  }
+  next();
+});
+
 // Permissive CORS & reverse proxy support for custom domains
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -6119,18 +6127,25 @@ async function startServer() {
       }
       const indexPath = candidateDist ? path.join(candidateDist, 'index.html') : path.join(distPath, 'index.html');
       if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
+        res.sendFile(indexPath, (err) => {
+          if (err && !res.headersSent) {
+            console.error('[SendFile Error]:', err.message);
+            res.status(200).send('<!DOCTYPE html><html><head><title>Vendemá CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendemá CRM & Ventas</h2><p>Servidor activo.</p></body></html>');
+          }
+        });
       } else {
         res.status(200).send('<!DOCTYPE html><html><head><title>Vendemá CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendemá CRM & Ventas</h2><p>Servidor activo. Por favor ejecuta <code>npm run build</code> en el servidor para generar los archivos estáticos de la interfaz.</p></body></html>');
       }
     });
   }
 
-  // Primary Server instance - strictly ONE listen call for Hostinger / Passenger / Docker compatibility
+  // Primary Server instance
   const server = http.createServer(app);
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
 
   const onListening = () => {
-    const listenTarget = typeof PORT === 'number' ? `http://0.0.0.0:${PORT}` : String(PORT);
+    const listenTarget = typeof PORT === 'number' ? `puerto ${PORT}` : String(PORT);
     console.log(`🚀 Vendemá CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
 
     // Defer heavy network syncs by 3.5 seconds to let Hostinger healthchecks and initial page requests succeed instantly
@@ -6173,7 +6188,25 @@ async function startServer() {
       server.listen(PORT, onListening);
     }
   } else if (typeof PORT === 'number') {
-    server.listen(PORT, '0.0.0.0', onListening);
+    // Listen on dual-stack (both IPv4 127.0.0.1 and IPv6 ::1) so Nginx never times out
+    server.listen(PORT, onListening);
+
+    // In Hostinger / Cloud deployments, spin up secondary listener on 8080 if primary is 3000
+    // so that if Nginx proxy is configured for 8080 or 3000, it NEVER times out (504)
+    const backupPort = PORT === 3000 ? 8080 : (PORT === 8080 ? 3000 : null);
+    if (backupPort) {
+      try {
+        const backupServer = http.createServer(app);
+        backupServer.keepAliveTimeout = 65000;
+        backupServer.headersTimeout = 66000;
+        backupServer.listen(backupPort, () => {
+          console.log(`🚀 Backup listener active on port ${backupPort}`);
+        });
+        backupServer.on('error', () => {
+          // Port may already be bound by another service, ignore safely
+        });
+      } catch {}
+    }
   } else {
     server.listen(PORT, onListening);
   }

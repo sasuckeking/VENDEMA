@@ -2161,6 +2161,12 @@ var ai = new GoogleGenAI({
 app.use(express.json({ limit: "35mb" }));
 app.use(express.urlencoded({ extended: true, limit: "35mb" }));
 app.use((req, res, next) => {
+  if (req.path !== "/health" && req.path !== "/ping") {
+    console.log(`[HTTP ${req.method}] ${req.url} (Host: ${req.headers.host || "unknown"})`);
+  }
+  next();
+});
+app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
@@ -6990,15 +6996,22 @@ async function startServer() {
       }
       const indexPath = candidateDist ? path.join(candidateDist, "index.html") : path.join(distPath, "index.html");
       if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
+        res.sendFile(indexPath, (err) => {
+          if (err && !res.headersSent) {
+            console.error("[SendFile Error]:", err.message);
+            res.status(200).send('<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo.</p></body></html>');
+          }
+        });
       } else {
         res.status(200).send('<!DOCTYPE html><html><head><title>Vendem\xE1 CRM</title></head><body style="background:#090d12;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>Vendem\xE1 CRM & Ventas</h2><p>Servidor activo. Por favor ejecuta <code>npm run build</code> en el servidor para generar los archivos est\xE1ticos de la interfaz.</p></body></html>');
       }
     });
   }
   const server = http.createServer(app);
+  server.keepAliveTimeout = 65e3;
+  server.headersTimeout = 66e3;
   const onListening = () => {
-    const listenTarget = typeof PORT === "number" ? `http://0.0.0.0:${PORT}` : String(PORT);
+    const listenTarget = typeof PORT === "number" ? `puerto ${PORT}` : String(PORT);
     console.log(`\u{1F680} Vendem\xE1 CRM Server listening on ${listenTarget} (PID: ${process.pid})`);
     setTimeout(() => {
       hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.error("Initial background sync err:", e));
@@ -7025,7 +7038,21 @@ async function startServer() {
       server.listen(PORT, onListening);
     }
   } else if (typeof PORT === "number") {
-    server.listen(PORT, "0.0.0.0", onListening);
+    server.listen(PORT, onListening);
+    const backupPort = PORT === 3e3 ? 8080 : PORT === 8080 ? 3e3 : null;
+    if (backupPort) {
+      try {
+        const backupServer = http.createServer(app);
+        backupServer.keepAliveTimeout = 65e3;
+        backupServer.headersTimeout = 66e3;
+        backupServer.listen(backupPort, () => {
+          console.log(`\u{1F680} Backup listener active on port ${backupPort}`);
+        });
+        backupServer.on("error", () => {
+        });
+      } catch {
+      }
+    }
   } else {
     server.listen(PORT, onListening);
   }
