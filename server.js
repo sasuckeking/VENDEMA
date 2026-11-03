@@ -3431,7 +3431,7 @@ function findOdooPartnerByPhone(rawPhone) {
 }
 async function syncOdooCustomers(force = false) {
   const now = Date.now();
-  if (!force && odooCustomersCache.length > 0 && now - lastOdooCustomersSync < 1e3 * 60 * 5) {
+  if (!force && odooCustomersCache.length > 0 && now - lastOdooCustomersSync < 1e3 * 60 * 30) {
     return odooCustomersCache;
   }
   if (isOdooCustomersSyncRunning) return odooCustomersCache;
@@ -3735,9 +3735,11 @@ async function syncEvolutionContactsIfNeeded() {
   }
 }
 var isEvoSyncRunning = false;
+var lastEvolutionChatsSync = 0;
 async function syncEvolutionChats() {
   if (isEvoSyncRunning) return conversations;
   isEvoSyncRunning = true;
+  lastEvolutionChatsSync = Date.now();
   try {
     await syncEvolutionContactsIfNeeded();
     const url = `${appConfig.evolution.serverUrl}/chat/findChats/${appConfig.evolution.instance}`;
@@ -5691,7 +5693,9 @@ function findConversationByAnyId(sessionId) {
   );
 }
 app.get("/api/conversations", async (req, res) => {
-  if (conversations.length === 0 || req.query.refresh === "true") {
+  const forceRefresh = req.query.refresh === "true";
+  const now = Date.now();
+  if (conversations.length === 0 || forceRefresh || now - lastEvolutionChatsSync > 3e4) {
     await syncEvolutionChats();
   }
   for (const conv of conversations) {
@@ -7096,17 +7100,13 @@ async function startServer() {
       hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.log("Initial background sync info:", e?.message || e));
     }, 3500);
     setInterval(() => {
-      syncEvolutionChats().catch(() => {
-      });
-    }, 5e3);
-    setInterval(() => {
       syncOdooInventory().catch(() => {
       });
-    }, 6e4);
+    }, 1e3 * 60 * 30);
     setInterval(() => {
       syncOdooCustomers().catch(() => {
       });
-    }, 1e3 * 60 * 5);
+    }, 1e3 * 60 * 30);
   };
   server.on("error", (err) => {
     console.log(`[Server Listen Error on ${PORT}]:`, err.message);

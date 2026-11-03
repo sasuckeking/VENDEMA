@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan de autenticación y jerarquía de usuarios completado:\n- Sistema de autenticación estricta basada en Nombre de Usuario + Contraseña + WhatsApp (cero correos electrónicos)\n- Super Admin principal configurado: nelson / elmejor19 con control total del sistema y protección contra eliminación\n- Jerarquía de 3 roles implementada (super_admin, dueno, empleado) con control de acceso granular (RBAC)\n- Pantalla de inicio de sesión LoginView con botones de acceso rápido y diseño profesional\n- Nueva pestaña 'Equipo & Roles' (UsersView) con métricas, creación de usuarios, edición de contraseñas, activación/desactivación y enlaces directos a WhatsApp\n- Restricción de permisos para empleados (ocultamiento de credenciales de API, conexiones y cerebro IA)\n- Persistencia en archivo .vendema-users.json y endpoints de backend (/api/auth/* y /api/users/*)",
-  "updatedAt":  "2026-11-01T13:32:45.849597889Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Auditoría técnica exhaustiva y optimización de recursos completada para Vendemá CRM en Hostinger Business Web Hosting:\n1. Resuelto el bucle de sincronización con Odoo: ampliado a 30 minutos y caché extendido.\n2. Eliminado el polling continuo de WhatsApp cada 5s: ahora opera bajo demanda y en tiempo real vía Webhooks.\n3. Blindada la conexión a Supabase contra errores de respuesta HTML proxy con fallback directo en el navegador.\n4. Compilación y bundle de producción generados exitosamente.",
+  "updatedAt": "2026-11-03T22:38:25.783544054Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

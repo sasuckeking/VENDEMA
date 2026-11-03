@@ -1549,7 +1549,7 @@ function findOdooPartnerByPhone(rawPhone: string): any | null {
 
 async function syncOdooCustomers(force = false): Promise<any[]> {
   const now = Date.now();
-  if (!force && odooCustomersCache.length > 0 && now - lastOdooCustomersSync < 1000 * 60 * 5) {
+  if (!force && odooCustomersCache.length > 0 && now - lastOdooCustomersSync < 1000 * 60 * 30) {
     return odooCustomersCache;
   }
   if (isOdooCustomersSyncRunning) return odooCustomersCache;
@@ -2018,10 +2018,12 @@ async function syncEvolutionContactsIfNeeded() {
 }
 
 let isEvoSyncRunning = false;
+let lastEvolutionChatsSync = 0;
 
 async function syncEvolutionChats(): Promise<Conversation[]> {
   if (isEvoSyncRunning) return conversations;
   isEvoSyncRunning = true;
+  lastEvolutionChatsSync = Date.now();
 
   try {
     await syncEvolutionContactsIfNeeded();
@@ -4574,7 +4576,9 @@ function findConversationByAnyId(sessionId: string): Conversation | undefined {
 
 // 4. Live Conversations & Chat Management
 app.get('/api/conversations', async (req, res) => {
-  if (conversations.length === 0 || req.query.refresh === 'true') {
+  const forceRefresh = req.query.refresh === 'true';
+  const now = Date.now();
+  if (conversations.length === 0 || forceRefresh || now - lastEvolutionChatsSync > 30000) {
     await syncEvolutionChats();
   }
   // Ensure each conversation has the latest Odoo client status resolved
@@ -6266,19 +6270,17 @@ async function startServer() {
         .catch(e => console.log('Initial background sync info:', e?.message || e));
     }, 3500);
 
-    // Continuous background polling every 5 seconds for real-time WhatsApp messages & AI Sales Bot replies
-    setInterval(() => {
-      syncEvolutionChats().catch(() => {});
-    }, 5000);
-
+    // Background synchronization schedule optimized for Hostinger Business Web Hosting:
+    // 1. WhatsApp Evolution API: Synchronized on-demand when users open chats, and real-time via Webhook.
+    // 2. Odoo Inventory: Synchronized every 30 minutes (or immediately via manual refresh in UI).
     setInterval(() => {
       syncOdooInventory().catch(() => {});
-    }, 60000);
+    }, 1000 * 60 * 30);
 
-    // Refresh Odoo customers cache every 5 minutes
+    // 3. Odoo Customers: Synchronized every 30 minutes.
     setInterval(() => {
       syncOdooCustomers().catch(() => {});
-    }, 1000 * 60 * 5);
+    }, 1000 * 60 * 30);
   };
 
   server.on('error', (err: any) => {

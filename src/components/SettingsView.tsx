@@ -24,7 +24,7 @@ import {
   X
 } from 'lucide-react';
 import type { AppConfig, AIProviderType, UserAccount } from '../types';
-import { getSupabaseSchemaSql } from '../utils/supabaseService';
+import { getSupabaseSchemaSql, testSupabaseConnection } from '../utils/supabaseService';
 
 interface SettingsViewProps {
   config: AppConfig;
@@ -356,15 +356,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
     setIsTestingSupabase(true);
     setSupabaseTestResult(null);
     try {
-      const res = await fetch('/api/supabase/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: supabaseUrl, anonKey: supabaseAnonKey }),
-      });
-      const data = await res.json();
+      let data: any = null;
+
+      // 1. Try server endpoint first
+      try {
+        const res = await fetch('/api/supabase/test-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: supabaseUrl, anonKey: supabaseAnonKey }),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        }
+      } catch (proxyErr) {
+        console.warn('[Supabase Test Proxy Notice]:', proxyErr);
+      }
+
+      // 2. If server proxy returned HTML (e.g. 503/504 proxy page) or wasn't available, test directly in browser
+      if (!data) {
+        data = await testSupabaseConnection(supabaseUrl, supabaseAnonKey);
+      }
+
       setSupabaseTestResult(data);
+      if (data?.success) {
+        await syncSupabaseConfigImmediately({ connected: true });
+      }
     } catch (err: any) {
-      setSupabaseTestResult({ success: false, message: err.message });
+      setSupabaseTestResult({ success: false, message: err.message || 'Error al conectar con Supabase' });
     } finally {
       setIsTestingSupabase(false);
     }
@@ -379,6 +398,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: supabaseUrl, anonKey: supabaseAnonKey }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`El servidor devolvió respuesta no válida (${res.status}): ${text.slice(0, 150)}`);
+      }
       const data = await res.json();
       setSupabaseSyncResult(data);
     } catch (err: any) {
@@ -391,11 +415,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const handleFetchSqlSchema = async () => {
     try {
       const res = await fetch('/api/supabase/schema-sql');
-      const data = await res.json();
-      if (data.sql) {
-        setSchemaSql(data.sql);
-        setShowSqlModal(true);
-        return;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.sql) {
+          setSchemaSql(data.sql);
+          setShowSqlModal(true);
+          return;
+        }
       }
     } catch (err: any) {
       console.warn('Using local SQL schema generator:', err);
