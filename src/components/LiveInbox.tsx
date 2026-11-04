@@ -152,6 +152,11 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
   const recordingTimerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const isUserScrolledUpRef = useRef<boolean>(false);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+  const needsInitialScrollForChatRef = useRef<boolean>(true);
+  const [showScrollToBottomBtn, setShowScrollToBottomBtn] = useState(false);
 
   // Available for sale products only + smart budget/price matching in picker
   const saleProducts = products.filter(p => p.virtual_available > 0);
@@ -260,19 +265,83 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
     c.phone.includes(activeConversation?.customerPhone || '')
   );
 
-  const prevSelectedRef = useRef<string | undefined>(undefined);
-  const prevMsgCountRef = useRef<number>(0);
+  const prevSelectedKeyRef = useRef<string | undefined>(undefined);
+  const prevLastMsgIdRef = useRef<string | undefined>(undefined);
 
-  // Scroll to bottom only when switching chats or when a new message arrives in the active chat
+  const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    isProgrammaticScrollRef.current = true;
+    isUserScrolledUpRef.current = false;
+    setShowScrollToBottomBtn(false);
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior,
+    });
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 350);
+  };
+
+  const handleMessagesScroll = () => {
+    if (isProgrammaticScrollRef.current) return;
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const scrolledUp = distanceFromBottom > 95;
+    isUserScrolledUpRef.current = scrolledUp;
+    setShowScrollToBottomBtn(scrolledUp);
+  };
+
+  // Canonical key for the currently selected chat so @lid vs @s.whatsapp.net migration never triggers a fake chat switch
+  const currentChatCanonicalKey = useMemo(() => {
+    if (!activeConversation) return '';
+    const cleanPhone = (activeConversation.customerPhone || '').replace(/\D/g, '');
+    if (cleanPhone && cleanPhone.length <= 12) return `phone:${cleanPhone}`;
+    return `session:${activeConversation.sessionId}`;
+  }, [activeConversation?.sessionId, activeConversation?.customerPhone]);
+
+  const lastMessageInActiveChat =
+    activeConversation?.messages && activeConversation.messages.length > 0
+      ? activeConversation.messages[activeConversation.messages.length - 1]
+      : undefined;
+  const lastMsgKey = lastMessageInActiveChat
+    ? `${lastMessageInActiveChat.evolutionMessageId || lastMessageInActiveChat.id}::${lastMessageInActiveChat.timestamp}`
+    : '';
+
+  // Scroll to bottom ONLY when switching to a different chat, or when a new message arrives at the end AND the user has NOT scrolled up
   useEffect(() => {
-    const currentId = activeConversation?.sessionId;
-    const currentCount = activeConversation?.messages.length || 0;
-    if (currentId !== prevSelectedRef.current || currentCount > prevMsgCountRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: currentId !== prevSelectedRef.current ? 'auto' : 'smooth' });
+    if (!currentChatCanonicalKey) return;
+
+    const isDifferentChat = currentChatCanonicalKey !== prevSelectedKeyRef.current;
+    if (isDifferentChat) {
+      prevSelectedKeyRef.current = currentChatCanonicalKey;
+      prevLastMsgIdRef.current = lastMsgKey;
+      needsInitialScrollForChatRef.current = !activeConversation?.messagesLoaded;
+      scrollToBottom('auto');
+      return;
     }
-    prevSelectedRef.current = currentId;
-    prevMsgCountRef.current = currentCount;
-  }, [activeConversation?.sessionId, activeConversation?.messages.length]);
+
+    // If this chat just finished its initial message load and the user hasn't scrolled up yet, position at the bottom once
+    if (needsInitialScrollForChatRef.current && activeConversation?.messagesLoaded) {
+      needsInitialScrollForChatRef.current = false;
+      prevLastMsgIdRef.current = lastMsgKey;
+      if (!isUserScrolledUpRef.current) {
+        scrollToBottom('auto');
+      }
+      return;
+    }
+
+    // If a genuinely new message arrived at the bottom of the thread
+    if (lastMsgKey && lastMsgKey !== prevLastMsgIdRef.current) {
+      prevLastMsgIdRef.current = lastMsgKey;
+      // CRITICAL: Never pull the user down if they scrolled up to read earlier messages
+      if (!isUserScrolledUpRef.current) {
+        scrollToBottom('smooth');
+      }
+    }
+  }, [currentChatCanonicalKey, lastMsgKey, activeConversation?.messagesLoaded]);
 
   const handleSend = async () => {
     if (!inputMessage.trim() || !activeConversation) return;
@@ -290,7 +359,10 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
         }
       : undefined;
     setReplyingToMessage(null);
+    isUserScrolledUpRef.current = false;
+    setShowScrollToBottomBtn(false);
     await onSendMessage(activeConversation.sessionId, text, quotedPayload);
+    scrollToBottom('smooth');
   };
 
   // Handle File Upload (Photo / Video / Document)
@@ -956,7 +1028,11 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
           )}
 
           {/* Messages Feed */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-3">
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleMessagesScroll}
+            className="flex-1 p-4 overflow-y-auto space-y-3 relative"
+          >
             {isLoadingMessages && activeConversation.messages.length <= 1 && (
               <div className="flex items-center justify-center py-6 text-xs text-slate-400 gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin text-lime-400" />
@@ -1183,6 +1259,19 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
               );
             })}
             <div ref={messagesEndRef} />
+
+            {showScrollToBottomBtn && (
+              <div className="sticky bottom-2 flex justify-end pointer-events-none z-10">
+                <button
+                  type="button"
+                  onClick={() => scrollToBottom('smooth')}
+                  className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121A24]/95 hover:bg-[#182330] text-lime-400 border border-lime-500/40 shadow-lg text-[11px] font-semibold transition-all"
+                  title="Volver al último mensaje"
+                >
+                  <span>↓ Ir al final</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Quick Product Drawer Popup with Real Product Images */}

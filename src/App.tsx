@@ -211,12 +211,24 @@ export default function App() {
         const exact = prev.find(p => !claimedPrevSessionIds.has(p.sessionId) && p.sessionId === inc.sessionId);
         if (exact) return exact;
 
-        // 2. Exact real phone number (<= 12 digits)
+        // 2. Exact real phone number (<= 12 digits) or matching phone digits in sessionId
+        const incDigits = (inc.customerPhone || inc.sessionId || '').replace(/@.*$/, '').replace(/\D/g, '');
         if (inc.customerPhone && inc.customerPhone.length <= 12) {
           const byPhone = prev.find(
-            p => !claimedPrevSessionIds.has(p.sessionId) && p.customerPhone && p.customerPhone.length <= 12 && p.customerPhone === inc.customerPhone
+            p =>
+              !claimedPrevSessionIds.has(p.sessionId) &&
+              ((p.customerPhone && p.customerPhone === inc.customerPhone) ||
+                p.sessionId.replace(/@.*$/, '').replace(/\D/g, '') === inc.customerPhone)
           );
           if (byPhone) return byPhone;
+        }
+        if (incDigits) {
+          const bySessionDigits = prev.find(p => {
+            if (claimedPrevSessionIds.has(p.sessionId)) return false;
+            const pDigits = (p.customerPhone || p.sessionId || '').replace(/@.*$/, '').replace(/\D/g, '');
+            return pDigits === incDigits;
+          });
+          if (bySessionDigits) return bySessionDigits;
         }
 
         // 3. Non-generic customerName match (e.g. "Soporte Todo LAPTO'")
@@ -228,11 +240,23 @@ export default function App() {
           if (byName) return byName;
         }
 
+        // 4. Shared evolutionMessageId in last message
+        const incLastEvoId = inc.messages?.[inc.messages.length - 1]?.evolutionMessageId;
+        if (incLastEvoId) {
+          const byLastMsgId = prev.find(
+            p =>
+              !claimedPrevSessionIds.has(p.sessionId) &&
+              p.messages?.some(m => m.evolutionMessageId === incLastEvoId)
+          );
+          if (byLastMsgId) return byLastMsgId;
+        }
+
         return undefined;
       };
 
       const mergedList: Conversation[] = [];
       const sessionMigrationMap = new Map<string, string>(); // oldSessionId -> canonicalSessionId
+      let anyNewerMessage = false;
 
       for (const inc of incomingList) {
         const existingPrev = findMatchingPrev(inc);
@@ -247,12 +271,20 @@ export default function App() {
         const prevTime = existingPrev ? new Date(existingPrev.lastTimestamp).getTime() : 0;
         const incTime = new Date(inc.lastTimestamp).getTime();
         const hasNewerIncoming = incTime > prevTime + 1000;
+        if (!existingPrev || incTime > prevTime + 2000) {
+          anyNewerMessage = true;
+        }
 
-        // Canonical sessionId: prefer @s.whatsapp.net over @lid
-        let canonicalSessionId = inc.sessionId;
-        if (canonicalSessionId.endsWith('@lid') && existingPrev?.sessionId.endsWith('@s.whatsapp.net')) {
-          canonicalSessionId = existingPrev.sessionId;
-        } else if (inc.customerPhone && inc.customerPhone.length <= 12 && inc.customerPhone.startsWith('1')) {
+        // Canonical sessionId: keep existingPrev.sessionId if already active to avoid JID flicker
+        let canonicalSessionId = existingPrev?.sessionId || inc.sessionId;
+        if (canonicalSessionId.endsWith('@lid') && inc.sessionId.endsWith('@s.whatsapp.net')) {
+          canonicalSessionId = inc.sessionId;
+        } else if (
+          canonicalSessionId.endsWith('@lid') &&
+          inc.customerPhone &&
+          inc.customerPhone.length <= 12 &&
+          inc.customerPhone.startsWith('1')
+        ) {
           canonicalSessionId = `${inc.customerPhone}@s.whatsapp.net`;
         }
 
@@ -307,12 +339,6 @@ export default function App() {
         selectedSessionRef.current = newId;
         setSelectedSessionId(newId);
       }
-
-      // Preserve existing order of chats if no genuinely newer message arrived
-      const anyNewerMessage = incomingList.some(inc => {
-        const old = prev.find(p => p.sessionId === inc.sessionId);
-        return !old || new Date(inc.lastTimestamp).getTime() > new Date(old.lastTimestamp).getTime() + 2000;
-      });
 
       const incomingBySession = new Map<string, Conversation>(mergedList.map(c => [c.sessionId, c]));
       let candidateList: Conversation[] = [];
@@ -396,8 +422,35 @@ export default function App() {
       if (data && data.success && data.messages) {
         setConversations(prev =>
           prev.map(c => {
-            if (c.sessionId === sessionId || c.sessionId === data.sessionId) {
+            const isTargetChat =
+              c.sessionId === sessionId ||
+              c.sessionId === data.sessionId ||
+              (c.customerPhone &&
+                data.customerPhone &&
+                c.customerPhone.replace(/\D/g, '') === String(data.customerPhone).replace(/\D/g, ''));
+
+            if (isTargetChat) {
               const mergedMsgs = mergeMessagesList(c.messages, data.messages);
+              const isUnchanged =
+                c.messagesLoaded &&
+                c.unreadCount === 0 &&
+                mergedMsgs.length === c.messages.length &&
+                mergedMsgs.every((m, idx) => {
+                  const old = c.messages[idx];
+                  return (
+                    old &&
+                    old.id === m.id &&
+                    old.content === m.content &&
+                    old.transcription === m.transcription &&
+                    old.aiAnalysis === m.aiAnalysis &&
+                    old.quotedMessage?.text === m.quotedMessage?.text
+                  );
+                });
+
+              if (isUnchanged) {
+                return c;
+              }
+
               return {
                 ...c,
                 messages: mergedMsgs,
