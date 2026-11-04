@@ -126,26 +126,44 @@ export default function App() {
   const [createOrderModalOpen, setCreateOrderModalOpen] = useState(false);
   const [orderPrefill, setOrderPrefill] = useState<any>({});
 
-  // Smart non-destructive message list merger so locally sent messages NEVER disappear on poll/refresh
+  // Smart 1:1 WhatsApp mirror merger: preserves every real WhatsApp message (evolutionMessageId) without hiding duplicates,
+  // while keeping recent optimistic local messages until Evolution API indexes them
   const mergeMessagesList = (existing: Conversation['messages'] = [], incoming: Conversation['messages'] = []) => {
     const combined = [...incoming];
+    const claimedIncomingIndices = new Set<number>();
+    const isFullIncomingRefresh = incoming.length >= 2;
+    const nowMs = Date.now();
+
     for (const oldMsg of existing) {
       const oldTime = new Date(oldMsg.timestamp).getTime();
       const oldText = (oldMsg.content || '').trim();
-      const existsIdx = combined.findIndex(inc => {
+
+      // 1. Exact ID or evolutionMessageId match
+      let existsIdx = combined.findIndex(inc => {
         if (inc.id === oldMsg.id) return true;
         if (oldMsg.evolutionMessageId && inc.evolutionMessageId === oldMsg.evolutionMessageId) return true;
-        if (
-          inc.sender !== 'customer' &&
-          oldMsg.sender !== 'customer' &&
-          oldText.length > 0 &&
-          (inc.content || '').trim() === oldText &&
-          Math.abs(new Date(inc.timestamp).getTime() - oldTime) < 300000
-        ) {
-          return true;
-        }
         return false;
       });
+
+      // 2. If oldMsg is an optimistic local message (no evolutionMessageId), pair it with at most ONE unclaimed real message
+      if (existsIdx < 0 && !oldMsg.evolutionMessageId) {
+        existsIdx = combined.findIndex((inc, idx) => {
+          if (claimedIncomingIndices.has(idx)) return false;
+          if (
+            inc.sender !== 'customer' &&
+            oldMsg.sender !== 'customer' &&
+            oldText.length > 0 &&
+            (inc.content || '').trim() === oldText &&
+            Math.abs(new Date(inc.timestamp).getTime() - oldTime) < 45000
+          ) {
+            return true;
+          }
+          return false;
+        });
+        if (existsIdx >= 0) {
+          claimedIncomingIndices.add(existsIdx);
+        }
+      }
 
       if (existsIdx >= 0) {
         if (oldMsg.quotedMessage && !combined[existsIdx].quotedMessage) {
@@ -155,7 +173,9 @@ export default function App() {
           combined[existsIdx] = { ...combined[existsIdx], mediaUrl: oldMsg.mediaUrl };
         }
       } else {
-        combined.push(oldMsg);
+        if (oldMsg.evolutionMessageId || !isFullIncomingRefresh || nowMs - oldTime < 20000) {
+          combined.push(oldMsg);
+        }
       }
     }
     combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());

@@ -2758,6 +2758,7 @@ function mergeWithLocalMessages(
 ): ChatMessage[] {
   const combined = [...evoList];
   const candidateLocals: ChatMessage[] = [];
+  const isFullEvoRefresh = evoList.length >= 2;
 
   const addCandidates = (arr?: ChatMessage[], localOnly = true) => {
     if (!arr) return;
@@ -2780,25 +2781,41 @@ function mergeWithLocalMessages(
   }
   addCandidates(existingList, false);
 
+  // Track which combined indices have already been paired with an optimistic local message
+  // so 1 local message can only reconcile with at most 1 real WhatsApp message, and 2+ real WhatsApp messages NEVER collapse.
+  const claimedEvoIndices = new Set<number>();
+  const nowMs = Date.now();
+
   for (const localMsg of candidateLocals) {
     const localTime = new Date(localMsg.timestamp).getTime();
     const localText = (localMsg.content || '').trim();
 
-    // Check if already in combined by ID or if Evolution API has indexed this exact sent message
-    const existingIdx = combined.findIndex(evo => {
+    // 1. Exact ID or evolutionMessageId match
+    let existingIdx = combined.findIndex(evo => {
       if (evo.id === localMsg.id) return true;
       if (localMsg.evolutionMessageId && evo.evolutionMessageId === localMsg.evolutionMessageId) return true;
-      if (
-        evo.sender !== 'customer' &&
-        localMsg.sender !== 'customer' &&
-        localText.length > 0 &&
-        (evo.content || '').trim() === localText &&
-        Math.abs(new Date(evo.timestamp).getTime() - localTime) < 300000
-      ) {
-        return true;
-      }
       return false;
     });
+
+    // 2. If localMsg is an optimistic message (no evolutionMessageId), pair it with at most ONE unclaimed real Evolution message
+    if (existingIdx < 0 && !localMsg.evolutionMessageId) {
+      existingIdx = combined.findIndex((evo, idx) => {
+        if (claimedEvoIndices.has(idx)) return false;
+        if (
+          evo.sender !== 'customer' &&
+          localMsg.sender !== 'customer' &&
+          localText.length > 0 &&
+          (evo.content || '').trim() === localText &&
+          Math.abs(new Date(evo.timestamp).getTime() - localTime) < 45000
+        ) {
+          return true;
+        }
+        return false;
+      });
+      if (existingIdx >= 0) {
+        claimedEvoIndices.add(existingIdx);
+      }
+    }
 
     if (existingIdx >= 0) {
       // Preserve local quotedMessage or mediaUrl if Evolution API record didn't include it
@@ -2809,7 +2826,11 @@ function mergeWithLocalMessages(
         combined[existingIdx].mediaUrl = localMsg.mediaUrl;
       }
     } else {
-      combined.push(localMsg);
+      // If localMsg has a real evolutionMessageId, always keep it; if it's an optimistic msg- without evolutionMessageId,
+      // keep it while recent (< 25s) or when full history hasn't been fetched yet
+      if (localMsg.evolutionMessageId || !isFullEvoRefresh || nowMs - localTime < 25000) {
+        combined.push(localMsg);
+      }
     }
   }
 
@@ -3319,6 +3340,40 @@ function recordBotReplyForConversation(
   }
 }
 
+function isClosingCourtesyOrNonCommercialAck(rawText: string, hasQuote = false): boolean {
+  if (hasQuote) return false;
+  const trimmed = (rawText || '').trim();
+  if (!trimmed) return true;
+
+  // Pure emojis / reactions without text
+  const withoutEmojis = trimmed.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]/gu, '');
+  if (withoutEmojis.length === 0) return true;
+
+  // External social/video links (YouTube, TikTok, Instagram, Facebook) without product question
+  if (
+    /^https?:\/\/(www\.)?(youtu\.be|youtube\.com|tiktok\.com|vm\.tiktok\.com|instagram\.com|facebook\.com|fb\.watch)\/\S+$/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  const cleaned = trimmed
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned || cleaned.length > 55) return false;
+
+  // Closing acknowledgments, brief confirmations, and non-inquiry conversational closers
+  return /^(ok|okay|oki|esta bien|ta bien|perfecto|excelente|entendido|listo|dale|de acuerdo|vale|gracias|muchas gracias|mil gracias|amen|bendiciones|un placer|igualmente|igual|si|sii|lo se|ya|claro|bueno|bien|chevere|super|jaja|jajaja|jeje)(\s+(gracias|amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|mi amor|amor| cariño))?$/i.test(
+    cleaned
+  );
+}
+
 function shouldSkipBotReply(
   conv: Conversation,
   lastCustomerMsg: ChatMessage | undefined,
@@ -3370,6 +3425,33 @@ function shouldSkipBotReply(
 
   if (!lastCustomerMsg) {
     return { skip: true, reason: 'No hay mensaje del cliente para responder' };
+  }
+
+  // 2b. Do not auto-reply to closing acknowledgments ("Está bien", "Ok", "Listo", "Gracias", "Si", "Lo se") or bare social links
+  if (
+    triggerSource !== 'manual_crm_trigger' &&
+    lastCustomerMsg.type === 'text' &&
+    isClosingCourtesyOrNonCommercialAck(incomingText, Boolean(lastCustomerMsg.quotedMessage?.text))
+  ) {
+    if (incomingId) {
+      processedMessageIds.set(incomingId, now);
+      for (const k of keys) {
+        processedMessageIds.set(`${k}::${incomingId}`, now);
+      }
+    }
+    const reason = `Mensaje de cierre o confirmación ("${incomingText.slice(0, 35)}") que no requiere respuesta automática.`;
+    recordBotAuditLog({
+      customerName,
+      customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: incomingId,
+      incomingText,
+      decision: 'blocked_already_answered',
+      reason,
+      durationMs: 0,
+    });
+    return { skip: true, reason };
   }
 
   for (const k of keys) {
@@ -3442,6 +3524,130 @@ function shouldSkipBotReply(
   }
 
   return { skip: false };
+}
+
+// Live Pre-Flight Check against Evolution API to prevent duplicate sends when multiple servers (e.g., Hostinger + Cloud Preview) poll the same WhatsApp instance
+async function hasEvolutionAlreadyAnsweredSince(
+  conv: Conversation,
+  customerMsg: ChatMessage
+): Promise<{ answered: boolean; latestOutgoing?: ChatMessage }> {
+  if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
+    return { answered: false };
+  }
+  try {
+    const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/chat/findMessages/${appConfig.evolution.instance}`;
+    const jids = new Set<string>([conv.sessionId]);
+    const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
+    if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      jids.add(`${std}@s.whatsapp.net`);
+    }
+
+    const responses = await Promise.all(
+      Array.from(jids)
+        .slice(0, 2)
+        .map(jid =>
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              apikey: appConfig.evolution.apiKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              where: { key: { remoteJid: jid } },
+              limit: 10,
+            }),
+            signal: AbortSignal.timeout(3500),
+          })
+            .then(r => (r.ok ? r.json() : null))
+            .catch(() => null)
+        )
+    );
+
+    const records: any[] = [];
+    for (const data of responses) {
+      if (!data) continue;
+      const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
+      records.push(...recs);
+    }
+
+    if (records.length === 0) return { answered: false };
+
+    const parsed: ChatMessage[] = [];
+    for (const rec of records) {
+      const m = parseSingleEvolutionMessage(rec, conv.customerName || 'Cliente');
+      if (m) parsed.push(m);
+    }
+    if (parsed.length === 0) return { answered: false };
+
+    // Deduplicate by evolutionMessageId and sort oldest -> newest
+    const unique: ChatMessage[] = [];
+    const seenIds = new Set<string>();
+    for (const m of parsed) {
+      const k = m.evolutionMessageId || m.id;
+      if (!seenIds.has(k)) {
+        seenIds.add(k);
+        unique.push(m);
+      }
+    }
+    unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    // Sync any newly discovered real WhatsApp messages into conv.messages so the CRM displays an exact 1:1 mirror
+    let addedAny = false;
+    for (const m of unique) {
+      if (
+        !conv.messages.some(
+          existing =>
+            (m.evolutionMessageId && existing.evolutionMessageId === m.evolutionMessageId) ||
+            existing.id === m.id
+        )
+      ) {
+        conv.messages.push(m);
+        addedAny = true;
+      }
+    }
+    if (addedAny) {
+      conv.messages = mergeWithLocalMessages(conv.sessionId, unique, conv.messages, conv.customerPhone);
+      const newest = conv.messages[conv.messages.length - 1];
+      if (newest) {
+        conv.lastTimestamp = newest.timestamp;
+        conv.lastMessagePreview = newest.content;
+        conv.lastMessageType = newest.type;
+      }
+      broadcastEvent('conversations_update', { count: conversations.length });
+    }
+
+    const customerTimeMs = new Date(customerMsg.timestamp).getTime();
+    const customerEvoId = customerMsg.evolutionMessageId || customerMsg.id.replace(/^evo-/, '');
+
+    // Check if there is any outgoing (assistant/agent) message in Evolution API at or after the customer's message
+    const customerIdx = unique.findIndex(
+      m => m.evolutionMessageId === customerEvoId || m.id === customerMsg.id
+    );
+    if (customerIdx >= 0) {
+      const outgoingAfter = unique.slice(customerIdx + 1).find(m => m.sender !== 'customer');
+      if (outgoingAfter) {
+        return { answered: true, latestOutgoing: outgoingAfter };
+      }
+    }
+
+    const outgoingRecent = unique
+      .filter(
+        m =>
+          m.sender !== 'customer' &&
+          m.evolutionMessageId !== customerEvoId &&
+          new Date(m.timestamp).getTime() >= customerTimeMs - 1500
+      )
+      .pop();
+
+    if (outgoingRecent) {
+      return { answered: true, latestOutgoing: outgoingRecent };
+    }
+
+    return { answered: false };
+  } catch {
+    return { answered: false };
+  }
 }
 
 const recentOutboundDispatches = new Map<string, number>();
@@ -3540,12 +3746,12 @@ async function sendEvolutionMessageWithStatus(
     return { ok: false, socketClosed: false };
   }
 
-  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 60 seconds
+  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 90 seconds
   const cleanTargetKey = target.replace(/@.*$/, '').replace(/\D/g, '') || target;
   const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
   const lastSentAt = recentOutboundDispatches.get(dispatchKey);
   const now = Date.now();
-  if (lastSentAt && now - lastSentAt < 60000) {
+  if (lastSentAt && now - lastSentAt < 90000) {
     console.log(
       `🛡️ [Outbound Anti-Duplicate]: Mensaje idéntico ya entregado a ${target} hace ${Math.round(
         (now - lastSentAt) / 1000
@@ -3571,52 +3777,40 @@ async function sendEvolutionMessageWithStatus(
 
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/message/sendText/${appConfig.evolution.instance}`;
 
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: appConfig.evolution.apiKey,
-        },
-        body: JSON.stringify({
-          number: target,
-          text,
-          delay: delayMs,
-        }),
-        signal: AbortSignal.timeout(6000),
-      });
+  // SINGLE ATOMIC ATTEMPT (maxAttempts = 1, 15s timeout):
+  // Evolution API / Baileys queues and delivers the message to WhatsApp even when HTTP takes >6s.
+  // Never retry a sendText POST on timeout or 5xx to guarantee zero duplicate bubbles in WhatsApp.
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: appConfig.evolution.apiKey,
+      },
+      body: JSON.stringify({
+        number: target,
+        text,
+        delay: delayMs,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
 
-      if (res.ok) {
-        recentOutboundDispatches.set(dispatchKey, Date.now());
-        appConfig.evolution.connected = true;
-        return { ok: true, socketClosed: false };
-      }
-
-      const errBody = await res.text().catch(() => '');
-      const isSocketClosed =
-        /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) ||
-        res.status >= 500;
-
-      if (isSocketClosed) {
-        if (attempt < maxAttempts) {
-          await ensureEvolutionInstanceConnected(true);
-          continue;
-        }
-        return { ok: false, socketClosed: true };
-      }
-
-      return { ok: false, socketClosed: false };
-    } catch {
-      if (attempt < maxAttempts) {
-        await sleepMs(1200);
-        continue;
-      }
-      return { ok: false, socketClosed: true };
+    if (res.ok) {
+      recentOutboundDispatches.set(dispatchKey, Date.now());
+      appConfig.evolution.connected = true;
+      return { ok: true, socketClosed: false };
     }
+
+    const errBody = await res.text().catch(() => '');
+    const isSocketClosed =
+      /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) ||
+      res.status >= 500;
+
+    return { ok: false, socketClosed: isSocketClosed };
+  } catch {
+    // On HTTP timeout, Baileys has typically already queued the message; treat as socket/timeout without re-sending
+    return { ok: false, socketClosed: true };
   }
-  return { ok: false, socketClosed: false };
 }
 
 async function sendEvolutionMessage(numberOrJid: string, text: string, delayMs = 500): Promise<boolean> {
@@ -3650,19 +3844,30 @@ async function sendEvolutionMessageToConversation(
     primaryTarget = conv.sessionId;
   }
 
-  const { ok, socketClosed } = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs);
+  // Check if any contact key for this conversation already dispatched this exact text within 90s
+  const contactKeys = getConversationContactKeys(conv);
+  const now = Date.now();
+  const trimmedText = text.trim();
+  for (const k of contactKeys) {
+    const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
+    const prevSent = recentOutboundDispatches.get(`${cleanK}::${trimmedText}`);
+    if (prevSent && now - prevSent < 90000) {
+      console.log(`🛡️ [Outbound Contact Guard]: Texto idéntico ya despachado a ${conv.customerName} (${k}) hace ${Math.round((now - prevSent) / 1000)}s.`);
+      return true;
+    }
+  }
+
+  const { ok } = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs);
+
+  // Lock all contact identity keys so no alternate JID/LID fallback can re-send the same text
+  for (const k of contactKeys) {
+    const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
+    recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, Date.now());
+  }
+
   if (ok) {
     console.log(`✅ [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${primaryTarget})`);
     return true;
-  }
-
-  // Fallback to related LID only if primary failed and socket is not closed
-  if (!socketClosed && conv.sessionId && conv.sessionId !== primaryTarget) {
-    const fallbackRes = await sendEvolutionMessageWithStatus(conv.sessionId, text, delayMs);
-    if (fallbackRes.ok) {
-      console.log(`✅ [WhatsApp Bot Sent Fallback]: Respuesta entregada a ${conv.customerName} (${conv.sessionId})`);
-      return true;
-    }
   }
 
   return false;
@@ -4562,14 +4767,22 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'busco',
       'para', 'como', 'cual', 'cuales', 'precio', 'precios', 'cuanto', 'cuesta', 'vale',
       'disponible', 'disponibles', 'todo', 'una', 'uno', 'unos', 'unas', 'por',
-      'favor', 'gracias', 'saludos', 'saludo', 'buenas', 'info', 'informacion', 'pesos', 'mil', 'tengo', 'presupuesto'
+      'favor', 'gracias', 'saludos', 'saludo', 'buenas', 'info', 'informacion', 'pesos', 'mil', 'tengo', 'presupuesto',
+      'esta', 'este', 'esto', 'bien', 'listo', 'dale', 'claro', 'bueno', 'saber', 'hacer', 'donde', 'cuando',
+      'quien', 'porque', 'pero', 'solo', 'aqui', 'alla', 'algo', 'nada', 'mucho', 'poco', 'otro', 'otra', 'esos', 'esas'
+    ]);
+    const validShortTechTokens = new Set([
+      'hp', 'pc', 'i3', 'i5', 'i7', 'i9', 'm1', 'm2', 'm3', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8',
+      'ram', 'ssd', 'hdd', 'usb', 'vga', 'ups', 'led', 'ips', 'rgb', 'jbl', 'msi', 'mac'
     ]);
 
-    const searchSource = `${userOnlyLatest} ${fullContextText}`.toLowerCase();
+    const searchSource = `${userOnlyLatest} ${fullContextText}`
+      .toLowerCase()
+      .replace(/https?:\/\/\S+/gi, ' ');
     const tokens = searchSource
       .replace(/[^\wáéíóúñ0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length >= 2 && !stopWords.has(w));
+      .filter(w => (w.length >= 4 || validShortTechTokens.has(w)) && !stopWords.has(w));
 
     if (tokens.length > 0) {
       const scored: { product: ProductItem; score: number }[] = [];
@@ -4578,14 +4791,18 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
         const hay = `${p.name} ${p.brand || ''} ${p.condition || ''} ${p.specsSummary || ''} ${p.description_sale || ''} ${(p.useCases || []).join(' ')} ${p.category} ${p.odooCategory || ''}`.toLowerCase();
         let score = 0;
         for (const tk of tokens) {
-          if (hay.includes(tk)) {
-            score += tk.length >= 4 ? 3 : 1;
+          const escapedTk = tk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const wordBoundaryRegex = new RegExp(`\\b${escapedTk}\\b`, 'i');
+          if (wordBoundaryRegex.test(hay)) {
+            score += tk.length >= 4 ? 4 : 2;
+          } else if (tk.length >= 5 && hay.includes(tk)) {
+            score += 2;
           }
           if ((tk === 'lapto' || tk === 'laptop' || tk === 'laptops' || tk === 'computadora') && p.category === 'laptop') {
             score += 5;
           }
         }
-        if (score > 0) {
+        if (score >= 3) {
           scored.push({ product: p, score });
         }
       }
@@ -6872,6 +7089,39 @@ async function triggerSalesBotReplyForConversation(
   }
 
   try {
+    // Multi-Server Coordination (Hostinger + Cloud Preview):
+    // When triggered by background polling, stagger slightly and query Evolution API live messages
+    // to check if another active server instance already replied to this message.
+    if (triggerSource === 'live_evolution_poll' && initialLastMsg) {
+      await sleepMs(1100 + Math.floor(Math.random() * 600));
+      const preCheck = await hasEvolutionAlreadyAnsweredSince(conv, initialLastMsg);
+      if (preCheck.answered) {
+        const externalReply = preCheck.latestOutgoing?.content || '';
+        recordBotReplyForConversation(
+          conv,
+          initialMsgId,
+          initialLastMsg.transcription || initialLastMsg.content || '',
+          externalReply
+        );
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: initialMsgId,
+          incomingText: initialLastMsg.transcription || initialLastMsg.content || '',
+          decision: 'blocked_already_answered',
+          reason: `Bloqueado en pre-vuelo: Otra instancia activa (ej. Hostinger) ya respondió en WhatsApp ("${externalReply.slice(0, 45)}...")`,
+          replyText: externalReply,
+          durationMs: Date.now() - startTime,
+        });
+        return {
+          success: false,
+          error: 'Ya respondido por otra instancia conectada a Evolution API',
+        };
+      }
+    }
+
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting =
@@ -7081,6 +7331,36 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       cleanText ||
       '¡Hola! Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?';
 
+    // Final Pre-Flight Check right before dispatching to WhatsApp (in case another server answered during AI generation)
+    if (triggerSource !== 'manual_crm_trigger' && lastMsg) {
+      const finalCheck = await hasEvolutionAlreadyAnsweredSince(conv, lastMsg);
+      if (finalCheck.answered) {
+        const externalReply = finalCheck.latestOutgoing?.content || aiReply;
+        recordBotReplyForConversation(
+          conv,
+          initialMsgId,
+          baseCustomerText,
+          externalReply
+        );
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: initialMsgId,
+          incomingText: baseCustomerText,
+          decision: 'blocked_already_answered',
+          reason: `Bloqueado justo antes de enviar: Otra instancia activa ya entregó respuesta en WhatsApp ("${externalReply.slice(0, 45)}...")`,
+          replyText: externalReply,
+          durationMs: Date.now() - startTime,
+        });
+        return {
+          success: false,
+          error: 'Ya respondido por otra instancia antes del despacho',
+        };
+      }
+    }
+
     const assistantMessage: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       sender: 'assistant',
@@ -7102,6 +7382,15 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     // Send to WhatsApp via Evolution API using smart JID/phone resolution (fast 150ms dispatch)
     const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 150);
     const durationMs = Date.now() - startTime;
+
+    // Schedule a quick live message sync from Evolution API so the CRM reflects the exact WhatsApp message IDs 1:1
+    setTimeout(() => {
+      loadEvolutionMessagesForChat(conv.sessionId)
+        .then(() => {
+          broadcastEvent('conversations_update', { count: conversations.length });
+        })
+        .catch(() => {});
+    }, 1800);
 
     // Record this answered customer message and cooldown across all contact identity keys
     recordBotReplyForConversation(

@@ -1,6 +1,6 @@
 {
-  "summary": "Plan de corrección del auto-bloqueo (deadlock) detectado por el Panel de Auditoría en el ciclo de sincronización de WhatsApp (inFlightBotKeys), garantizando que el bloqueo atómico se adquiera y libere en un único punto con expiración automática (TTL).",
-  "updatedAt": "2026-11-04T14:54:54.091928528Z",
+  "summary": "Plan de implementación para eliminar el envío múltiple de mensajes a WhatsApp entre múltiples instancias conectadas a Evolution API, evitar reintentos duplicados por timeout HTTP, ignorar frases cortas de cierre/enlaces sin intención comercial y mostrar el espejo exacto de mensajes reales de WhatsApp en el CRM.",
+  "updatedAt": "2026-11-04T17:23:24.661375309Z",
   "requestFeedback": true,
   "userFacing": true
 }
