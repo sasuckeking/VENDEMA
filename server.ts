@@ -3632,6 +3632,191 @@ function detectRequestedUseCase(text: string): {
   return null;
 }
 
+interface GenericProductFamily {
+  id: string;
+  label: string;
+  isCable?: boolean;
+  matcher: (p: ProductItem) => boolean;
+}
+
+// Helper: Identify cables, cords, wires and cable-adapters to ensure strict categorical purity
+function isCableOrWiringItem(name: string, odooCateg = ''): boolean {
+  const combined = `${name} ${odooCateg}`.toLowerCase();
+  return /\b(cable\b|cables\b|cord[oó]n|cordones\b|patch\s*cord|cable\s*hdmi|hdmi\s*cable|cable\s*de\s*poder|cable\s*poder|power\s*cable|cable\s*vga|vga\s*cable|cable\s*usb|usb\s*cable|cable\s*tipo\s*c|type\s*c\s*cable|cable\s*lightning|cable\s*red|cable\s*rj45|cable\s*utp|adaptador\s*cable|extensi[oó]n\s*usb|extensi[oó]n\s*el[eé]ctrica|conector\s*cable)\b/i.test(
+    combined
+  );
+}
+
+// Helper: Detect if customer is querying a generic product family (mouse, impresora, teclado, bocina, etc.)
+function detectGenericProductFamily(query: string): GenericProductFamily | null {
+  if (!query) return null;
+  const s = query.toLowerCase();
+
+  // 1. Mouse / Ratones
+  if (/\b(mouse|mouses|rat[oó]n|ratones)\b/i.test(s) && !/\b(pad|alfombrilla)\b/i.test(s)) {
+    return {
+      id: 'mouse',
+      label: 'Mouse y Ratones',
+      matcher: p => {
+        const combined = `${p.name} ${p.odooCategory || ''}`.toLowerCase();
+        const hasMouse = /\b(mouse|mouses|rat[oó]n|ratones)\b/i.test(combined);
+        const isPadOnly =
+          /\b(mouse\s*pad|pad\s*mouse|alfombrilla)\b/i.test(combined) &&
+          !/\b(con\s*mouse|combo\s*mouse|\+\s*mouse|mouse\s*optico|mouse\s*inalambrico|mouse\s*gamer)\b/i.test(combined);
+        return hasMouse && !isPadOnly;
+      },
+    };
+  }
+
+  // 2. Impresoras / Equipos de Impresión
+  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
+    return {
+      id: 'impresora',
+      label: 'Impresoras y Equipos de Impresión',
+      matcher: p => {
+        const combined = `${p.name} ${p.odooCategory || ''}`.toLowerCase();
+        const isPrinter =
+          p.category === 'impresora' ||
+          /\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|ecotank|smart\s*tank|laserjet)\b/i.test(
+            combined
+          );
+        const isSupplyOnly =
+          /\b(botella|tinta|cartucho|t[oó]ner|toner|cinta)\b/i.test(p.name) &&
+          !/\b(impresora|multifuncional)\b/i.test(p.name);
+        return isPrinter && !isSupplyOnly;
+      },
+    };
+  }
+
+  // 3. Teclados
+  if (/\b(teclado|teclados|keyboard|keyboards)\b/i.test(s)) {
+    return {
+      id: 'teclado',
+      label: 'Teclados y Combos de Teclado',
+      matcher: p => {
+        const combined = `${p.name} ${p.odooCategory || ''}`.toLowerCase();
+        const isTeclado = /\b(teclado|teclados|keyboard|keyboards)\b/i.test(combined);
+        const isInternalPart = /\b(repuesto|interno|cinta\s*teclado|para\s*(?:dell|hp|lenovo|latitude|thinkpad)\s*(?:e\d{4}|\d{4}|g\d))\b/i.test(
+          p.name
+        );
+        return isTeclado && !isInternalPart;
+      },
+    };
+  }
+
+  // 4. Monitores / Pantallas
+  if (/\b(monitor|monitores|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s)) {
+    return {
+      id: 'monitor',
+      label: 'Monitores y Pantallas',
+      matcher: p => p.category === 'monitor' || /\b(monitor|monitores)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 5. Bocinas / Speakers / Parlantes
+  if (/\b(bocina|bocinas|speaker|speakers|parlante|parlantes)\b/i.test(s)) {
+    return {
+      id: 'bocina',
+      label: 'Bocinas y Speakers',
+      matcher: p =>
+        /\b(bocina|bocinas|speaker|speakers|parlante|parlantes|soundbar)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 6. Audífonos / Headsets / Auriculares
+  if (/\b(audifonos|audífonos|headset|headsets|auricular|auriculares)\b/i.test(s)) {
+    return {
+      id: 'audifonos',
+      label: 'Audífonos y Headsets',
+      matcher: p =>
+        /\b(audifono|audifonos|audífono|audífonos|headset|headsets|auricular|auriculares)\b/i.test(
+          `${p.name} ${p.odooCategory || ''}`
+        ),
+    };
+  }
+
+  // 7. Cargadores y Fuentes de Laptop
+  if (/\b(cargador|cargadores|charger|fuente\s*de\s*poder\s*laptop)\b/i.test(s)) {
+    return {
+      id: 'cargador',
+      label: 'Cargadores y Fuentes de Laptop',
+      matcher: p => /\b(cargador|cargadores|charger|power\s*adapter)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 8. Mochilas, Maletines y Fundas
+  if (/\b(mochila|mochilas|bulto|bultos|malet[ií]n|maletines|funda\s*laptop)\b/i.test(s)) {
+    return {
+      id: 'mochila',
+      label: 'Mochilas, Bultos y Maletines',
+      matcher: p =>
+        /\b(mochila|mochilas|bulto|bultos|malet[ií]n|maletines|backpack|funda)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 9. Discos SSD / Discos Duros
+  if (/\b(disco\s*solido|disco\s*sólido|disco\s*duro|ssd|nvme|m\.2|disco\s*externo)\b/i.test(s)) {
+    return {
+      id: 'disco',
+      label: 'Discos SSD, NVMe y Discos Duros',
+      matcher: p =>
+        /\b(ssd|disco\s*solido|disco\s*sólido|disco\s*duro|nvme|m\.2)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 10. Memorias RAM
+  if (/\b(memoria\s*ram|memorias\s*ram|ram|ddr3|ddr4|ddr5)\b/i.test(s) && !/\b(disco|ssd|laptop)\b/i.test(s)) {
+    return {
+      id: 'ram',
+      label: 'Memorias RAM (Laptop y PC)',
+      matcher: p => /\b(ram|memoria\s*ram|ddr3|ddr4|ddr5|pc3|pc4)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 11. Tablets e iPads
+  if (/\b(tablet|tablets|ipad|ipads)\b/i.test(s)) {
+    return {
+      id: 'tablet',
+      label: 'Tablets e iPads',
+      matcher: p => /tablet|ipad|galaxy tab|fire 8|tab 910|alcatel 1t/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
+  // 12. Repetidores y Redes
+  if (/\b(repetidor|repetidores|router|routers|antena\s*wifi|switch\s*de\s*red|access\s*point)\b/i.test(s)) {
+    return {
+      id: 'red',
+      label: 'Repetidores, Routers y Equipos de Red',
+      matcher: p =>
+        p.category === 'red' ||
+        /\b(repetidor|repetidores|router|routers|wifi|antena|access\s*point|switch)\b/i.test(
+          `${p.name} ${p.odooCategory || ''}`
+        ),
+    };
+  }
+
+  // 13. Cables / Cordones / Adaptadores (SOLO cuando el usuario busca cables explícitamente)
+  if (/\b(cable|cables|cord[oó]n|cordones|patch\s*cord|cable\s*hdmi|cable\s*vga|cable\s*de\s*poder|cable\s*usb|adaptador\s*hdmi)\b/i.test(s)) {
+    return {
+      id: 'cable',
+      label: 'Cables, Cordones y Adaptadores',
+      isCable: true,
+      matcher: p => isCableOrWiringItem(p.name, p.odooCategory),
+    };
+  }
+
+  // 14. Laptops (solo cuando consulta general de laptops)
+  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks)\b/i.test(s)) {
+    return {
+      id: 'laptop',
+      label: 'Laptops y Equipos Portátiles',
+      matcher: p => p.category === 'laptop',
+    };
+  }
+
+  return null;
+}
+
 // Search all Odoo products dynamically based on customer message, brand, budget, condition & use case
 function getRelevantProductsHighlight(latestQueryText: string, fullContextText = ''): string {
   if ((!latestQueryText && !fullContextText) || products.length === 0) return '';
@@ -3651,6 +3836,7 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
   const brandFilter = detectRequestedBrandOrLine(userOnlyLatest);
   const budgetFilter = extractBudgetQuery(userOnlyLatest);
   const useCaseFilter = detectRequestedUseCase(userOnlyLatest);
+  const genericFamily = detectGenericProductFamily(cleanLatest);
   const asksCondition =
     /\b(nuevo|nueva|nuevos|nuevas|usado|usada|usados|usadas|reacondicionado|reacondicionada|refurbished|de\s*caja|segunda\s*mano|condici[oó]n|estado\s*del\s*equipo)\b/i.test(
       cleanLatest
@@ -3675,21 +3861,67 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
     );
   }
 
-  // 2. Apply Combined or Individual Smart Filters (Brand, Budget, Use Case)
-  if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
-    const wantsSpecificNonLaptopCategory =
-      /\b(monitor|monitores|pantalla)\b/i.test(cleanLatest)
-        ? 'monitor'
-        : /\b(impresora|impresoras)\b/i.test(cleanLatest)
-        ? 'impresora'
-        : /\b(router|repetidor|wifi|red)\b/i.test(cleanLatest)
-        ? 'red'
-        : null;
+  // 2. Generic Product Family (Mouse, Impresoras, Teclados, Bocinas, Monitores, Cargadores, etc.)
+  // When the customer asks for a generic product family, return ALL available items across all brands without arbitrary limits and with STRICT CATEGORICAL PURITY (zero cables unless cables were explicitly requested).
+  if (genericFamily && genericFamily.id !== 'laptop') {
+    let familyProducts = inStock.filter(genericFamily.matcher);
 
-    let filtered = wantsSpecificNonLaptopCategory
-      ? inStock.filter(p => p.category === wantsSpecificNonLaptopCategory)
-      : [...laptopsInStock];
+    // Strict categorical purity: Exclude cables/wiring unless cables are the requested family
+    if (!genericFamily.isCable) {
+      familyProducts = familyProducts.filter(p => !isCableOrWiringItem(p.name, p.odooCategory));
+    }
 
+    // Apply brand filter if specified (e.g., "mouse logitech" or "impresora epson")
+    if (brandFilter) {
+      const brandMatches = familyProducts.filter(brandFilter.matcher);
+      if (brandMatches.length > 0) {
+        familyProducts = brandMatches;
+      }
+    }
+
+    // Apply budget filter if specified (e.g., "mouse de 500 pesos")
+    if (budgetFilter) {
+      const budgetMatches = familyProducts.filter(
+        p => p.list_price >= budgetFilter.min && p.list_price <= budgetFilter.max
+      );
+      if (budgetMatches.length > 0) {
+        familyProducts = budgetMatches;
+      }
+    }
+
+    // Apply condition filter if specified
+    if (wantsOnlyNew) {
+      const newMatches = familyProducts.filter(p => p.condition === 'Nuevo');
+      if (newMatches.length > 0) {
+        familyProducts = newMatches;
+      }
+    }
+
+    familyProducts.sort((a, b) => a.list_price - b.list_price);
+
+    if (familyProducts.length > 0) {
+      const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : ' (TODAS LAS MARCAS DISPONIBLES)';
+      sections.push(
+        `=== 🎯 CATÁLOGO COMPLETO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) — ENVIAR TODOS SIN EXCLUIR NINGUNO ===
+⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
+1. El cliente consultó por "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : ' de forma genérica (multimarca total)'}.
+2. DEBES ENVIAR TODOS los ${familyProducts.length} productos listados a continuación (del *1.* al *${familyProducts.length}.*), sin omitir ninguno y sin importar la marca (mostrando todas las marcas disponibles en stock).
+3. PUREZA CATEGÓRICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? 'El cliente solicitó cables expresamente, por lo que se envían cables disponibles.' : 'ESTÁ TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, etc.).'}
+4. NO LIMITES ARBITRARIAMENTE: No te detengas en 4 ni en 10 productos; envía la lista completa con precios en RD$, stock real, condición y enlaces limpios sin formato Markdown.
+
+LISTA DE PRODUCTOS LISTA PARA ENVIAR (${familyProducts.length} opciones):
+
+${familyProducts.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')}`
+      );
+    } else {
+      sections.push(
+        `=== ⚠️ SIN STOCK ACTUAL PARA ${genericFamily.label.toUpperCase()}${brandFilter ? ` (${brandFilter.label})` : ''} ===
+Informa cordialmente al cliente que en este momento no tenemos unidades disponibles de ${genericFamily.label}${brandFilter ? ` marca ${brandFilter.label}` : ''} en stock físico, y ofrécele alternativas o verificar próxima llegada.`
+      );
+    }
+  } else if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
+    // 3. Apply Combined or Individual Smart Filters for Laptops (Brand, Budget, Use Case)
+    let filtered = [...laptopsInStock];
     const activeFilterLabels: string[] = [];
 
     if (brandFilter) {
@@ -3751,45 +3983,6 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
     }
   }
 
-  // 3. Check if customer is asking for a complete non-laptop category (e.g. Monitores, Impresoras, Redes, Tablets, SSD/RAM, Mouse/Teclados)
-  if (!brandFilter && !budgetFilter && !useCaseFilter) {
-    if (/\b(monitor|monitores)\b/i.test(cleanLatest)) {
-      const mons = inStock.filter(p => p.category === 'monitor').sort((a, b) => a.list_price - b.list_price);
-      if (mons.length > 0) {
-        sections.push(
-          `=== 🎯 CATÁLOGO COMPLETO DE MONITORES SOLICITADO (${mons.length} disponibles) — ENVIAR TODOS ===\n` +
-            mons.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')
-        );
-      }
-    } else if (/\b(impresora|impresoras)\b/i.test(cleanLatest)) {
-      const imps = inStock.filter(p => p.category === 'impresora').sort((a, b) => a.list_price - b.list_price);
-      if (imps.length > 0) {
-        sections.push(
-          `=== 🎯 CATÁLOGO COMPLETO DE IMPRESORAS Y TINTAS SOLICITADO (${imps.length} disponibles) — ENVIAR TODOS ===\n` +
-            imps.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')
-        );
-      }
-    } else if (/\b(tablet|tablets|ipad|ipads)\b/i.test(cleanLatest)) {
-      const tabs = inStock
-        .filter(p => /tablet|ipad|galaxy tab|fire 8|tab 910|alcatel 1t/i.test(`${p.name} ${p.odooCategory || ''}`))
-        .sort((a, b) => a.list_price - b.list_price);
-      if (tabs.length > 0) {
-        sections.push(
-          `=== 🎯 CATÁLOGO COMPLETO DE TABLETS E IPADS SOLICITADO (${tabs.length} disponibles) — ENVIAR TODOS ===\n` +
-            tabs.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')
-        );
-      }
-    } else if (/\b(repetidor|repetidores|router|routers|antena\s*wifi)\b/i.test(cleanLatest)) {
-      const reds = inStock.filter(p => p.category === 'red').sort((a, b) => a.list_price - b.list_price);
-      if (reds.length > 0) {
-        sections.push(
-          `=== 🎯 CATÁLOGO COMPLETO DE REPETIDORES Y REDES SOLICITADO (${reds.length} disponibles) — ENVIAR TODOS ===\n` +
-            reds.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')
-        );
-      }
-    }
-  }
-
   // 4. General Keyword & Model Search across all 600+ products
   const stopWords = new Set([
     'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'busco',
@@ -3824,7 +4017,10 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
     }
 
     scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-    const topMatches = scored.slice(0, 40).map(s => s.product);
+    let topMatches = scored.slice(0, 40).map(s => s.product);
+    if (genericFamily && !genericFamily.isCable) {
+      topMatches = topMatches.filter(p => !isCableOrWiringItem(p.name, p.odooCategory));
+    }
     if (topMatches.length > 0) {
       sections.push(
         `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n` +
