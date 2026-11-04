@@ -305,9 +305,19 @@ function loadPersistedConfig() {
           savedPrompt.includes('1️⃣ *NOMBRE COMPLETO*') ||
           !savedPrompt.includes('REGLA DE CITAS MEJORADA V2') ||
           !savedPrompt.includes('FILTRADO INTELIGENTE V3');
+        const savedModel = String(saved.aiProvider.model || '').trim();
+        const migratedModel =
+          !savedModel ||
+          savedModel === 'gemini-2.5-flash' ||
+          savedModel === 'gemini-2.0-flash' ||
+          savedModel === 'gemini-1.5-flash' ||
+          savedModel === 'gemini-3-flash-preview'
+            ? 'gemini-3.8-flash'
+            : savedModel;
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
+          model: migratedModel,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
           openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : '')).trim(),
           deepseekApiKey: (saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : '')).trim(),
@@ -598,6 +608,7 @@ function resolveChatCompletionsUrl(rawUrl: string | undefined, defaultUrl: strin
 
 const rejectedOpenAiKeys = new Set<string>();
 const rejectedDeepseekKeys = new Set<string>();
+const exhaustedGeminiModelsUntil = new Map<string, number>();
 let lastFastGeminiModel = 'gemini-3.1-flash-lite';
 
 function sanitizeBearerKey(raw?: string): string {
@@ -607,6 +618,75 @@ function sanitizeBearerKey(raw?: string): string {
     .replace(/^['"]+|['"]+$/g, '')
     .replace(/^Bearer\s+/i, '')
     .trim();
+}
+
+function getActiveGeminiClient(): GoogleGenAI {
+  const customGeminiKey = sanitizeBearerKey(
+    appConfig.aiProvider?.geminiApiKey || process.env.GEMINI_API_KEY
+  );
+  if (customGeminiKey) {
+    return new GoogleGenAI({
+      apiKey: customGeminiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+  }
+  return ai;
+}
+
+function formatCleanAiError(err: any): {
+  isQuota429: boolean;
+  isDailyQuota: boolean;
+  isBusy503: boolean;
+  summary: string;
+} {
+  const raw = String(err?.message || err || '');
+  const lower = raw.toLowerCase();
+  const isQuota429 =
+    raw.includes('429') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('quota exceeded') ||
+    lower.includes('insufficient_quota');
+  const isDailyQuota =
+    lower.includes('generaterequestsperday') ||
+    lower.includes('per day limit exceeded') ||
+    lower.includes('free_tier_requests');
+  const isBusy503 =
+    raw.includes('503') ||
+    lower.includes('unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('timeout rápido');
+
+  if (isDailyQuota) {
+    return {
+      isQuota429: true,
+      isDailyQuota: true,
+      isBusy503: false,
+      summary: 'Cuota diaria gratuita del modelo alcanzada; cambiando a motor activo.',
+    };
+  }
+  if (isQuota429) {
+    return {
+      isQuota429: true,
+      isDailyQuota: false,
+      isBusy503: false,
+      summary: 'Límite de cuota del proveedor alcanzado temporalmente; cambiando a motor de respaldo.',
+    };
+  }
+  if (isBusy503) {
+    return {
+      isQuota429: false,
+      isDailyQuota: false,
+      isBusy503: true,
+      summary: 'Alta demanda temporal en el modelo; alternando a motor de respuesta inmediata.',
+    };
+  }
+  const cleanLine = raw.replace(/\s+/g, ' ').slice(0, 140);
+  return {
+    isQuota429: false,
+    isDailyQuota: false,
+    isBusy503: false,
+    summary: cleanLine || 'Error de conexión con proveedor IA',
+  };
 }
 
 // ---------------------------------------------------------
@@ -622,7 +702,7 @@ async function generateTextWithConfiguredAI(options: {
 }): Promise<{ text: string; providerUsed: string; modelUsed: string }> {
   const providerCfg = appConfig.aiProvider || {
     provider: 'gemini',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-3.1-flash-lite',
     temperature: 0.35,
   };
   const provider = providerCfg.provider || 'gemini';
@@ -656,9 +736,9 @@ async function generateTextWithConfiguredAI(options: {
 
   // 1. OpenAI (ChatGPT)
   if (provider === 'openai' && openaiKey) {
-    // If this exact key was already rejected with 401 and fallback is allowed, go straight to Gemini
+    // If this exact key was already rejected with 401/403/429 and fallback is allowed, go straight to Gemini
     if (allowFallback && rejectedOpenAiKeys.has(openaiKey)) {
-      // Skip repeated 401 requests during live background polling
+      // Skip repeated failed requests during live background polling
     } else {
       const primaryOpenAiModel =
         providerCfg.model?.startsWith('gpt') || providerCfg.model?.startsWith('o')
@@ -712,25 +792,29 @@ async function generateTextWithConfiguredAI(options: {
               errorCode = errBody?.error?.code || '';
             } catch {}
 
-            if (res.status === 401 || res.status === 403) {
+            const isQuotaExhausted =
+              res.status === 429 &&
+              (errorCode === 'insufficient_quota' ||
+                errorDetail.toLowerCase().includes('quota') ||
+                errorDetail.toLowerCase().includes('billing'));
+
+            if (res.status === 401 || res.status === 403 || isQuotaExhausted) {
               rejectedOpenAiKeys.add(openaiKey);
-              let reasonMessage = `OpenAI rechazó la autorización (HTTP ${res.status})`;
-              if (errorDetail) {
+              let reasonMessage = isQuotaExhausted
+                ? 'Tu cuenta de OpenAI no tiene saldo o cuota disponible actualmente.'
+                : `OpenAI rechazó la autorización (HTTP ${res.status})`;
+              if (!isQuotaExhausted && errorDetail) {
                 reasonMessage += `: "${errorDetail}"`;
               }
               if (errorDetail.toLowerCase().includes('invalidated') || errorCode === 'token_invalidated') {
-                reasonMessage += '. La clave API guardada en Vendemá fue invalidada o revocada en platform.openai.com. Por favor genera una nueva API Key en https://platform.openai.com/api-keys y pégala aquí.';
-              } else if (errorDetail.toLowerCase().includes('quota') || errorCode === 'insufficient_quota') {
-                reasonMessage += '. Tu cuenta de OpenAI no tiene saldo o cuota disponible. Por favor recarga saldo en https://platform.openai.com/billing.';
-              } else if (!openaiKey.startsWith('sk-')) {
-                reasonMessage += '. La clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI.';
-              } else {
-                reasonMessage += '. Verifica que la clave esté activa en platform.openai.com.';
+                reasonMessage += ' Por favor genera una nueva API Key en https://platform.openai.com/api-keys.';
+              } else if (isQuotaExhausted) {
+                reasonMessage += ' Por favor recarga saldo en https://platform.openai.com/billing o utiliza el motor Gemini integrado.';
               }
               lastOpenAiErr = new Error(reasonMessage);
               break;
             }
-            throw new Error(`OpenAI devolvió estado HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ` en el modelo ${model}`}`);
+            throw new Error(`OpenAI devolvió estado HTTP ${res.status} en el modelo ${model}`);
           }
 
           rejectedOpenAiKeys.delete(openaiKey);
@@ -742,14 +826,12 @@ async function generateTextWithConfiguredAI(options: {
           throw new Error('OpenAI devolvió una respuesta vacía');
         } catch (err: any) {
           lastOpenAiErr = err;
-          console.log(`[AI Engine Info]: Reintento o respaldo desde OpenAI (${model}) -> ${err.message}`);
+          const cleanErr = formatCleanAiError(err);
+          console.log(`[AI Engine]: Reintento o respaldo desde OpenAI (${model}) -> ${cleanErr.summary}`);
         }
       }
 
       if (!allowFallback && lastOpenAiErr) throw lastOpenAiErr;
-      console.log(
-        '[AI Engine]: Aplicando respaldo automático con Google Gemini para responder al cliente en tiempo real.'
-      );
     }
   }
 
@@ -806,31 +888,46 @@ async function generateTextWithConfiguredAI(options: {
         }
         throw new Error('DeepSeek devolvió una respuesta vacía');
       } catch (err: any) {
-        console.log(`[AI Engine Info]: Respaldo desde DeepSeek -> ${err.message}`);
-        if (!allowFallback) throw err;
+        const cleanErr = formatCleanAiError(err);
+        console.log(`[AI Engine]: Respaldo desde DeepSeek -> ${cleanErr.summary}`);
+        if (!allowFallback) throw new Error(cleanErr.summary);
       }
     }
   }
 
-  // 3. Google Gemini (Default or Custom Gemini Key / Automatic Fallback with ultra-fast model priority)
-  const geminiCandidates = Array.from(
+  // 3. Google Gemini (Default or Custom Gemini Key / Automatic Fallback with active model priority)
+  const rawConfiguredGeminiModel =
+    provider === 'gemini' && providerCfg.model?.startsWith('gemini')
+      ? providerCfg.model
+      : 'gemini-3.1-flash-lite';
+  const validConfiguredGeminiModel =
+    rawConfiguredGeminiModel === 'gemini-2.5-flash' ||
+    rawConfiguredGeminiModel === 'gemini-2.0-flash' ||
+    rawConfiguredGeminiModel === 'gemini-1.5-flash' ||
+    rawConfiguredGeminiModel === 'gemini-3-flash-preview' ||
+    rawConfiguredGeminiModel === 'gemini-flash-latest'
+      ? 'gemini-3.1-flash-lite'
+      : rawConfiguredGeminiModel;
+
+  const allGeminiCandidates = Array.from(
     new Set([
       lastFastGeminiModel,
-      'gemini-2.5-flash',
       'gemini-3.1-flash-lite',
-      'gemini-3-flash-preview',
-      provider === 'gemini' && providerCfg.model?.startsWith('gemini') ? providerCfg.model : 'gemini-2.5-flash',
+      'gemini-3.1-flash-lite-preview',
+      validConfiguredGeminiModel,
       'gemini-3.8-flash',
     ])
   );
 
-  const customGeminiKey = sanitizeBearerKey(providerCfg.geminiApiKey);
-  const geminiClient = customGeminiKey
-    ? new GoogleGenAI({
-        apiKey: customGeminiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-      })
-    : ai;
+  const nowMs = Date.now();
+  const activeGeminiCandidates = allGeminiCandidates.filter(m => {
+    const blockedUntil = exhaustedGeminiModelsUntil.get(m) || 0;
+    return nowMs >= blockedUntil;
+  });
+  const geminiCandidates =
+    activeGeminiCandidates.length > 0 ? activeGeminiCandidates : ['gemini-3.1-flash-lite'];
+
+  const geminiClient = getActiveGeminiClient();
 
   const fullPromptForGemini =
     options.chatMessages && options.chatMessages.length > 0
@@ -839,39 +936,67 @@ async function generateTextWithConfiguredAI(options: {
           .join('\n')}\n\n${options.prompt}`
       : options.prompt;
 
-  let lastGeminiErr: any = null;
+  let lastCleanErrorSummary = 'Motor IA temporalmente ocupado';
   for (const gModel of geminiCandidates) {
-    try {
-      const response = (await Promise.race([
-        geminiClient.models.generateContent({
-          model: gModel,
-          contents: fullPromptForGemini,
-          config: {
-            ...(sys ? { systemInstruction: sys } : {}),
-            temperature: temp,
-            ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
-          },
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout rápido en modelo ${gModel}`)), 4500)
-        ),
-      ])) as any;
+    const maxAttempts = gModel.startsWith('gemini-3.1-flash-lite') ? 2 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = (await Promise.race([
+          geminiClient.models.generateContent({
+            model: gModel,
+            contents: fullPromptForGemini,
+            config: {
+              ...(sys ? { systemInstruction: sys } : {}),
+              temperature: temp,
+              ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
+            },
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout rápido en modelo ${gModel}`)), 14000)
+          ),
+        ])) as any;
 
-      if (response?.text) {
-        lastFastGeminiModel = gModel;
-        return {
-          text: response.text,
-          providerUsed: 'gemini',
-          modelUsed: gModel,
-        };
+        if (response?.text) {
+          lastFastGeminiModel = gModel;
+          exhaustedGeminiModelsUntil.delete(gModel);
+          return {
+            text: response.text,
+            providerUsed: 'gemini',
+            modelUsed: gModel,
+          };
+        }
+      } catch (err: any) {
+        const parsedErr = formatCleanAiError(err);
+        lastCleanErrorSummary = parsedErr.summary;
+
+        if (parsedErr.isDailyQuota) {
+          // Block daily-quota-exhausted model for 4 hours so we never spam 429 on subsequent requests
+          const cooldownUntil = Date.now() + 4 * 60 * 60 * 1000;
+          exhaustedGeminiModelsUntil.set(gModel, cooldownUntil);
+          if (gModel === 'gemini-3.8-flash' || gModel === 'gemini-flash-latest') {
+            exhaustedGeminiModelsUntil.set('gemini-3.8-flash', cooldownUntil);
+            exhaustedGeminiModelsUntil.set('gemini-flash-latest', cooldownUntil);
+          }
+          if (lastFastGeminiModel === gModel) {
+            lastFastGeminiModel = 'gemini-3.1-flash-lite';
+          }
+          break;
+        }
+
+        if (parsedErr.isQuota429) {
+          exhaustedGeminiModelsUntil.set(gModel, Date.now() + 2 * 60 * 1000);
+          break;
+        }
+
+        if (parsedErr.isBusy503 && attempt < maxAttempts) {
+          await new Promise(r => setTimeout(r, 900));
+          continue;
+        }
       }
-    } catch (err: any) {
-      lastGeminiErr = err;
-      console.log(`[AI Engine Info]: Alternando modelo Gemini (${gModel}) -> ${err.message}`);
     }
   }
 
-  throw lastGeminiErr || new Error('No se pudo generar respuesta con los modelos disponibles.');
+  throw new Error(lastCleanErrorSummary);
 }
 
 // Initial fallback products (immediately replaced on startup by 600+ real Odoo products)
@@ -1047,18 +1172,60 @@ const keywordsImpresora = [
   'impresoras',
   'printer',
   'printers',
-  'multifuncional',
-  'multifuncionales',
   'ecotank',
   'smart tank',
   'deskjet',
   'laserjet',
   'pixma',
   'ink tank',
-  'toner',
-  'tinta',
-  'cartucho',
+  'officejet',
 ];
+
+function isPrinterSupplyOrConsumable(name: string, odooCateg = ''): boolean {
+  const n = (name || '').toLowerCase().trim();
+  const c = (odooCateg || '').toLowerCase().trim();
+  return (
+    (/\b(cartucho|cartuchos|tinta|tintas|toner|t[oó]ner|botella\s*de\s*tinta|ink\s*tinta|cinta\s*para\s*impresora|cabezal)\b/i.test(
+      n
+    ) ||
+      /\b(tinta|toner|t[oó]ner|cartucho|consumible)\b/i.test(c)) &&
+    !/^(impresora|multifuncional|printer)\b/i.test(n)
+  );
+}
+
+function isActualPrinterMachine(name: string, odooCateg = ''): boolean {
+  const n = (name || '').toLowerCase().trim();
+  const c = (odooCateg || '').toLowerCase().trim();
+
+  // Strictly exclude keyboards, mice, cables, UPS, power banks, chargers, hubs, stands, bags, speakers, headsets
+  if (
+    /\b(teclado|teclados|keyboard|mouse|rat[oó]n|combo\s*teclado|cable|cables|cord[oó]n|cargador|ups\b|power\s*bank|bater[ií]a|adaptador|hub\b|soporte|mesa|mochila|bulto|funda|bocina|speaker|aud[ií]fono|headset)\b/i.test(
+      n
+    )
+  ) {
+    return false;
+  }
+
+  // Strictly exclude ink cartridges, ink bottles, toners, ribbons, printheads
+  if (isPrinterSupplyOrConsumable(n, c)) {
+    return false;
+  }
+
+  // Exclude accessories that say "para impresora" or "de impresora" unless the product name starts with "impresora"
+  if (/\b(para\s+impresoras?|de\s+impresoras?)\b/i.test(n) && !/^(impresora|multifuncional|printer)\b/i.test(n)) {
+    return false;
+  }
+
+  return (
+    keywordsImpresora.some(k => n.includes(k)) ||
+    (/\b(multifuncional|multifuncionales|todo-en-uno|todo\s*en\s*uno)\b/i.test(n) &&
+      /\b(impresora|hp|epson|canon|brother|deskjet|laserjet|ecotank|smart\s*tank|pixma|copia|escaner|esc[aá]ner)\b/i.test(
+        n
+      )) ||
+    c.includes('impresora') ||
+    c.includes('printer')
+  );
+}
 
 function detectProductBrand(name: string, odooBrandName = '', desc = ''): string {
   const combined = `${odooBrandName} ${name} ${desc}`.toLowerCase();
@@ -1119,10 +1286,10 @@ function classifyProductCondition(
     };
   }
 
-  // New boxed accessories (mouse, keyboards, hubs, bags, adapters, repeaters, soundbars)
+  // New boxed accessories & consumables (mouse, keyboards, hubs, bags, adapters, repeaters, soundbars, ink, cartridges, toner)
   if (
     category === 'red' ||
-    /\b(mouse|teclado|combo|hub|adaptador|cable|mochila|bulto|funda|estuche|cooling|stand|soporte|aud[ií]fono|headset|karaoke|barra de sonido|repetidor|router|candado|control|ups)\b/i.test(
+    /\b(mouse|teclado|combo|hub|adaptador|cable|mochila|bulto|funda|estuche|cooling|stand|soporte|aud[ií]fono|headset|karaoke|barra de sonido|repetidor|router|candado|control|ups|cartucho|cartuchos|tinta|tintas|toner|t[oó]ner)\b/i.test(
       textCombined
     )
   ) {
@@ -1219,14 +1386,11 @@ function categorizeOdooProduct(name: string, odooCategName = ''): ProductItem['c
   if (categ.includes('monitor') || categ.includes('pantalla')) {
     return 'monitor';
   }
-  if (categ.includes('impresora') || categ.includes('printer') || categ.includes('tinta') || categ.includes('toner')) {
+  if (isActualPrinterMachine(nombre, categ)) {
     return 'impresora';
   }
-  if (keywordsLaptop.some(k => nombre.includes(k)) && !isExcludedPart) {
+  if (keywordsLaptop.some(k => nombre.includes(k)) && !isExcludedPart && !isPrinterSupplyOrConsumable(nombre, categ)) {
     return 'laptop';
-  }
-  if (keywordsImpresora.some(k => nombre.includes(k))) {
-    return 'impresora';
   }
   if (keywordsMonitor.some(k => nombre.includes(k))) {
     return 'monitor';
@@ -1476,12 +1640,23 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
           const cat = categorizeOdooProduct(p.name || '', odooCatName);
           const odooAttrs = prodAttrsByTmplId.get(p.id) || {};
 
-          const rawSaleDesc = typeof p.description_sale === 'string' ? p.description_sale.replace(/\s+/g, ' ').trim() : '';
+          const rawSaleDesc =
+            typeof p.description_sale === 'string'
+              ? p.description_sale
+                  .replace(/&amp;/gi, '&')
+                  .replace(/&quot;/gi, '"')
+                  .replace(/&#39;/gi, "'")
+                  .replace(/\s+/g, ' ')
+                  .trim()
+              : '';
           const cleanEcomDesc =
             typeof p.description_ecommerce === 'string'
               ? p.description_ecommerce
                   .replace(/<[^>]+>/g, ' ')
                   .replace(/&nbsp;/gi, ' ')
+                  .replace(/&amp;/gi, '&')
+                  .replace(/&quot;/gi, '"')
+                  .replace(/&#39;/gi, "'")
                   .replace(/\s+/g, ' ')
                   .trim()
               : '';
@@ -2479,7 +2654,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
 
         const contactKeys = getConversationContactKeys(conv);
         // Avoid duplicate triggers across multiple JIDs for the same customer in the same cycle
-        if (contactKeys.some(k => handledContactsThisCycle.has(k) || inFlightBotKeys.has(k))) {
+        if (contactKeys.some(k => handledContactsThisCycle.has(k) || isBotLockActive(k))) {
           continue;
         }
 
@@ -2491,13 +2666,10 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
         if (skipCheck.skip) continue;
 
-        // Lock contact across ALL keys immediately
+        // Mark contact as handled in this cycle ONLY (acquireBotLock inside triggerSalesBotReplyForConversation owns inFlightBotKeys)
         for (const k of contactKeys) {
-          inFlightBotKeys.add(k);
           handledContactsThisCycle.add(k);
-          processedMessageIds.set(`${k}::${msgId}`, nowMs);
         }
-        processedMessageIds.set(msgId, nowMs);
 
         console.log(`🤖 [Auto-Reply Polling Trigger]: Respondiendo a ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
         triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
@@ -2956,9 +3128,19 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
 // Helper: Evolution API WhatsApp Senders & Live Audit / Anti-Duplicate Engine
 // ---------------------------------------------------------
 let isFirstEvolutionSync = true;
-const inFlightBotKeys = new Set<string>();
-const inFlightBotSessions = inFlightBotKeys;
+const inFlightBotKeys = new Map<string, number>();
+const BOT_LOCK_TTL_MS = 20000;
 let lastEvolutionRestartMs = 0;
+
+function isBotLockActive(key: string): boolean {
+  const lockedAt = inFlightBotKeys.get(key);
+  if (!lockedAt) return false;
+  if (Date.now() - lockedAt > BOT_LOCK_TTL_MS) {
+    inFlightBotKeys.delete(key);
+    return false;
+  }
+  return true;
+}
 
 // Persistent Audit Log for Admin inspection & duplicate diagnostics
 const BOT_AUDIT_LOG_FILE = path.join(__dirname, '.vendema-bot-audit.json');
@@ -2969,7 +3151,7 @@ try {
     const raw = fs.readFileSync(BOT_AUDIT_LOG_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      botAuditLogs = parsed.slice(0, 300);
+      botAuditLogs = parsed.filter((item: any) => item?.decision !== 'blocked_in_flight').slice(0, 300);
     }
   }
 } catch {
@@ -3086,7 +3268,7 @@ const lastBotReplyByContactKey = new Map<string, BotReplyRecord>();
 function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean {
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
-    if (inFlightBotKeys.has(k)) {
+    if (isBotLockActive(k)) {
       const lastMsg = conv.messages[conv.messages.length - 1];
       const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || '';
       const incomingText = lastMsg?.content || '';
@@ -3104,8 +3286,9 @@ function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean 
       return false;
     }
   }
+  const now = Date.now();
   for (const k of keys) {
-    inFlightBotKeys.add(k);
+    inFlightBotKeys.set(k, now);
   }
   return true;
 }
@@ -4033,23 +4216,21 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
     };
   }
 
-  // 2. Impresoras / Equipos de Impresión
+  // 2. Cartuchos, Tintas y Tóner para Impresora (solo cuando el cliente pide explícitamente cartucho, tinta o tóner)
+  if (/\b(cartucho|cartuchos|tinta|tintas|toner|t[oó]ner|botella\s*de\s*tinta)\b/i.test(s)) {
+    return {
+      id: 'tinta_cartucho',
+      label: 'Cartuchos, Tintas y Tóner para Impresora',
+      matcher: p => isPrinterSupplyOrConsumable(p.name, p.odooCategory),
+    };
+  }
+
+  // 3. Impresoras / Equipos de Impresión (estrictamente máquinas impresoras; CERO teclados, CERO cartuchos/tintas, CERO cables, CERO UPS)
   if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
     return {
       id: 'impresora',
       label: 'Impresoras y Equipos de Impresión',
-      matcher: p => {
-        const combined = `${p.name} ${p.odooCategory || ''}`.toLowerCase();
-        const isPrinter =
-          p.category === 'impresora' ||
-          /\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|ecotank|smart\s*tank|laserjet)\b/i.test(
-            combined
-          );
-        const isSupplyOnly =
-          /\b(botella|tinta|cartucho|t[oó]ner|toner|cinta)\b/i.test(p.name) &&
-          !/\b(impresora|multifuncional)\b/i.test(p.name);
-        return isPrinter && !isSupplyOnly;
-      },
+      matcher: p => isActualPrinterMachine(p.name, p.odooCategory),
     };
   }
 
@@ -4564,6 +4745,7 @@ app.post('/api/config', async (req, res) => {
     appConfig.aiProvider = nextAi;
     rejectedOpenAiKeys.clear();
     rejectedDeepseekKeys.clear();
+    exhaustedGeminiModelsUntil.clear();
   }
   if (odoo) appConfig.odoo = { ...appConfig.odoo, ...odoo };
   if (evolution) appConfig.evolution = { ...appConfig.evolution, ...evolution };
@@ -4615,6 +4797,7 @@ app.post('/api/ai/save-credentials', async (req, res) => {
 
   rejectedOpenAiKeys.clear();
   rejectedDeepseekKeys.clear();
+  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
 
   try {
@@ -4953,6 +5136,7 @@ app.post('/api/ai/test-provider', async (req, res) => {
 
   rejectedOpenAiKeys.clear();
   rejectedDeepseekKeys.clear();
+  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
 
   const requested = appConfig.aiProvider.provider;
@@ -5521,7 +5705,8 @@ app.post('/api/ai/transcribe-audio', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No se pudo descargar el audio desde Evolution API' });
     }
 
-    const response = await ai.models.generateContent({
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
       model: 'gemini-3.5-transcribe',
       contents: {
         parts: [
@@ -5550,8 +5735,8 @@ app.post('/api/ai/transcribe-audio', async (req, res) => {
 
     res.json({ success: true, transcription: transcript });
   } catch (err: any) {
-    console.error('[Transcribe Audio Error]:', err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 
@@ -5567,8 +5752,9 @@ app.post('/api/ai/analyze-media', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No se pudo descargar la imagen desde Evolution API' });
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
+      model: 'gemini-3.1-flash-lite',
       contents: {
         parts: [
           {
@@ -5600,8 +5786,8 @@ Indica en español de forma concisa (máximo 3 líneas):
 
     res.json({ success: true, analysis });
   } catch (err: any) {
-    console.error('[Analyze Media Error]:', err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 
@@ -6228,25 +6414,97 @@ function resolveDirectStoreQuestion(rawText: string, conv?: Conversation): strin
   return null;
 }
 
-// Helper: Resilient catalog fallback if all AI models experience a temporary 503 spike during a product query
+// Helper: Direct deterministic catalog reply for product/category/brand/budget inquiries
+function resolveDirectCatalogReply(rawText: string, conv?: Conversation, hasQuote = false): string | null {
+  if (hasQuote) return null;
+  const cleaned = (rawText || '').trim();
+  if (!cleaned || cleaned.length > 160) return null;
+
+  // Do not intercept order confirmation / address / checkout messages that require CRM tools
+  if (
+    /\b(apartar|ap[aá]rtame|lo\s*quiero|la\s*quiero|me\s*llevo|comprar|hacer\s*pedido|mi\s*direcci[oó]n|env[ií]amelo|m[aá]ndamelo|calle|sector|avenida|residencial|urbanizaci[oó]n|contra\s*entrega|ya\s*transfer[ií]|comprobante)\b/i.test(
+      cleaned
+    )
+  ) {
+    return null;
+  }
+
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+
+  const highlight = getRelevantProductsHighlight(cleaned, '');
+  if (!highlight) return null;
+
+  const markerIdx = highlight.indexOf('):\n\n');
+  if (markerIdx !== -1) {
+    const listPart = highlight.slice(markerIdx + 4).trim();
+    if (listPart) {
+      return `¡Claro que sí${namePart}! 😊 Aquí tienes las opciones disponibles en stock real en *Todo Lapto*:\n\n${listPart}`;
+    }
+  }
+
+  const directMatchMarker = 'encontrados) ===\n';
+  const directIdx = highlight.indexOf(directMatchMarker);
+  if (directIdx !== -1) {
+    const listPart = highlight.slice(directIdx + directMatchMarker.length).trim();
+    if (listPart) {
+      return `¡Claro que sí${namePart}! 😊 Aquí tienes las opciones disponibles en stock real en *Todo Lapto*:\n\n${listPart}\n\n*¿Cuál de estas opciones te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* 🛒`;
+    }
+  }
+
+  if (highlight.includes('=== ⚠️ SIN STOCK ACTUAL PARA')) {
+    const genericFamily = detectGenericProductFamily(cleaned.toLowerCase());
+    const famLabel = genericFamily?.label || 'ese producto';
+    return `Por el momento no tenemos unidades disponibles de *${famLabel}* en stock físico${namePart}. ¿Buscas algún otro equipo, laptop o accesorio en el que te podamos colaborar hoy? 😊`;
+  }
+
+  return null;
+}
+
+// Helper: Resilient catalog fallback if all AI models experience a temporary 503 spike or quota limit during a query
 function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): string {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
   const namePart = customerName ? `, ${customerName}` : '';
 
+  const lastMsg = conv?.messages[conv.messages.length - 1];
+  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
+  const cleanUserQuery = queryText
+    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:/gi, '')
+    .replace(/^["'\s]+|["'\s]+$/g, '')
+    .trim();
+
   // 1. Check if it is a direct operational store question (hours, location, shipping, warranty)
-  const storeAnswer = resolveDirectStoreQuestion(queryText, conv);
+  const storeAnswer = resolveDirectStoreQuestion(cleanUserQuery, conv);
   if (storeAnswer) {
     return storeAnswer;
   }
 
-  // 2. Check product catalog highlights
-  const highlight = getRelevantProductsHighlight(queryText, '');
+  // 2. If customer is quoting a previous message ("¿Te acuerdas de esto?", "Me interesa", etc.)
+  if (hasQuote) {
+    return `¡Claro que sí${namePart}! 😊 Recuerdo perfectamente lo que conversamos y las opciones siguen disponibles en nuestra tienda de la **Av. Charles de Gaulle No. 133**. ¿Tienes pensado pasar hoy por la tienda para apartarte el equipo, o prefieres que coordinemos el envío directo a tu dirección? 🛒`;
+  }
+
+  // 3. Check direct catalog reply (handles family lists, brand/budget filters, and keyword matches)
+  const directCatalog = resolveDirectCatalogReply(cleanUserQuery, conv, false);
+  if (directCatalog) {
+    return directCatalog;
+  }
+
+  const highlight = getRelevantProductsHighlight(cleanUserQuery, '');
   if (highlight) {
     const markerIdx = highlight.indexOf('):\n\n');
     if (markerIdx !== -1) {
       const listPart = highlight.slice(markerIdx + 4).trim();
       if (listPart) {
         return `¡Claro que sí${namePart}! 😊 Aquí tienes las opciones disponibles en stock real en *Todo Lapto*:\n\n${listPart}`;
+      }
+    }
+    const directMatchMarker = 'encontrados) ===\n';
+    const directIdx = highlight.indexOf(directMatchMarker);
+    if (directIdx !== -1) {
+      const listPart = highlight.slice(directIdx + directMatchMarker.length).trim();
+      if (listPart) {
+        return `¡Claro que sí${namePart}! 😊 Aquí tienes las opciones disponibles en stock real en *Todo Lapto*:\n\n${listPart}\n\n*¿Cuál de estas opciones te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* 🛒`;
       }
     }
   }
@@ -6604,6 +6862,15 @@ async function triggerSalesBotReplyForConversation(
   }
 
   const startTime = Date.now();
+  const initialMsgId = initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '';
+  if (initialMsgId && triggerSource !== 'manual_crm_trigger') {
+    const contactKeys = getConversationContactKeys(conv);
+    processedMessageIds.set(initialMsgId, startTime);
+    for (const k of contactKeys) {
+      processedMessageIds.set(`${k}::${initialMsgId}`, startTime);
+    }
+  }
+
   try {
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
@@ -6645,7 +6912,8 @@ async function triggerSalesBotReplyForConversation(
       try {
         const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
         if (media) {
-          const trRes = await ai.models.generateContent({
+          const geminiClient = getActiveGeminiClient();
+          const trRes = await geminiClient.models.generateContent({
             model: 'gemini-3.5-transcribe',
             contents: {
               parts: [
@@ -6662,7 +6930,8 @@ async function triggerSalesBotReplyForConversation(
           }
         }
       } catch (e: any) {
-        console.warn('[Auto-Transcribe Audio Warning]:', e.message);
+        const cleanErr = formatCleanAiError(e);
+        console.log('[Auto-Transcribe Audio Info]:', cleanErr.summary);
       }
     }
 
@@ -6671,8 +6940,9 @@ async function triggerSalesBotReplyForConversation(
       try {
         const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
         if (media) {
-          const imgRes = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+          const geminiClient = getActiveGeminiClient();
+          const imgRes = await geminiClient.models.generateContent({
+            model: 'gemini-3.1-flash-lite',
             contents: {
               parts: [
                 { inlineData: { mimeType: media.mimetype.split(';')[0] || 'image/jpeg', data: media.base64 } },
@@ -6689,7 +6959,8 @@ async function triggerSalesBotReplyForConversation(
           }
         }
       } catch (e: any) {
-        console.warn('[Auto-Analyze Image Warning]:', e.message);
+        const cleanErr = formatCleanAiError(e);
+        console.log('[Auto-Analyze Image Info]:', cleanErr.summary);
       }
     }
 
@@ -6763,6 +7034,9 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       : `${liveTimePromptNotice}${conversationStateNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
 
     const directStoreReply = resolveDirectStoreQuestion(baseCustomerText, conv);
+    const directCatalogReply = !directStoreReply
+      ? resolveDirectCatalogReply(baseCustomerText, conv, hasQuote)
+      : null;
 
     let aiResult: { text: string; providerUsed: string; modelUsed: string };
     if (directStoreReply) {
@@ -6777,6 +7051,12 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         providerUsed: appConfig.aiProvider?.provider || 'gemini',
         modelUsed: 'instant-fast-path',
       };
+    } else if (directCatalogReply) {
+      aiResult = {
+        text: directCatalogReply,
+        providerUsed: 'odoo-catalog-engine',
+        modelUsed: 'instant-catalog-match',
+      };
     } else {
       try {
         aiResult = await generateTextWithConfiguredAI({
@@ -6786,7 +7066,8 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
           allowFallback: true,
         });
       } catch (aiErr: any) {
-        console.warn(`[Sales Bot Resilient Fallback]: ${aiErr.message}`);
+        const cleanErr = formatCleanAiError(aiErr);
+        console.log(`[Sales Bot]: Utilizando motor de catálogo en tiempo real (${cleanErr.summary})`);
         aiResult = {
           text: buildSmartCatalogFallbackReply(conv, customerMessageText),
           providerUsed: appConfig.aiProvider?.provider || 'gemini',
@@ -6940,21 +7221,41 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
 
     const promptToSend = `${liveTimePromptNotice}\n\nMensaje actual del cliente:\n${queryText}\n\nResponde siguiendo las reglas del Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
 
+    const directStoreReply = resolveDirectStoreQuestion(baseText, conv);
+    const directCatalogReply = !directStoreReply
+      ? resolveDirectCatalogReply(baseText, conv, hasQuote)
+      : null;
+
     let result: { text: string; providerUsed: string; modelUsed: string };
-    try {
-      result = await generateTextWithConfiguredAI({
-        prompt: promptToSend,
-        systemInstruction,
-        chatMessages: historyTurns,
-        allowFallback: true,
-      });
-    } catch (aiErr: any) {
-      console.warn(`[Generate Reply Resilient Fallback]: ${aiErr.message}`);
+    if (directStoreReply) {
       result = {
-        text: buildSmartCatalogFallbackReply(conv, queryText),
-        providerUsed: appConfig.aiProvider?.provider || 'gemini',
-        modelUsed: 'catalog-smart-engine',
+        text: directStoreReply,
+        providerUsed: 'direct-operational-engine',
+        modelUsed: 'instant-store-faq',
       };
+    } else if (directCatalogReply) {
+      result = {
+        text: directCatalogReply,
+        providerUsed: 'odoo-catalog-engine',
+        modelUsed: 'instant-catalog-match',
+      };
+    } else {
+      try {
+        result = await generateTextWithConfiguredAI({
+          prompt: promptToSend,
+          systemInstruction,
+          chatMessages: historyTurns,
+          allowFallback: true,
+        });
+      } catch (aiErr: any) {
+        const cleanErr = formatCleanAiError(aiErr);
+        console.log(`[Generate Reply]: Utilizando motor de catálogo en tiempo real (${cleanErr.summary})`);
+        result = {
+          text: buildSmartCatalogFallbackReply(conv, queryText),
+          providerUsed: appConfig.aiProvider?.provider || 'gemini',
+          modelUsed: 'catalog-smart-engine',
+        };
+      }
     }
 
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(result.text, conv);
@@ -6967,8 +7268,8 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       modelUsed: result.modelUsed,
     });
   } catch (err: any) {
-    console.error('AI generate reply error:', err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 
@@ -7011,8 +7312,9 @@ Extrae los siguientes datos en formato JSON:
 }
 Responde ÚNICAMENTE con el objeto JSON.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
+      model: 'gemini-3.1-flash-lite',
       contents: {
         parts: [
           {
@@ -7032,7 +7334,8 @@ Responde ÚNICAMENTE con el objeto JSON.`;
     const parsed = JSON.parse(response.text || '{}');
     res.json({ success: true, verification: parsed });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 
@@ -7145,7 +7448,7 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
     }
 
     const contactKeys = getConversationContactKeys(conv);
-    if (contactKeys.some(k => inFlightBotKeys.has(k))) {
+    if (contactKeys.some(k => isBotLockActive(k))) {
       console.log(`🛡️ [Webhook Skip]: Respuesta ya en proceso para ${conv.customerName}`);
       return;
     }

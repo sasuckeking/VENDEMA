@@ -1,6 +1,6 @@
 {
-  "summary": "Desconexión total de n8n, operación 100% directa con Evolution API y Odoo ERP, y eliminación de respuestas duplicadas.",
-  "updatedAt": "2026-11-04T13:41:06.144729982Z",
+  "summary": "Plan de corrección del auto-bloqueo (deadlock) detectado por el Panel de Auditoría en el ciclo de sincronización de WhatsApp (inFlightBotKeys), garantizando que el bloqueo atómico se adquiera y libere en un único punto con expiración automática (TTL).",
+  "updatedAt": "2026-11-04T14:54:54.091928528Z",
   "requestFeedback": true,
   "userFacing": true
 }
