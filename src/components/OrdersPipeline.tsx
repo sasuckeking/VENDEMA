@@ -228,7 +228,8 @@ export const OrdersPipeline: React.FC<OrdersPipelineProps> = ({
                           RD${order.totalAmount.toLocaleString()}
                         </span>
                         <span className="text-[10px] text-slate-500 tabular-nums">
-                          {new Date(order.createdAt).toLocaleDateString([], {
+                          {new Date(order.createdAt).toLocaleDateString('es-DO', {
+                            timeZone: 'America/Santo_Domingo',
                             month: 'short',
                             day: 'numeric',
                           })}

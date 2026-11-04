@@ -1696,7 +1696,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
             <div className="flex items-center gap-3">
               {config.supabase?.lastSync && (
                 <span className="text-[11px] text-slate-500 font-mono">
-                  Última subida: {new Date(config.supabase.lastSync).toLocaleString('es-DO')}
+                  Última subida (RD): {new Date(config.supabase.lastSync).toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo' })}
                 </span>
               )}
               {isSuperAdmin && (

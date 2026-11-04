@@ -194,7 +194,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         <div className="flex items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
           {lastSync && (
             <span className="text-xs text-slate-400 font-mono tabular-nums">
-              Último sync: {new Date(lastSync).toLocaleTimeString()}
+              Último sync (RD): {new Date(lastSync).toLocaleTimeString('es-DO', { timeZone: 'America/Santo_Domingo', hour: '2-digit', minute: '2-digit', hour12: true })}
             </span>
           )}
           <button

@@ -609,10 +609,10 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
 
                       {/* Dates */}
                       <td className="py-3.5 px-4 text-slate-400 text-[11px]">
-                        <div>{new Date(u.createdAt).toLocaleDateString('es-DO')}</div>
+                        <div>{new Date(u.createdAt).toLocaleDateString('es-DO', { timeZone: 'America/Santo_Domingo' })}</div>
                         {u.lastLogin && (
                           <div className="text-[10px] text-slate-500 font-mono">
-                            Acceso: {new Date(u.lastLogin).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                            Acceso (RD): {new Date(u.lastLogin).toLocaleTimeString('es-DO', { timeZone: 'America/Santo_Domingo', hour: '2-digit', minute: '2-digit', hour12: true })}
                           </div>
                         )}
                       </td>

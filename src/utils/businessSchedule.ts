@@ -694,15 +694,13 @@ export function buildDominicanTimePromptContext(
     : `🔴 **LA TIENDA FÍSICA Y EL SERVICIO DE ENVÍOS ESTÁN CERRADOS EN ESTE MOMENTO.**
 (${ctx.statusDetail})
 ${movedTodayDirective}
-⚠️ **REGLA CRÍTICA PARA PEDIDOS FUERA DE HORARIO / CERRADO:**
-1. **SÍ PUEDES Y DEBES TOMAR EL PEDIDO:**
-   - Toma los datos del cliente con total normalidad (nombre, teléfono, producto, dirección y método de pago).
-   - Genera la cotización o registra la orden en el sistema. ¡NUNCA rechaces una venta por estar cerrado!
-2. **ACLARACIÓN OBLIGATORIA DE ENTREGA AL CLIENTE:**
-   - Explícale cordialmente que el negocio y la tienda están cerrados en este momento (${ctx.statusReason === 'closed_holiday' ? `por ser día feriado: ${ctx.holidayName}` : ctx.statusReason === 'closed_sunday' ? 'por ser domingo' : 'por ser horario nocturno fuera de jornada laboral'}).
-   - Infórmale con total claridad y seguridad que **su equipo queda apartado y reservado**, y que **su orden será despachada y coordinada tan pronto abramos nuestras puertas: ${ctx.nextOpeningStr}**.
-3. **SI PREGUNTA POR VISITAR LA TIENDA FÍSICA:**
-   - Aclárale que la tienda física en la Av. Charles de Gaulle #133 está actualmente cerrada y que con gusto le esperamos en nuestra próxima apertura (${ctx.nextOpeningStr}).`;
+⚠️ **REGLA CRÍTICA SOBRE CUÁNDO MENCIONAR EL HORARIO FUERA DE JORNADA:**
+1. **EN SALUDOS SENCILLOS O CONSULTAS DE PRODUCTOS (PROHIBIDO SER REPETITIVO):**
+   - Si el cliente solo saluda (*"Saludos"*, *"Hola"*, *"Buenas"*) o solo pregunta por productos/precios (*"¿Tienes mouse?"*, *"¿Qué laptops tienes?"*), **NO menciones que estamos cerrados**. Responde directo al grano, cálido y breve.
+2. **CUÁNDO SÍ MENCIONAR EL HORARIO DE APERTURA (${ctx.nextOpeningStr}):**
+   - Únicamente menciona que estamos cerrados en este instante si el cliente:
+     a) Pregunta expresamente si estamos abiertos, por nuestro horario o si puede pasar por la tienda ahora mismo.
+     b) Está cerrando/confirmando un pedido o solicita envío inmediato (en cuyo caso toma y aparta su pedido con total normalidad y confírmale que queda reservado para despacharse a primera hora: **${ctx.nextOpeningStr}**).`;
 
   return `
 ======================================================================
@@ -722,3 +720,41 @@ INSTRUCCIÓN DE OPERACIÓN PARA LA IA EN ESTE INSTANTE:
 ${orderDirective}
 ======================================================================`;
 }
+
+/**
+ * Formats any timestamp or Date strictly in Dominican Republic time (America/Santo_Domingo UTC-4) as 12-hour time (e.g. "06:49 AM").
+ */
+export function formatDominicanTimeOnly(dateInput?: string | number | Date): string {
+  if (!dateInput) return '';
+  const dt = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(dt.getTime())) return '';
+  const ctx = getDominicanTimeContext(dt);
+  return ctx.time12;
+}
+
+/**
+ * Formats any timestamp or Date strictly in Dominican Republic time (America/Santo_Domingo UTC-4) as short date (e.g. "04/11/2026").
+ */
+export function formatDominicanDateOnly(dateInput?: string | number | Date, includeYear = true): string {
+  if (!dateInput) return '';
+  const dt = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(dt.getTime())) return '';
+  const ctx = getDominicanTimeContext(dt);
+  const d = String(ctx.day).padStart(2, '0');
+  const m = String(ctx.month).padStart(2, '0');
+  return includeYear ? `${d}/${m}/${ctx.year}` : `${d} ${ctx.monthName.slice(0, 3)}`;
+}
+
+/**
+ * Formats any timestamp or Date strictly in Dominican Republic time (America/Santo_Domingo UTC-4) as date + 12h time.
+ */
+export function formatDominicanDateTime(dateInput?: string | number | Date): string {
+  if (!dateInput) return '';
+  const dt = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(dt.getTime())) return '';
+  const ctx = getDominicanTimeContext(dt);
+  const d = String(ctx.day).padStart(2, '0');
+  const m = String(ctx.month).padStart(2, '0');
+  return `${d}/${m}/${ctx.year} · ${ctx.time12}`;
+}
+

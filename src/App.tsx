@@ -589,7 +589,7 @@ export default function App() {
       if (selectedSessionRef.current) {
         handleRefreshMessages(selectedSessionRef.current, true);
       }
-    }, 8000);
+    }, 4000);
 
     return () => {
       eventSource.close();

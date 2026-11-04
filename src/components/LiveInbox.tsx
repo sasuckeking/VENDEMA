@@ -29,7 +29,7 @@ import {
   Clock
 } from 'lucide-react';
 import type { Conversation, ProductItem, CustomerLead, ChatMessage } from '../types';
-import { getDominicanTimeContext } from '../utils/businessSchedule';
+import { getDominicanTimeContext, formatDominicanTimeOnly } from '../utils/businessSchedule';
 
 interface LiveInboxProps {
   conversations: Conversation[];
@@ -707,11 +707,8 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                       <span className="font-semibold text-slate-200 text-xs truncate">
                         {conv.customerName}
                       </span>
-                      <span className="text-[10px] text-slate-500 tabular-nums">
-                        {new Date(conv.lastTimestamp).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                      <span className="text-[10px] text-slate-500 tabular-nums" title="Hora de República Dominicana (UTC-4)">
+                        {formatDominicanTimeOnly(conv.lastTimestamp)}
                       </span>
                     </div>
 
@@ -981,11 +978,8 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                       </span>
                     )}
                     <span>·</span>
-                    <span className="tabular-nums">
-                      {new Date(msg.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                    <span className="tabular-nums" title="Hora de República Dominicana (UTC-4)">
+                      {formatDominicanTimeOnly(msg.timestamp)}
                     </span>
                     <button
                       onClick={() => setReplyingToMessage(msg)}

@@ -596,6 +596,7 @@ function resolveChatCompletionsUrl(rawUrl: string | undefined, defaultUrl: strin
 
 const rejectedOpenAiKeys = new Set<string>();
 const rejectedDeepseekKeys = new Set<string>();
+let lastFastGeminiModel = 'gemini-3.1-flash-lite';
 
 function sanitizeBearerKey(raw?: string): string {
   if (!raw) return '';
@@ -697,6 +698,7 @@ async function generateTextWithConfiguredAI(options: {
               Authorization: `Bearer ${openaiKey}`,
             },
             body: JSON.stringify(bodyPayload),
+            signal: AbortSignal.timeout(12000),
           });
 
           if (!res.ok) {
@@ -781,6 +783,7 @@ async function generateTextWithConfiguredAI(options: {
             temperature: temp,
             ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
           }),
+          signal: AbortSignal.timeout(12000),
         });
 
         if (!res.ok) {
@@ -807,14 +810,16 @@ async function generateTextWithConfiguredAI(options: {
     }
   }
 
-  // 3. Google Gemini (Default or Custom Gemini Key / Automatic Fallback with multi-model resilience)
-  const preferredGeminiModel =
-    provider === 'gemini' && providerCfg.model?.startsWith('gemini')
-      ? providerCfg.model
-      : 'gemini-3.8-flash';
-
+  // 3. Google Gemini (Default or Custom Gemini Key / Automatic Fallback with ultra-fast model priority)
   const geminiCandidates = Array.from(
-    new Set([preferredGeminiModel, 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'])
+    new Set([
+      lastFastGeminiModel,
+      'gemini-2.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      provider === 'gemini' && providerCfg.model?.startsWith('gemini') ? providerCfg.model : 'gemini-2.5-flash',
+      'gemini-3.8-flash',
+    ])
   );
 
   const customGeminiKey = sanitizeBearerKey(providerCfg.geminiApiKey);
@@ -835,17 +840,23 @@ async function generateTextWithConfiguredAI(options: {
   let lastGeminiErr: any = null;
   for (const gModel of geminiCandidates) {
     try {
-      const response = await geminiClient.models.generateContent({
-        model: gModel,
-        contents: fullPromptForGemini,
-        config: {
-          ...(sys ? { systemInstruction: sys } : {}),
-          temperature: temp,
-          ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
-        },
-      });
+      const response = (await Promise.race([
+        geminiClient.models.generateContent({
+          model: gModel,
+          contents: fullPromptForGemini,
+          config: {
+            ...(sys ? { systemInstruction: sys } : {}),
+            temperature: temp,
+            ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
+          },
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout rápido en modelo ${gModel}`)), 4500)
+        ),
+      ])) as any;
 
-      if (response.text) {
+      if (response?.text) {
+        lastFastGeminiModel = gModel;
         return {
           text: response.text,
           providerUsed: 'gemini',
@@ -854,8 +865,7 @@ async function generateTextWithConfiguredAI(options: {
       }
     } catch (err: any) {
       lastGeminiErr = err;
-      console.log(`[AI Engine Info]: Alternando modelo Gemini (${gModel})...`);
-      await new Promise(r => setTimeout(r, 350));
+      console.log(`[AI Engine Info]: Alternando modelo Gemini (${gModel}) -> ${err.message}`);
     }
   }
 
@@ -3907,9 +3917,13 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
     );
   }
 
-  // 2. Generic Product Family (Mouse, Impresoras, Teclados, Bocinas, Monitores, Cargadores, etc.)
+  // 2. Generic Product Family (Mouse, Impresoras, Teclados, Bocinas, Monitores, Cargadores, Laptops generales, etc.)
   // When the customer asks for a generic product family, return ALL available items across all brands without arbitrary limits and with STRICT CATEGORICAL PURITY (zero cables unless cables were explicitly requested).
-  if (genericFamily && genericFamily.id !== 'laptop') {
+  let hasPrimaryFilterSection = false;
+  if (
+    genericFamily &&
+    (genericFamily.id !== 'laptop' || (!brandFilter && !budgetFilter && !useCaseFilter && !wantsOnlyNew))
+  ) {
     let familyProducts = inStock.filter(genericFamily.matcher);
 
     // Strict categorical purity: Exclude cables/wiring unless cables are the requested family
@@ -3944,6 +3958,7 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
     }
 
     familyProducts.sort((a, b) => a.list_price - b.list_price);
+    hasPrimaryFilterSection = true;
 
     if (familyProducts.length > 0) {
       const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : ' (TODAS LAS MARCAS DISPONIBLES)';
@@ -3965,7 +3980,7 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
 ⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
 1. El cliente consultó por "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : ' de forma genérica (multimarca total)'}.
 2. FORMATO EN BLOQUES INTERACTIVOS (MÁXIMO 15 PRODUCTOS POR MENSAJE): Envía EXACTAMENTE los ${displayedItems.length} productos listados a continuación (del *1.* al *${displayedItems.length}.*).
-3. PUREZA CATEGÓRICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? 'El cliente solicitó cables expresamente, por lo que se envían cables disponibles.' : 'ESTÁ TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, etc.).'}
+3. PUREZA CATEGÓRICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? 'El cliente solicitó cables expresamente, por lo que se envían cables disponibles.' : 'ESTÁ TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, si es laptop solo laptop, etc.).'}
 4. CIERRE INTERACTIVO: Incluye al final la invitación interactiva (${remainingCount > 0 ? `indicando los ${remainingCount} modelos adicionales restantes` : 'confirmando el apartado'}).
 
 LISTA DE PRODUCTOS LISTA PARA ENVIAR (${displayedItems.length} opciones):
@@ -3980,6 +3995,7 @@ Informa cordialmente al cliente que en este momento no tenemos unidades disponib
     }
   } else if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
     // 3. Apply Combined or Individual Smart Filters for Laptops (Brand, Budget, Use Case)
+    hasPrimaryFilterSection = true;
     let filtered = [...laptopsInStock];
     const activeFilterLabels: string[] = [];
 
@@ -4050,54 +4066,53 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
     }
   }
 
-  // 4. General Keyword & Model Search across all 600+ products
-  const stopWords = new Set([
-    'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'busco',
-    'para', 'como', 'cual', 'cuales', 'precio', 'precios', 'cuanto', 'cuesta', 'vale',
-    'disponible', 'disponibles', 'todo', 'una', 'uno', 'unos', 'unas', 'por',
-    'favor', 'gracias', 'saludos', 'info', 'informacion', 'pesos', 'mil', 'tengo', 'presupuesto'
-  ]);
+  // 4. General Keyword & Model Search across all 600+ products (ONLY if no primary category/brand/budget filter already matched)
+  if (!hasPrimaryFilterSection) {
+    const stopWords = new Set([
+      'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'busco',
+      'para', 'como', 'cual', 'cuales', 'precio', 'precios', 'cuanto', 'cuesta', 'vale',
+      'disponible', 'disponibles', 'todo', 'una', 'uno', 'unos', 'unas', 'por',
+      'favor', 'gracias', 'saludos', 'saludo', 'buenas', 'info', 'informacion', 'pesos', 'mil', 'tengo', 'presupuesto'
+    ]);
 
-  const searchSource = `${userOnlyLatest} ${fullContextText}`.toLowerCase();
-  const tokens = searchSource
-    .replace(/[^\wáéíóúñ0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length >= 2 && !stopWords.has(w));
+    const searchSource = `${userOnlyLatest} ${fullContextText}`.toLowerCase();
+    const tokens = searchSource
+      .replace(/[^\wáéíóúñ0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 2 && !stopWords.has(w));
 
-  if (tokens.length > 0) {
-    const scored: { product: ProductItem; score: number }[] = [];
+    if (tokens.length > 0) {
+      const scored: { product: ProductItem; score: number }[] = [];
 
-    for (const p of inStock) {
-      const hay = `${p.name} ${p.brand || ''} ${p.condition || ''} ${p.specsSummary || ''} ${p.description_sale || ''} ${(p.useCases || []).join(' ')} ${p.category} ${p.odooCategory || ''}`.toLowerCase();
-      let score = 0;
-      for (const tk of tokens) {
-        if (hay.includes(tk)) {
-          score += tk.length >= 4 ? 3 : 1;
+      for (const p of inStock) {
+        const hay = `${p.name} ${p.brand || ''} ${p.condition || ''} ${p.specsSummary || ''} ${p.description_sale || ''} ${(p.useCases || []).join(' ')} ${p.category} ${p.odooCategory || ''}`.toLowerCase();
+        let score = 0;
+        for (const tk of tokens) {
+          if (hay.includes(tk)) {
+            score += tk.length >= 4 ? 3 : 1;
+          }
+          if ((tk === 'lapto' || tk === 'laptop' || tk === 'laptops' || tk === 'computadora') && p.category === 'laptop') {
+            score += 5;
+          }
         }
-        if ((tk === 'lapto' || tk === 'laptop' || tk === 'laptops' || tk === 'computadora') && p.category === 'laptop') {
-          score += 5;
+        if (score > 0) {
+          scored.push({ product: p, score });
         }
       }
-      if (score > 0) {
-        scored.push({ product: p, score });
-      }
-    }
 
-    scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-    let topMatches = scored.slice(0, 40).map(s => s.product);
-    if (genericFamily && !genericFamily.isCable) {
-      topMatches = topMatches.filter(p => !isCableOrWiringItem(p.name, p.odooCategory));
-    }
-    if (topMatches.length > 0) {
-      sections.push(
-        `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n` +
-          topMatches
-            .map(
-              (p, idx) =>
-                `${idx + 1}. ${p.name} | ID:${p.variantId || p.id} | Marca:${p.brand || '-'} | Condición:${p.condition || 'Reacondicionado'} (${p.conditionDetail || '6 meses garantía'}) | Precio: RD$${p.list_price.toLocaleString()} | Stock: ${p.virtual_available} unidad(es) (Vitrina: ${p.vitrinaStock || 0}, Almacén: ${p.almacenStock || 0}) | Uso: ${(p.useCases || []).join(', ')} | Specs: ${p.specsSummary || p.description_sale || '-'} | Link: https://todolapto.com.do${p.website_url || ''}`
-            )
-            .join('\n')
-      );
+      scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
+      let topMatches = scored.slice(0, 15).map(s => s.product);
+      if (genericFamily && !genericFamily.isCable) {
+        topMatches = topMatches.filter(p => !isCableOrWiringItem(p.name, p.odooCategory));
+      }
+      if (topMatches.length > 0) {
+        sections.push(
+          `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n` +
+            topMatches
+              .map((p, idx) => formatWhatsAppProductBlock(p, idx))
+              .join('\n\n')
+        );
+      }
     }
   }
 
@@ -4934,7 +4949,7 @@ function findConversationByAnyId(sessionId: string): Conversation | undefined {
 app.get('/api/conversations', async (req, res) => {
   const forceRefresh = req.query.refresh === 'true';
   const now = Date.now();
-  if (conversations.length === 0 || forceRefresh || now - lastEvolutionChatsSync > 30000) {
+  if (conversations.length === 0 || forceRefresh || now - lastEvolutionChatsSync > 3500) {
     await syncEvolutionChats();
   }
   // Ensure each conversation has the latest Odoo client status resolved
@@ -5715,8 +5730,121 @@ Responde ÚNICAMENTE con el objeto JSON.`;
   }
 });
 
+// Helper: Detect if customer sent a simple greeting or courtesy that does NOT need an inventory search
+function isSimpleConversationalMessage(rawText: string, hasQuote = false): boolean {
+  if (hasQuote) return false;
+  const cleaned = (rawText || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned || cleaned.length > 65) return false;
+
+  // If the message contains ANY product, brand, price, repair, store, or order keyword, it is NOT a simple greeting
+  const commercialOrProductRegex =
+    /\b(laptop|lapto|laptos|portatil|notebook|computadora|pc|mouse|raton|impresora|epson|canon|brother|teclado|monitor|pantalla|bocina|parlante|audifono|auricular|headset|diadema|disco|ssd|nvme|ram|memoria|cargador|bateria|router|modem|ups|inversor|mochila|bulto|maletin|camara|webcam|cable|hdmi|vga|usb|adaptador|dell|hp|lenovo|thinkpad|latitude|chromebook|asus|acer|macbook|apple|precio|cuanto|cuesta|vale|catalogo|disponible|stock|barat[oa]|economic[oa]|usad[oa]|nuev[oa]|reacondicionad[oa]|reparacion|reparan|arreglan|garantia|envio|delivery|tienda|ubicacion|direccion|horario|abierto|cerrado|comprar|apartar|pedido|cotizacion|transferencia|cuenta|banco|anuncio|foto|vacante|empleo|trabajo|estudio|oficina|gamer|juego|\d{3,})\b/i;
+
+  if (commercialOrProductRegex.test(cleaned)) {
+    return false;
+  }
+
+  // Match common greetings, courtesies, and short acknowledgments
+  const simplePatterns =
+    /^(hola|saludos|saludo|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|como estan|como estas|todo bien|klk|que lo que|hey|alo|buenas todo lapto|hola todo lapto|saludos todo lapto|hola buenas|hola buenos dias|hola buenas tardes|hola buenas noches|saludos buenas|saludos buenos dias|saludos buenas tardes|disculpa|disculpe|una pregunta|tengo una pregunta|una consulta|gracias|muchas gracias|mil gracias|ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|amen|bendiciones|un placer|igualmente|igual)(\s+(amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|por favor|gracias))?$/i;
+
+  return simplePatterns.test(cleaned);
+}
+
+// Helper: Instant sub-10ms personalized reply for simple greetings & courtesies (Zero inventory search, zero LLM wait)
+function buildInstantConversationalReply(conv?: Conversation, rawText = ''): string {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const cleaned = (rawText || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/\b(gracias|muchas gracias|mil gracias|bendiciones|amen|un placer|igualmente|igual)\b/i.test(cleaned)) {
+    return `¡Siempre a tu orden en *Todo Lapto*${namePart}! 😊 Cualquier otra consulta aquí estamos para servirte.`;
+  }
+
+  if (/^(ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|dale)\b/i.test(cleaned)) {
+    return `¡Perfecto${namePart}! 👍 Quedamos atentos por aquí para ayudarte con lo que necesites en *Todo Lapto*.`;
+  }
+
+  if (/\b(disculpa|disculpe|una pregunta|tengo una pregunta|una consulta)\b/i.test(cleaned)) {
+    return `¡Claro que sí${namePart}! 😊 Cuéntanos, ¿en qué te podemos ayudar hoy en *Todo Lapto*?`;
+  }
+
+  let greetingWord = '¡Hola';
+  if (/\bsaludos?\b/i.test(cleaned)) {
+    greetingWord = '¡Saludos';
+  } else if (/\bbuenos?\s*dias?\b/i.test(cleaned)) {
+    greetingWord = '¡Buenos días';
+  } else if (/\bbuenas?\s*tardes?\b/i.test(cleaned)) {
+    greetingWord = '¡Buenas tardes';
+  } else if (/\bbuenas?\s*noches?\b/i.test(cleaned)) {
+    greetingWord = '¡Buenas noches';
+  } else if (/\bbuenas\b/i.test(cleaned)) {
+    greetingWord = '¡Buenas';
+  }
+
+  return `${greetingWord}${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?`;
+}
+
+// Helper: Resilient catalog fallback if all AI models experience a temporary 503 spike during a product query
+function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): string {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const highlight = getRelevantProductsHighlight(queryText, '');
+  if (highlight) {
+    const markerIdx = highlight.indexOf('):\n\n');
+    if (markerIdx !== -1) {
+      const listPart = highlight.slice(markerIdx + 4).trim();
+      if (listPart) {
+        return `¡Claro que sí${namePart}! 😊 Aquí tienes las opciones disponibles en stock real en *Todo Lapto*:\n\n${listPart}`;
+      }
+    }
+  }
+  return `¡Hola${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?`;
+}
+
+// Helper: Ultra-fast lightweight system instruction for simple greetings/courtesies (Zero inventory search, ~1s latency)
+function buildFastConversationalSystemInstruction(conv?: Conversation): string {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName : '';
+  const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  return `Eres el asistente oficial de ventas de **Todo Lapto** en República Dominicana (WhatsApp).
+Fecha y hora actual en RD: ${rdNow.fullDateStr} · ${rdNow.time12} (America/Santo_Domingo UTC-4).
+Cliente actual: ${customerName || 'Cliente de WhatsApp'}.
+
+⚠️ REGLA ESTRICTA DE RESPUESTA RÁPIDA Y CONCISA (MÁXIMO 1 A 2 LÍNEAS):
+1. El cliente acaba de enviar únicamente un saludo o mensaje corto de cortesía (sin pedir ningún producto aún).
+2. Responde de inmediato en **1 a 2 líneas cortas como máximo**, directo al grano, amable y natural:
+   - Si es un saludo ("Saludos", "Hola", "Buenas", "Buenos días", etc.):
+     "¡Saludos${customerName ? `, ${customerName}` : ''}! 😊 Bienvenido a *Todo Lapto*. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?"
+   - Si es un agradecimiento o confirmación ("Gracias", "Ok", "Perfecto", "Está bien"):
+     "¡Siempre a tu orden en *Todo Lapto*! 😊 Cualquier consulta adicional aquí estamos para servirte."
+3. **ESTRICTAMENTE PROHIBIDO:**
+   - ❌ PROHIBIDO enviar listas de laptops, precios o enlaces cuando el cliente solo saludó.
+   - ❌ PROHIBIDO decir "Actualmente estamos cerrados" en un saludo sencillo.`;
+}
+
 // Helper: Build Master System Instruction with Live Odoo Inventory, Customer Phone & Learned Brain
 function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''): string {
+  const lastMsg = conv?.messages[conv.messages.length - 1];
+  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
+
+  // Fast-path: if the customer only sent a simple greeting or courtesy, do NOT search or inject the 600-product catalog!
+  if (isSimpleConversationalMessage(latestQuery, hasQuote)) {
+    return buildFastConversationalSystemInstruction(conv);
+  }
+
   const rawTemplate = appConfig.aiProvider?.systemPrompt || OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
   const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
   // Only treat 10-13 digit numbers as valid phone numbers (14+ digits are WhatsApp @lid IDs)
@@ -5727,18 +5855,17 @@ function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''
         : cleanPhone
       : 'NO DISPONIBLE';
 
-  const lastMsg = conv?.messages[conv.messages.length - 1];
-  const searchContext = [
-    latestQuery,
-    lastMsg?.quotedMessage?.text || '',
-    conv?.lastMessagePreview || '',
-    ...(conv?.messages
-      .slice(-6)
-      .map(m => `${m.quotedMessage?.text || ''} ${m.transcription || m.content}`) || []),
-  ].join(' ');
+  // Only pass the current message and any explicitly quoted text to getRelevantProductsHighlight
+  // (NEVER pass old messages from conv.messages.slice(-6), so old history never pollutes the current filter!)
+  const quotedContext = lastMsg?.quotedMessage?.text || '';
+  const relevantHighlight = getRelevantProductsHighlight(latestQuery, quotedContext);
 
-  const relevantHighlight = getRelevantProductsHighlight(latestQuery, searchContext);
-  const inventoryContext = `${relevantHighlight ? relevantHighlight + '\n\n' : ''}${getLiveInventoryString()}`;
+  // If relevantHighlight already matched the exact product family, brand, budget, or product keywords,
+  // do NOT append the 45,000-character full inventory dump — keep the prompt lean and fast!
+  const inStockCount = products.filter(p => p.virtual_available > 0 && p.list_price > 1).length;
+  const inventoryContext = relevantHighlight
+    ? `RESUMEN DE INVENTARIO ODOO EN TIEMPO REAL (${inStockCount} productos activos en stock vendible):\n${relevantHighlight}`
+    : getLiveInventoryString();
   const learnedContext = getLearnedInsightsPromptContext();
 
   // Check registered client status
@@ -6028,13 +6155,29 @@ async function triggerSalesBotReplyForConversation(
   inFlightBotSessions.add(conv.sessionId);
 
   try {
-    // 1. Ensure Odoo inventory is loaded
-    if (products.length === 0) {
+    const initialLastMsg = conv.messages[conv.messages.length - 1];
+    const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
+    const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
+    const isInitialSimpleGreeting =
+      initialLastMsg?.type === 'text' &&
+      !initialLastMsg?.quotedMessage &&
+      isSimpleConversationalMessage(initialText, initialHasQuote);
+
+    // 1. Ensure Odoo inventory is loaded (only block if not a simple greeting)
+    if (products.length === 0 && !isInitialSimpleGreeting) {
       await syncOdooInventory();
     }
 
-    // 2. Load full WhatsApp conversation history from Evolution API so the bot has complete context
-    await loadEvolutionMessagesForChat(conv.sessionId);
+    // 2. Only fetch full Evolution message history if messages are empty or a quote needs hydration (saves 2-4 seconds!)
+    const needsHistoryHydration =
+      !conv.messages ||
+      conv.messages.length === 0 ||
+      (initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text) ||
+      (!conv.messagesLoaded && !isInitialSimpleGreeting);
+
+    if (needsHistoryHydration) {
+      await loadEvolutionMessagesForChat(conv.sessionId);
+    }
 
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (!lastMsg) {
@@ -6107,6 +6250,8 @@ async function triggerSalesBotReplyForConversation(
       'Hola, me gustaría recibir información.';
 
     const hasQuote = Boolean(lastMsg.quotedMessage?.text?.trim());
+    const isSimpleMsg = isSimpleConversationalMessage(baseCustomerText, hasQuote);
+
     const quotedBlock = hasQuote
       ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACIÓN]
@@ -6135,39 +6280,61 @@ Mensaje actual del cliente sobre esta cita anterior:
       : baseCustomerText;
 
     const systemInstruction = buildMasterSalesSystemInstruction(conv, customerMessageText);
-    const historyTurns = buildChatHistoryTurns(conv);
+    const fullHistoryTurns = buildChatHistoryTurns(conv);
     // Remove last turn from historyTurns if it's the customer message we're passing in `prompt`
-    if (historyTurns.length > 0 && historyTurns[historyTurns.length - 1].role === 'user') {
-      historyTurns.pop();
+    if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === 'user') {
+      fullHistoryTurns.pop();
     }
+    const historyTurns = isSimpleMsg ? fullHistoryTurns.slice(-4) : fullHistoryTurns;
 
     console.log(
-      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`
+      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Simple="${isSimpleMsg ? 'SÍ (Fast-Path)' : 'NO'}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`
     );
 
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
-    const liveTimePromptNotice = `[🕒 ESTADO Y HORA EN VIVO EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
-- Fecha oficial actual en RD: ${rdNow.fullDateStr}
-- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
-- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+    const liveTimePromptNotice = `[🕒 HORA OFICIAL EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha y hora actual en RD: ${rdNow.fullDateStr} · ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio: ${rdNow.statusSummary} (${rdNow.statusDetail})
 - Próxima apertura comercial: ${rdNow.nextOpeningStr}
 ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}\n` : ''}${
   rdNow.isOpen
-    ? '👉 INSTRUCCIÓN DE HORARIO: La tienda física (Av. Charles de Gaulle #133) y el servicio de entregas están ABIERTOS ahora mismo. Puedes confirmar despachos para hoy mismo.'
-    : `👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están CERRADOS en este momento (${rdNow.statusDetail}). Sí debes tomar el pedido y apartar el equipo con total normalidad, asegurándole al cliente que su producto queda apartado y que será coordinado y despachado: ${rdNow.nextOpeningStr}.`
+    ? '👉 INSTRUCCIÓN DE HORARIO: La tienda física (Av. Charles de Gaulle #133) y el servicio de entregas están ABIERTOS ahora mismo.'
+    : `👉 INSTRUCCIÓN DE HORARIO: Si el cliente SOLO está saludando o preguntando por productos/precios, NO menciones que estamos cerrados; responde directo al grano. ÚNICAMENTE menciona que estamos cerrados (y que despachamos ${rdNow.nextOpeningStr}) si el cliente pregunta por el horario, si puede pasar por la tienda ahora mismo, o al momento de confirmar el despacho de un pedido.`
 }`;
 
-    const aiResult = await generateTextWithConfiguredAI({
-      prompt: `${liveTimePromptNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto siguiendo las 36 reglas y el estado de horario/apertura en RD indicado arriba en tiempo real, usando únicamente productos y precios reales del catálogo y guiando activamente al cliente hacia la compra:`,
-      systemInstruction,
-      chatMessages: historyTurns,
-      allowFallback: true,
-    });
+    const promptToSend = isSimpleMsg
+      ? `Mensaje actual del cliente (${conv.customerName}): "${baseCustomerText}"\n\n⚠️ El cliente envió un mensaje sencillo de saludo o cortesía. Responde directo al grano en 1 a 2 líneas cortas máximo (sin enviar listas de productos y sin decir que estamos cerrados):`
+      : `${liveTimePromptNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+
+    let aiResult: { text: string; providerUsed: string; modelUsed: string };
+    if (isSimpleMsg) {
+      aiResult = {
+        text: buildInstantConversationalReply(conv, baseCustomerText),
+        providerUsed: appConfig.aiProvider?.provider || 'gemini',
+        modelUsed: 'instant-fast-path',
+      };
+    } else {
+      try {
+        aiResult = await generateTextWithConfiguredAI({
+          prompt: promptToSend,
+          systemInstruction,
+          chatMessages: historyTurns,
+          allowFallback: true,
+        });
+      } catch (aiErr: any) {
+        console.warn(`[Sales Bot Resilient Fallback]: ${aiErr.message}`);
+        aiResult = {
+          text: buildSmartCatalogFallbackReply(conv, customerMessageText),
+          providerUsed: appConfig.aiProvider?.provider || 'gemini',
+          modelUsed: 'catalog-smart-engine',
+        };
+      }
+    }
 
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(aiResult.text || '', conv);
     const aiReply =
       cleanText ||
-      '¡Hola! Bienvenido a *Todo Lapto* 💻. Con gusto te ayudo. ¿Buscas una laptop para trabajo, estudios o uso diario, o algún accesorio en particular?';
+      '¡Hola! Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?';
 
     const assistantMessage: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -6187,8 +6354,8 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     broadcastEvent('new_message', { sessionId: conv.sessionId, message: assistantMessage });
     broadcastEvent('conversations_update', { count: conversations.length });
 
-    // Send to WhatsApp via Evolution API using smart JID/phone resolution
-    const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 700);
+    // Send to WhatsApp via Evolution API using smart JID/phone resolution (fast 150ms dispatch)
+    const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 150);
 
     return {
       success: true,
@@ -6211,6 +6378,22 @@ app.post('/api/ai/generate-reply', async (req, res) => {
   const { sessionId, userMessage } = req.body;
   const conv = conversations.find(c => c.sessionId === sessionId);
 
+  const lastMsg = conv?.messages[conv.messages.length - 1];
+  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || 'Hola';
+  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
+  const isSimpleMsg = isSimpleConversationalMessage(baseText, hasQuote);
+
+  // Instant sub-10ms fast-path for simple greetings & courtesies
+  if (isSimpleMsg) {
+    return res.json({
+      success: true,
+      reply: buildInstantConversationalReply(conv, baseText),
+      toolsExecuted: [],
+      providerUsed: appConfig.aiProvider?.provider || 'gemini',
+      modelUsed: 'instant-fast-path',
+    });
+  }
+
   if (products.length === 0) {
     await syncOdooInventory();
   }
@@ -6219,10 +6402,6 @@ app.post('/api/ai/generate-reply', async (req, res) => {
     await loadEvolutionMessagesForChat(conv.sessionId);
   }
 
-  const lastMsg = conv?.messages[conv.messages.length - 1];
-  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || 'Hola';
-
-  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
   const quotedBlock = hasQuote
     ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACIÓN]
@@ -6243,30 +6422,42 @@ Mensaje actual del cliente sobre la cita: "${baseText}"
 
   const queryText = quotedBlock ? `${quotedBlock}\nConsulta del cliente: "${baseText}"` : baseText;
   const systemInstruction = buildMasterSalesSystemInstruction(conv, queryText);
-  const historyTurns = buildChatHistoryTurns(conv);
-  if (historyTurns.length > 0 && historyTurns[historyTurns.length - 1].role === 'user') {
-    historyTurns.pop();
+  const fullHistoryTurns = buildChatHistoryTurns(conv);
+  if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === 'user') {
+    fullHistoryTurns.pop();
   }
+  const historyTurns = fullHistoryTurns;
 
   try {
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
-    const liveTimePromptNotice = `[🕒 ESTADO Y HORA EN VIVO EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
-- Fecha oficial actual en RD: ${rdNow.fullDateStr}
-- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
-- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+    const liveTimePromptNotice = `[🕒 HORA OFICIAL EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha y hora actual en RD: ${rdNow.fullDateStr} · ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio: ${rdNow.statusSummary} (${rdNow.statusDetail})
 - Próxima apertura comercial: ${rdNow.nextOpeningStr}
 ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}\n` : ''}${
   rdNow.isOpen
     ? '👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están ABIERTOS ahora mismo.'
-    : `👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están CERRADOS en este momento (${rdNow.statusDetail}). Sí debes tomar el pedido y apartar el producto, informando que será despachado: ${rdNow.nextOpeningStr}.`
+    : `👉 INSTRUCCIÓN DE HORARIO: Si el cliente SOLO está saludando o preguntando por productos/precios, NO menciones que estamos cerrados; responde directo al grano. ÚNICAMENTE menciona que estamos cerrados (y que despachamos ${rdNow.nextOpeningStr}) si el cliente pregunta por el horario, si puede pasar por la tienda ahora mismo, o al momento de confirmar el despacho de un pedido.`
 }`;
 
-    const result = await generateTextWithConfiguredAI({
-      prompt: `${liveTimePromptNotice}\n\nMensaje actual del cliente:\n${queryText}\n\nResponde siguiendo estrictamente las 36 reglas del Agente Oficial de Ventas de Todo Lapto y el estado de horario/apertura en RD indicado arriba en tiempo real:`,
-      systemInstruction,
-      chatMessages: historyTurns,
-      allowFallback: true,
-    });
+    const promptToSend = `${liveTimePromptNotice}\n\nMensaje actual del cliente:\n${queryText}\n\nResponde siguiendo las reglas del Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+
+    let result: { text: string; providerUsed: string; modelUsed: string };
+    try {
+      result = await generateTextWithConfiguredAI({
+        prompt: promptToSend,
+        systemInstruction,
+        chatMessages: historyTurns,
+        allowFallback: true,
+      });
+    } catch (aiErr: any) {
+      console.warn(`[Generate Reply Resilient Fallback]: ${aiErr.message}`);
+      result = {
+        text: buildSmartCatalogFallbackReply(conv, queryText),
+        providerUsed: appConfig.aiProvider?.provider || 'gemini',
+        modelUsed: 'catalog-smart-engine',
+      };
+    }
 
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(result.text, conv);
 
@@ -6651,8 +6842,12 @@ async function startServer() {
         .catch(e => console.log('Initial background sync info:', e?.message || e));
     }, 3500);
 
-    // Background synchronization schedule optimized for Hostinger Business Web Hosting:
-    // 1. WhatsApp Evolution API: Synchronized on-demand when users open chats, and real-time via Webhook.
+    // Background synchronization schedule:
+    // 1. WhatsApp Evolution API: Fast background poll every 4 seconds + real-time Webhook so incoming WhatsApp messages are answered immediately.
+    setInterval(() => {
+      syncEvolutionChats().catch(() => {});
+    }, 4000);
+
     // 2. Odoo Inventory: Synchronized every 30 minutes (or immediately via manual refresh in UI).
     setInterval(() => {
       syncOdooInventory().catch(() => {});
