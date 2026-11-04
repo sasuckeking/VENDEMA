@@ -103,6 +103,13 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
   customers,
   globalAiActive,
 }) => {
+  const [liveRdTime, setLiveRdTime] = useState(() => getDominicanTimeContext());
+  useEffect(() => {
+    const update = () => setLiveRdTime(getDominicanTimeContext());
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'ai_active' | 'ai_paused' | 'media'>('all');
   const [inputMessage, setInputMessage] = useState('');
@@ -790,7 +797,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-400">
+                <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
                   <span className="text-lime-400 font-medium">WhatsApp en Vivo</span>
                   <span>·</span>
                   <span className="capitalize">
@@ -799,6 +806,20 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                   <span>·</span>
                   <span className="font-mono text-[11px] text-slate-400">
                     {activeConversation.messages.length} mensajes
+                  </span>
+                  <span>·</span>
+                  <span
+                    className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-full border ${
+                      liveRdTime.isOpen
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/40'
+                        : 'bg-rose-950/80 text-rose-300 border-rose-600/40'
+                    }`}
+                    title={`Hora oficial en RD: ${liveRdTime.fullDateStr} · ${liveRdTime.time12WithSeconds}\n${liveRdTime.statusDetail}\nTodo Lapto: Lunes a Sábado de 8:30 AM a 6:00 PM`}
+                  >
+                    <span>🇩🇴 {liveRdTime.time12}</span>
+                    <span className="font-bold uppercase tracking-wider text-[9px]">
+                      ({liveRdTime.isOpen ? 'Abierto' : 'Cerrado'})
+                    </span>
                   </span>
                 </div>
               </div>

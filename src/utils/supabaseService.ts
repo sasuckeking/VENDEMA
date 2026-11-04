@@ -25,6 +25,7 @@ export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 
 export const INTERNAL_USERS_BACKUP_ID = '__sys_users_registry__';
 export const INTERNAL_HOLIDAYS_BACKUP_ID = '__sys_holidays_calendar_rd__';
+export const INTERNAL_AI_CONFIG_BACKUP_ID = '__sys_ai_provider_config__';
 
 export interface SupabaseSyncStats {
   usersSynced: number;
@@ -872,6 +873,52 @@ export async function syncHolidaysToSupabase(
   };
 }
 
+export async function loadAiConfigFromSupabase(
+  url?: string,
+  anonKey?: string
+): Promise<Partial<AppConfig['aiProvider']> | null> {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return null;
+
+  // 1. Try dedicated `public.configuracion_sistema` table first
+  try {
+    const { data, error } = await client
+      .from('configuracion_sistema')
+      .select('ai_provider')
+      .eq('config_key', 'main')
+      .maybeSingle();
+
+    if (!error && data?.ai_provider && typeof data.ai_provider === 'object') {
+      const ai = data.ai_provider as Partial<AppConfig['aiProvider']>;
+      if (ai.openaiApiKey || ai.deepseekApiKey || ai.geminiApiKey || ai.provider) {
+        return ai;
+      }
+    }
+  } catch {
+    // Table might not exist yet
+  }
+
+  // 2. Fallback: Check cloud backup in `public.cerebro_ia_aprendizajes`
+  try {
+    const { data, error } = await client
+      .from('cerebro_ia_aprendizajes')
+      .select('winning_pitch')
+      .eq('insight_id', INTERNAL_AI_CONFIG_BACKUP_ID)
+      .maybeSingle();
+
+    if (!error && data?.winning_pitch) {
+      const parsed = JSON.parse(data.winning_pitch);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore fallback error
+  }
+
+  return null;
+}
+
 export async function autoSyncConfigToSupabase(config: AppConfig): Promise<void> {
   const client = getSupabaseClient(config.supabase?.url, config.supabase?.anonKey);
   if (!client) return;
@@ -897,6 +944,31 @@ export async function autoSyncConfigToSupabase(config: AppConfig): Promise<void>
     );
   } catch {
     // Table might not exist yet
+  }
+
+  // Also save AI Provider credentials to guaranteed `cerebro_ia_aprendizajes` cloud backup
+  if (config.aiProvider) {
+    try {
+      const { systemPrompt, ...credentialsPayload } = config.aiProvider;
+      await client
+        .from('cerebro_ia_aprendizajes')
+        .upsert(
+          {
+            insight_id: INTERNAL_AI_CONFIG_BACKUP_ID,
+            categoria: '__system_internal__',
+            trigger_phrase: 'Configuración y Credenciales de Motores de IA (Gemini, OpenAI, DeepSeek)',
+            winning_pitch: JSON.stringify(credentialsPayload),
+            counter_objection: 'Respaldo en nube de API Keys y proveedor de IA activo',
+            success_rate: 100,
+            occurrences: 1,
+            tags: ['system', 'ai_provider_backup'],
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'insight_id' }
+        );
+    } catch {
+      // Ignore cloud backup error
+    }
   }
 
   if (Array.isArray(config.holidayOverrides)) {
@@ -1153,7 +1225,12 @@ export async function uploadAllToSupabase(
   // 5. Sync Cerebro IA Aprendizajes
   try {
     for (const ins of data.insights) {
-      if (ins.id === INTERNAL_USERS_BACKUP_ID || ins.id === INTERNAL_HOLIDAYS_BACKUP_ID) continue;
+      if (
+        ins.id === INTERNAL_USERS_BACKUP_ID ||
+        ins.id === INTERNAL_HOLIDAYS_BACKUP_ID ||
+        ins.id === INTERNAL_AI_CONFIG_BACKUP_ID
+      )
+        continue;
       const payload = {
         insight_id: ins.id,
         categoria: ins.category,

@@ -14,8 +14,12 @@ import {
   Briefcase,
   Headphones
 } from 'lucide-react';
+import { 
+  setGlobalHolidayOverrides, 
+  getDominicanTimeContext, 
+  type DominicanTimeContext 
+} from '../utils/businessSchedule';
 import type { AppConfig, UserAccount } from '../types';
-import { setGlobalHolidayOverrides } from '../utils/businessSchedule';
 
 interface NavbarProps {
   currentTab: string;
@@ -37,9 +41,32 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onLogout,
 }) => {
+  const [rdTime, setRdTime] = useState<DominicanTimeContext>(() =>
+    getDominicanTimeContext(new Date(), config.holidayOverrides || [])
+  );
+
   useEffect(() => {
     setGlobalHolidayOverrides(config.holidayOverrides || []);
   }, [config.holidayOverrides]);
+
+  // Live real-time Dominican Republic ticking clock (every 1 second)
+  useEffect(() => {
+    const updateClock = () => {
+      setRdTime(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
+    };
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, [config.holidayOverrides]);
+
+  // Sync client real-world time with server on mount
+  useEffect(() => {
+    fetch('/api/system/time-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientTimestamp: Date.now() }),
+    }).catch(() => {});
+  }, []);
 
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isDueno = currentUser?.role === 'dueno';
@@ -166,6 +193,34 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Zone 3: Global System Controls + User Profile */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {/* Live Dominican Republic Real-Time Clock Badge */}
+          <div
+            onClick={() => setCurrentTab('brain')}
+            title={`República Dominicana (America/Santo_Domingo UTC-4)\n${rdTime.fullDateStr} · ${rdTime.time12WithSeconds}\nEstado: ${rdTime.statusSummary}\n${rdTime.statusDetail}\nClic para abrir configuración de feriados y horarios`}
+            className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/[0.08] text-xs font-mono cursor-pointer hover:border-lime-500/40 transition-colors select-none"
+          >
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="text-sm leading-none">🇩🇴</span>
+              <span className="font-semibold text-white">
+                {rdTime.dayName.slice(0, 3)} {rdTime.day} {rdTime.monthName.slice(0, 3)}
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="tabular-nums text-lime-400 font-bold">
+                {rdTime.time12WithSeconds}
+              </span>
+            </span>
+
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ${
+                rdTime.isOpen
+                  ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-600/50'
+                  : 'bg-rose-950/90 text-rose-300 border border-rose-600/50'
+              }`}
+            >
+              {rdTime.isOpen ? 'ABIERTO' : 'CERRADO'}
+            </span>
+          </div>
+
           {/* Master Global AI Switch */}
           <button
             onClick={onToggleGlobalAi}

@@ -24,13 +24,16 @@ import {
   buildDominicanTimePromptContext,
   setGlobalHolidayOverrides,
   getHolidaysWithOverridesForYear,
-  getAvailableHolidayYears
+  getAvailableHolidayYears,
+  setGlobalTimeOffset,
+  getEffectiveCurrentDate
 } from './src/utils/businessSchedule.ts';
 import { 
   DEFAULT_SUPABASE_URL,
   DEFAULT_SUPABASE_ANON_KEY,
   INTERNAL_USERS_BACKUP_ID,
   INTERNAL_HOLIDAYS_BACKUP_ID,
+  INTERNAL_AI_CONFIG_BACKUP_ID,
   getSupabaseClient, 
   testSupabaseConnection, 
   getSupabaseSchemaSql, 
@@ -42,6 +45,7 @@ import {
   deleteUserFromSupabase,
   loadHolidaysFromSupabase,
   syncHolidaysToSupabase,
+  loadAiConfigFromSupabase,
   autoSyncConfigToSupabase,
   autoSyncOrderToSupabase,
   autoSyncMessageToSupabase,
@@ -155,6 +159,7 @@ app.get('/api/events', (req, res) => {
 // Global State & Preconfigured Credentials from n8n Workflow
 // ---------------------------------------------------------
 const CONFIG_FILE_PATH = path.join(__dirname, '.vendema-config.json');
+const CONFIG_FALLBACK_PATH = path.join(process.cwd(), '.vendema-config.json');
 const ENV_FILE_PATH = path.join(__dirname, '.env');
 
 function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
@@ -281,9 +286,14 @@ let appConfig: AppConfig = {
 
 function loadPersistedConfig() {
   try {
+    const targetConfigPath = fs.existsSync(CONFIG_FILE_PATH)
+      ? CONFIG_FILE_PATH
+      : fs.existsSync(CONFIG_FALLBACK_PATH)
+      ? CONFIG_FALLBACK_PATH
+      : null;
 
-    if (fs.existsSync(CONFIG_FILE_PATH)) {
-      const raw = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
+    if (targetConfigPath) {
+      const raw = fs.readFileSync(targetConfigPath, 'utf-8');
       const saved = JSON.parse(raw);
       if (saved.globalAiActive !== undefined) appConfig.globalAiActive = Boolean(saved.globalAiActive);
       if (saved.aiProvider) {
@@ -297,9 +307,9 @@ function loadPersistedConfig() {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
-          openaiApiKey: saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : ''),
-          deepseekApiKey: saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : ''),
-          geminiApiKey: saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY' ? process.env.GEMINI_API_KEY : ''),
+          openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : '')).trim(),
+          deepseekApiKey: (saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : '')).trim(),
+          geminiApiKey: (saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY' ? process.env.GEMINI_API_KEY : '')).trim(),
         };
       }
       if (saved.odoo) {
@@ -354,6 +364,9 @@ function savePersistedConfig(persistToEnv = false) {
     }
     if (content !== existing) {
       fs.writeFileSync(CONFIG_FILE_PATH, content, 'utf-8');
+      if (CONFIG_FALLBACK_PATH !== CONFIG_FILE_PATH) {
+        fs.writeFileSync(CONFIG_FALLBACK_PATH, content, 'utf-8');
+      }
     }
     syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err: any) {
@@ -533,6 +546,32 @@ async function hydrateAndSyncHolidaysWithSupabase(): Promise<void> {
   }
 }
 
+async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
+  try {
+    const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    if (remoteAi && typeof remoteAi === 'object') {
+      let updated = false;
+      if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
+        appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
+        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
+        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
+        updated = true;
+      }
+      if (updated) {
+        savePersistedConfig();
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Supabase AI Config Sync Info]:', err.message);
+  }
+}
+
 function sanitizeUser(u: UserAccount): Omit<UserAccount, 'password'> {
   const { password, ...rest } = u;
   return rest;
@@ -661,17 +700,33 @@ async function generateTextWithConfiguredAI(options: {
           });
 
           if (!res.ok) {
+            let errorDetail = '';
+            let errorCode = '';
+            try {
+              const errBody = await res.json();
+              errorDetail = errBody?.error?.message || '';
+              errorCode = errBody?.error?.code || '';
+            } catch {}
+
             if (res.status === 401 || res.status === 403) {
               rejectedOpenAiKeys.add(openaiKey);
-              const prefixHint = !openaiKey.startsWith('sk-')
-                ? ' (la clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI)'
-                : ' (verifica que la clave esté activa en platform.openai.com)';
-              lastOpenAiErr = new Error(
-                `La API Key de OpenAI fue rechazada por autorización (HTTP ${res.status})${prefixHint}`
-              );
+              let reasonMessage = `OpenAI rechazó la autorización (HTTP ${res.status})`;
+              if (errorDetail) {
+                reasonMessage += `: "${errorDetail}"`;
+              }
+              if (errorDetail.toLowerCase().includes('invalidated') || errorCode === 'token_invalidated') {
+                reasonMessage += '. La clave API guardada en Vendemá fue invalidada o revocada en platform.openai.com. Por favor genera una nueva API Key en https://platform.openai.com/api-keys y pégala aquí.';
+              } else if (errorDetail.toLowerCase().includes('quota') || errorCode === 'insufficient_quota') {
+                reasonMessage += '. Tu cuenta de OpenAI no tiene saldo o cuota disponible. Por favor recarga saldo en https://platform.openai.com/billing.';
+              } else if (!openaiKey.startsWith('sk-')) {
+                reasonMessage += '. La clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI.';
+              } else {
+                reasonMessage += '. Verifica que la clave esté activa en platform.openai.com.';
+              }
+              lastOpenAiErr = new Error(reasonMessage);
               break;
             }
-            throw new Error(`OpenAI devolvió estado HTTP ${res.status} en el modelo ${model}`);
+            throw new Error(`OpenAI devolvió estado HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ` en el modelo ${model}`}`);
           }
 
           rejectedOpenAiKeys.delete(openaiKey);
@@ -4162,11 +4217,27 @@ app.post('/api/holidays/overrides', async (req, res) => {
   });
 });
 
-app.post('/api/config', (req, res) => {
+app.post('/api/config', async (req, res) => {
   const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== undefined) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
-    appConfig.aiProvider = { ...appConfig.aiProvider, ...aiProvider };
+    const nextAi = { ...appConfig.aiProvider, ...aiProvider };
+    if (typeof aiProvider.openaiApiKey === 'string') {
+      nextAi.openaiApiKey = aiProvider.openaiApiKey.trim();
+    }
+    if (typeof aiProvider.deepseekApiKey === 'string') {
+      nextAi.deepseekApiKey = aiProvider.deepseekApiKey.trim();
+    }
+    if (typeof aiProvider.geminiApiKey === 'string') {
+      nextAi.geminiApiKey = aiProvider.geminiApiKey.trim();
+    }
+    if (typeof aiProvider.openaiBaseUrl === 'string' && aiProvider.openaiBaseUrl.trim()) {
+      nextAi.openaiBaseUrl = aiProvider.openaiBaseUrl.trim();
+    }
+    if (typeof aiProvider.deepseekBaseUrl === 'string' && aiProvider.deepseekBaseUrl.trim()) {
+      nextAi.deepseekBaseUrl = aiProvider.deepseekBaseUrl.trim();
+    }
+    appConfig.aiProvider = nextAi;
     rejectedOpenAiKeys.clear();
     rejectedDeepseekKeys.clear();
   }
@@ -4189,6 +4260,49 @@ app.post('/api/config', (req, res) => {
   }
   broadcastEvent('config_updated', appConfig);
   res.json({ success: true, config: appConfig });
+});
+
+// Dedicated endpoint to save AI Provider & API Keys with guaranteed persistence
+app.post('/api/ai/save-credentials', async (req, res) => {
+  const {
+    provider,
+    model,
+    temperature,
+    customInstructions,
+    openaiApiKey,
+    openaiBaseUrl,
+    deepseekApiKey,
+    deepseekBaseUrl,
+    geminiApiKey,
+  } = req.body;
+
+  appConfig.aiProvider = {
+    ...appConfig.aiProvider,
+    provider: provider || appConfig.aiProvider?.provider || 'gemini',
+    model: model || appConfig.aiProvider?.model || 'gemini-3.8-flash',
+    temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
+    customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? '',
+    ...(openaiApiKey !== undefined ? { openaiApiKey: String(openaiApiKey).trim() } : {}),
+    ...(openaiBaseUrl !== undefined && String(openaiBaseUrl).trim() ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {}),
+    ...(deepseekApiKey !== undefined ? { deepseekApiKey: String(deepseekApiKey).trim() } : {}),
+    ...(deepseekBaseUrl !== undefined && String(deepseekBaseUrl).trim() ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}),
+    ...(geminiApiKey !== undefined ? { geminiApiKey: String(geminiApiKey).trim() } : {}),
+  };
+
+  rejectedOpenAiKeys.clear();
+  rejectedDeepseekKeys.clear();
+  savePersistedConfig();
+
+  try {
+    await autoSyncConfigToSupabase(appConfig);
+  } catch {}
+
+  broadcastEvent('config_updated', appConfig);
+  res.json({
+    success: true,
+    config: appConfig,
+    message: 'Credenciales de IA guardadas permanentemente en el servidor y respaldadas en Supabase.',
+  });
 });
 
 // Supabase: Test Connection & Probe Tables
@@ -4553,17 +4667,51 @@ app.post('/api/ai/test-provider', async (req, res) => {
       });
       res.json({
         success: false,
+        requestedProvider: requested,
         providerUsed: fallbackResult.providerUsed,
         modelUsed: fallbackResult.modelUsed,
-        message: `${err.message}. Mientras actualizas la clave, el Bot de Ventas está respondiendo tus chats de WhatsApp automáticamente con el motor integrado (${fallbackResult.providerUsed.toUpperCase()} ${fallbackResult.modelUsed}).`,
+        isFallbackActive: true,
+        message: `${err.message} ⚠️ Mientras actualizas la clave, el Bot de Ventas está respondiendo tus chats de WhatsApp automáticamente con el motor integrado de respaldo (${fallbackResult.providerUsed.toUpperCase()} ${fallbackResult.modelUsed}) para que ningún cliente quede desatendido.`,
       });
     } catch {
       res.json({
         success: false,
+        requestedProvider: requested,
         message: `No se pudo conectar con ${requested.toUpperCase()}: ${err.message}`,
       });
     }
   }
+});
+
+// System Real-Time Time Synchronization & Status (America/Santo_Domingo UTC-4)
+app.post('/api/system/time-sync', (req, res) => {
+  const { clientTimestamp } = req.body;
+  if (typeof clientTimestamp === 'number' && clientTimestamp > 0) {
+    const serverNow = Date.now();
+    const driftMs = clientTimestamp - serverNow;
+    // Only adjust if drift is more than 3 seconds
+    if (Math.abs(driftMs) > 3000) {
+      setGlobalTimeOffset(driftMs);
+      console.log(`[Time Sync]: Servidor sincronizado con hora real del cliente. Drift corregido: ${driftMs}ms`);
+    }
+  }
+  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: Date.now(),
+    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    dominicanTime: rd,
+  });
+});
+
+app.get('/api/system/time-status', (req, res) => {
+  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: Date.now(),
+    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    dominicanTime: rd,
+  });
 });
 
 // 2. Odoo Inventory API (Always ensures live Odoo data is loaded)
@@ -5632,8 +5780,8 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
   }${orderPhoneValidationDirective}`;
 
   // Real-time Dominican Republic date, time, business hours & holiday context
-  const rdTimeContext = getDominicanTimeContext(new Date(), appConfig.holidayOverrides || []);
-  const rdTimePromptBlock = buildDominicanTimePromptContext(new Date(), appConfig.holidayOverrides || []);
+  const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
 
   const filledInstruction =
     rdTimePromptBlock +
@@ -5997,8 +6145,20 @@ Mensaje actual del cliente sobre esta cita anterior:
       `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`
     );
 
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const liveTimePromptNotice = `[🕒 ESTADO Y HORA EN VIVO EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha oficial actual en RD: ${rdNow.fullDateStr}
+- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+- Próxima apertura comercial: ${rdNow.nextOpeningStr}
+${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}\n` : ''}${
+  rdNow.isOpen
+    ? '👉 INSTRUCCIÓN DE HORARIO: La tienda física (Av. Charles de Gaulle #133) y el servicio de entregas están ABIERTOS ahora mismo. Puedes confirmar despachos para hoy mismo.'
+    : `👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están CERRADOS en este momento (${rdNow.statusDetail}). Sí debes tomar el pedido y apartar el equipo con total normalidad, asegurándole al cliente que su producto queda apartado y que será coordinado y despachado: ${rdNow.nextOpeningStr}.`
+}`;
+
     const aiResult = await generateTextWithConfiguredAI({
-      prompt: `Mensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto siguiendo las 36 reglas y el estado de horario/apertura en RD, usando únicamente productos y precios reales del catálogo y guiando activamente al cliente hacia la compra:`,
+      prompt: `${liveTimePromptNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto siguiendo las 36 reglas y el estado de horario/apertura en RD indicado arriba en tiempo real, usando únicamente productos y precios reales del catálogo y guiando activamente al cliente hacia la compra:`,
       systemInstruction,
       chatMessages: historyTurns,
       allowFallback: true,
@@ -6089,8 +6249,20 @@ Mensaje actual del cliente sobre la cita: "${baseText}"
   }
 
   try {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const liveTimePromptNotice = `[🕒 ESTADO Y HORA EN VIVO EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha oficial actual en RD: ${rdNow.fullDateStr}
+- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+- Próxima apertura comercial: ${rdNow.nextOpeningStr}
+${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}\n` : ''}${
+  rdNow.isOpen
+    ? '👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están ABIERTOS ahora mismo.'
+    : `👉 INSTRUCCIÓN DE HORARIO: La tienda física y el servicio de entregas están CERRADOS en este momento (${rdNow.statusDetail}). Sí debes tomar el pedido y apartar el producto, informando que será despachado: ${rdNow.nextOpeningStr}.`
+}`;
+
     const result = await generateTextWithConfiguredAI({
-      prompt: `Mensaje actual del cliente:\n${queryText}\n\nResponde siguiendo estrictamente las 36 reglas del Agente Oficial de Ventas de Todo Lapto:`,
+      prompt: `${liveTimePromptNotice}\n\nMensaje actual del cliente:\n${queryText}\n\nResponde siguiendo estrictamente las 36 reglas del Agente Oficial de Ventas de Todo Lapto y el estado de horario/apertura en RD indicado arriba en tiempo real:`,
       systemInstruction,
       chatMessages: historyTurns,
       allowFallback: true,
@@ -6470,6 +6642,7 @@ async function startServer() {
     // Defer heavy network syncs by 3.5 seconds to let Hostinger healthchecks and initial page requests succeed instantly
     setTimeout(() => {
       hydrateAndSyncUsersWithSupabase()
+        .then(() => hydrateAndSyncAiConfigWithSupabase())
         .then(() => hydrateAndSyncHolidaysWithSupabase())
         .then(() => autoSyncConfigToSupabase(appConfig))
         .then(() => syncOdooInventory())

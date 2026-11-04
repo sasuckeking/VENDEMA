@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   ArrowRight,
@@ -43,10 +43,18 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
   onUpdateConfig,
   compact = false,
 }) => {
-  const currentRd = useMemo(
-    () => getDominicanTimeContext(new Date(), config.holidayOverrides || []),
-    [config.holidayOverrides]
+  const [currentRd, setCurrentRd] = useState(() =>
+    getDominicanTimeContext(new Date(), config.holidayOverrides || [])
   );
+
+  useEffect(() => {
+    const update = () => {
+      setCurrentRd(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [config.holidayOverrides]);
 
   const [selectedYear, setSelectedYear] = useState<number>(currentRd.year);
   const [customMaxYear, setCustomMaxYear] = useState<number>(0);
@@ -312,8 +320,9 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
           <div className="p-3.5 rounded-xl bg-[#121822] border border-white/[0.07] shrink-0 min-w-[260px]">
             <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400 mb-1">
               <span className="flex items-center gap-1.5 font-mono">
-                <Clock className="w-3.5 h-3.5 text-lime-400" />
-                {currentRd.fullDateStr} · {currentRd.time12}
+                <Clock className="w-3.5 h-3.5 text-lime-400 animate-pulse" />
+                <span>{currentRd.fullDateStr} · </span>
+                <span className="text-lime-300 font-bold tabular-nums">{currentRd.time12WithSeconds}</span>
               </span>
             </div>
             <div className="text-xs font-bold text-white">{currentRd.statusSummary}</div>

@@ -73,25 +73,38 @@ export default function App() {
     } catch {}
   };
 
-  // App Configuration
-  const [config, setConfig] = useState<AppConfig>({
-    globalAiActive: true,
-    odoo: {
-      url: 'https://todolapto.com.do/jsonrpc',
-      db: 'odoo',
-      uid: 22,
-      apiKey: '1dffd1433a7f49b6ec715fddf766c67f08f57c41',
-      connected: true,
-    },
-    evolution: {
-      serverUrl: 'https://evolution-evolution-api.blrfh6.easypanel.host',
-      instance: 'todolapto',
-      apiKey: '52700613C062-421C-B800-FBC560B54BB4',
-      teamPhone: '18492588738',
-      adminPhone: '18496260800',
-      connected: true,
-    },
-    holidayOverrides: [],
+  const lastConfigSaveRef = useRef<number>(0);
+  const hasHydratedLocalConfigRef = useRef<boolean>(false);
+
+  // App Configuration (initialized with localStorage AI credentials if available)
+  const [config, setConfig] = useState<AppConfig>(() => {
+    let savedAi: AppConfig['aiProvider'] | undefined = undefined;
+    try {
+      const raw = localStorage.getItem('vendema_ai_provider_config');
+      if (raw) {
+        savedAi = JSON.parse(raw);
+      }
+    } catch {}
+    return {
+      globalAiActive: true,
+      ...(savedAi ? { aiProvider: savedAi } : {}),
+      odoo: {
+        url: 'https://todolapto.com.do/jsonrpc',
+        db: 'odoo',
+        uid: 22,
+        apiKey: '1dffd1433a7f49b6ec715fddf766c67f08f57c41',
+        connected: true,
+      },
+      evolution: {
+        serverUrl: 'https://evolution-evolution-api.blrfh6.easypanel.host',
+        instance: 'todolapto',
+        apiKey: '52700613C062-421C-B800-FBC560B54BB4',
+        teamPhone: '18492588738',
+        adminPhone: '18496260800',
+        connected: true,
+      },
+      holidayOverrides: [],
+    };
   });
 
   useEffect(() => {
@@ -406,7 +419,8 @@ export default function App() {
   };
 
   // Load initial data from server
-  const loadData = async () => {
+  const loadData = async (isPoll = false) => {
+    const fetchStartedAt = Date.now();
     try {
       const [configData, productsData, convData, custData, ordersData, insightsData] =
         await Promise.all([
@@ -418,52 +432,79 @@ export default function App() {
           safeFetch('/api/ai/insights'),
         ]);
 
-      if (configData && configData.success && configData.config) {
-        let loadedConfig = configData.config;
-        try {
-          const savedAiRaw = localStorage.getItem('vendema_ai_provider_config');
-          if (savedAiRaw) {
-            const savedAi = JSON.parse(savedAiRaw);
-            const mergedAi = {
-              ...loadedConfig.aiProvider,
-              ...savedAi,
-              openaiApiKey: savedAi.openaiApiKey || loadedConfig.aiProvider?.openaiApiKey || '',
-              deepseekApiKey: savedAi.deepseekApiKey || loadedConfig.aiProvider?.deepseekApiKey || '',
-              geminiApiKey: savedAi.geminiApiKey || loadedConfig.aiProvider?.geminiApiKey || '',
-            };
-            loadedConfig = { ...loadedConfig, aiProvider: mergedAi };
-            fetch('/api/config', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ aiProvider: mergedAi }),
-            }).catch(() => {});
-          }
-        } catch {}
+      // Do not let an in-flight background poll overwrite a config save that occurred after or within 10s of this poll
+      const configRecentlySaved = Date.now() - lastConfigSaveRef.current < 10000 || fetchStartedAt < lastConfigSaveRef.current;
 
-        try {
-          const savedSupabaseRaw = localStorage.getItem('vendema_supabase_config');
-          if (savedSupabaseRaw) {
-            const savedSupabase = JSON.parse(savedSupabaseRaw);
-            const currentSupabase = loadedConfig.supabase || { url: '', anonKey: '', connected: false, autoSync: true };
-            const mergedSupabase = {
-              ...currentSupabase,
-              url: savedSupabase.url || currentSupabase.url || '',
-              anonKey: savedSupabase.anonKey || currentSupabase.anonKey || '',
-              autoSync: savedSupabase.autoSync !== undefined ? savedSupabase.autoSync : (currentSupabase.autoSync ?? true),
-            };
-            if (mergedSupabase.url && (!currentSupabase.url || currentSupabase.url === '')) {
-              loadedConfig = { ...loadedConfig, supabase: mergedSupabase };
-              fetch('/api/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ supabase: mergedSupabase }),
-              }).catch(() => {});
+      if (configData && configData.success && configData.config && (!isPoll || !configRecentlySaved)) {
+        let loadedConfig = configData.config;
+
+        // Hydrate localStorage AI credentials only once on initial mount if server is missing keys that browser has
+        if (!hasHydratedLocalConfigRef.current) {
+          hasHydratedLocalConfigRef.current = true;
+          try {
+            const savedAiRaw = localStorage.getItem('vendema_ai_provider_config');
+            if (savedAiRaw) {
+              const savedAi = JSON.parse(savedAiRaw);
+              const serverAi = loadedConfig.aiProvider || {};
+              const needsPushToServer =
+                (savedAi.openaiApiKey && !serverAi.openaiApiKey) ||
+                (savedAi.deepseekApiKey && !serverAi.deepseekApiKey) ||
+                (savedAi.geminiApiKey && !serverAi.geminiApiKey);
+
+              const mergedAi = {
+                ...savedAi,
+                ...serverAi,
+                provider: savedAi.provider || serverAi.provider || 'gemini',
+                model: savedAi.model || serverAi.model || 'gemini-3.8-flash',
+                openaiApiKey: (savedAi.openaiApiKey || serverAi.openaiApiKey || '').trim(),
+                deepseekApiKey: (savedAi.deepseekApiKey || serverAi.deepseekApiKey || '').trim(),
+                geminiApiKey: (savedAi.geminiApiKey || serverAi.geminiApiKey || '').trim(),
+              };
+              loadedConfig = { ...loadedConfig, aiProvider: mergedAi };
+              localStorage.setItem('vendema_ai_provider_config', JSON.stringify(mergedAi));
+
+              if (needsPushToServer) {
+                fetch('/api/ai/save-credentials', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(mergedAi),
+                }).catch(() => {});
+              }
+            } else if (loadedConfig.aiProvider) {
+              localStorage.setItem('vendema_ai_provider_config', JSON.stringify(loadedConfig.aiProvider));
             }
-          }
-        } catch {}
+          } catch {}
+
+          try {
+            const savedSupabaseRaw = localStorage.getItem('vendema_supabase_config');
+            if (savedSupabaseRaw) {
+              const savedSupabase = JSON.parse(savedSupabaseRaw);
+              const currentSupabase = loadedConfig.supabase || { url: '', anonKey: '', connected: false, autoSync: true };
+              const mergedSupabase = {
+                ...currentSupabase,
+                url: savedSupabase.url || currentSupabase.url || '',
+                anonKey: savedSupabase.anonKey || currentSupabase.anonKey || '',
+                autoSync: savedSupabase.autoSync !== undefined ? savedSupabase.autoSync : (currentSupabase.autoSync ?? true),
+              };
+              if (mergedSupabase.url && (!currentSupabase.url || currentSupabase.url === '')) {
+                loadedConfig = { ...loadedConfig, supabase: mergedSupabase };
+                fetch('/api/config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ supabase: mergedSupabase }),
+                }).catch(() => {});
+              }
+            }
+          } catch {}
+        }
 
         setGlobalHolidayOverrides(loadedConfig.holidayOverrides || []);
-        setConfig(loadedConfig);
+        setConfig(prev => {
+          if (JSON.stringify(prev) === JSON.stringify(loadedConfig)) {
+            return prev;
+          }
+          return loadedConfig;
+        });
       }
       if (productsData?.success && productsData.products) {
         setProducts(productsData.products);
@@ -544,7 +585,7 @@ export default function App() {
     };
 
     const interval = setInterval(() => {
-      loadData();
+      loadData(true);
       if (selectedSessionRef.current) {
         handleRefreshMessages(selectedSessionRef.current, true);
       }
@@ -824,6 +865,33 @@ export default function App() {
   };
 
   const handleUpdateConfig = async (newConfig: Partial<AppConfig>) => {
+    lastConfigSaveRef.current = Date.now();
+
+    // Immediately update local state & localStorage so UI and refreshes never lose the saved API keys
+    setConfig(prev => {
+      const merged: AppConfig = {
+        ...prev,
+        ...newConfig,
+        aiProvider: newConfig.aiProvider
+          ? { ...prev.aiProvider, ...newConfig.aiProvider }
+          : prev.aiProvider,
+        odoo: newConfig.odoo ? { ...prev.odoo, ...newConfig.odoo } : prev.odoo,
+        evolution: newConfig.evolution ? { ...prev.evolution, ...newConfig.evolution } : prev.evolution,
+        supabase: newConfig.supabase ? { ...(prev.supabase || { url: '', anonKey: '' }), ...newConfig.supabase } : prev.supabase,
+      };
+      if (merged.aiProvider) {
+        try {
+          localStorage.setItem('vendema_ai_provider_config', JSON.stringify(merged.aiProvider));
+        } catch {}
+      }
+      if (merged.supabase) {
+        try {
+          localStorage.setItem('vendema_supabase_config', JSON.stringify(merged.supabase));
+        } catch {}
+      }
+      return merged;
+    });
+
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
@@ -832,6 +900,12 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success && data.config) {
+        lastConfigSaveRef.current = Date.now();
+        if (data.config.aiProvider) {
+          try {
+            localStorage.setItem('vendema_ai_provider_config', JSON.stringify(data.config.aiProvider));
+          } catch {}
+        }
         setConfig(data.config);
       }
     } catch (err) {

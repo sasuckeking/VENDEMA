@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Settings, 
   Server, 
@@ -54,55 +54,72 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isReadOnly = !isSuperAdmin;
 
-  // AI Provider state
+  // Helper to read persisted AI config from localStorage as fallback
+  const getSavedLocalAi = (): Partial<NonNullable<AppConfig['aiProvider']>> => {
+    try {
+      const raw = localStorage.getItem('vendema_ai_provider_config');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  };
+
+  const initialLocalAi = getSavedLocalAi();
+
+  // AI Provider state (initialized from config + localStorage fallback so keys are never lost)
   const [aiProvider, setAiProvider] = useState<AIProviderType>(
-    config.aiProvider?.provider || 'gemini'
+    config.aiProvider?.provider || initialLocalAi.provider || 'gemini'
   );
   const [aiModel, setAiModel] = useState<string>(
-    config.aiProvider?.model || 'gemini-3.8-flash'
+    config.aiProvider?.model || initialLocalAi.model || 'gemini-3.8-flash'
   );
   const [aiTemperature, setAiTemperature] = useState<number>(
-    config.aiProvider?.temperature ?? 0.35
+    config.aiProvider?.temperature ?? initialLocalAi.temperature ?? 0.35
   );
   const [customInstructions, setCustomInstructions] = useState<string>(
-    config.aiProvider?.customInstructions || ''
+    config.aiProvider?.customInstructions || initialLocalAi.customInstructions || ''
   );
   const [openaiApiKey, setOpenaiApiKey] = useState<string>(
-    config.aiProvider?.openaiApiKey || ''
+    config.aiProvider?.openaiApiKey || initialLocalAi.openaiApiKey || ''
   );
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>(
-    config.aiProvider?.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions'
+    config.aiProvider?.openaiBaseUrl || initialLocalAi.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions'
   );
   const [deepseekApiKey, setDeepseekApiKey] = useState<string>(
-    config.aiProvider?.deepseekApiKey || ''
+    config.aiProvider?.deepseekApiKey || initialLocalAi.deepseekApiKey || ''
   );
   const [deepseekBaseUrl, setDeepseekBaseUrl] = useState<string>(
-    config.aiProvider?.deepseekBaseUrl || 'https://api.deepseek.com/chat/completions'
+    config.aiProvider?.deepseekBaseUrl || initialLocalAi.deepseekBaseUrl || 'https://api.deepseek.com/chat/completions'
   );
   const [geminiApiKey, setGeminiApiKey] = useState<string>(
-    config.aiProvider?.geminiApiKey || ''
+    config.aiProvider?.geminiApiKey || initialLocalAi.geminiApiKey || ''
   );
   const [isTestingAi, setIsTestingAi] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [aiKeySavedBanner, setAiKeySavedBanner] = useState<string | null>(null);
+
+  const isEditingAiInputRef = useRef<boolean>(false);
+  const autoSaveTimerRef = useRef< ReturnType<typeof setTimeout> | null>(null);
 
   const [credentialsTab, setCredentialsTab] = useState<AIProviderType>(
-    config.aiProvider?.provider || 'openai'
+    config.aiProvider?.provider || initialLocalAi.provider || 'openai'
   );
 
   useEffect(() => {
+    // Never overwrite inputs while the user is actively typing/pasting in the credential fields
+    if (isEditingAiInputRef.current) return;
+
     if (config.aiProvider) {
       if (config.aiProvider.provider) {
         setAiProvider(config.aiProvider.provider);
-        setCredentialsTab(config.aiProvider.provider);
       }
       if (config.aiProvider.model) setAiModel(config.aiProvider.model);
       if (config.aiProvider.temperature !== undefined) setAiTemperature(config.aiProvider.temperature);
       if (config.aiProvider.customInstructions !== undefined) setCustomInstructions(config.aiProvider.customInstructions);
-      if (config.aiProvider.openaiApiKey !== undefined) setOpenaiApiKey(config.aiProvider.openaiApiKey);
-      if (config.aiProvider.openaiBaseUrl !== undefined) setOpenaiBaseUrl(config.aiProvider.openaiBaseUrl);
-      if (config.aiProvider.deepseekApiKey !== undefined) setDeepseekApiKey(config.aiProvider.deepseekApiKey);
-      if (config.aiProvider.deepseekBaseUrl !== undefined) setDeepseekBaseUrl(config.aiProvider.deepseekBaseUrl);
-      if (config.aiProvider.geminiApiKey !== undefined) setGeminiApiKey(config.aiProvider.geminiApiKey);
+      if (config.aiProvider.openaiApiKey) setOpenaiApiKey(config.aiProvider.openaiApiKey);
+      if (config.aiProvider.openaiBaseUrl) setOpenaiBaseUrl(config.aiProvider.openaiBaseUrl);
+      if (config.aiProvider.deepseekApiKey) setDeepseekApiKey(config.aiProvider.deepseekApiKey);
+      if (config.aiProvider.deepseekBaseUrl) setDeepseekBaseUrl(config.aiProvider.deepseekBaseUrl);
+      if (config.aiProvider.geminiApiKey) setGeminiApiKey(config.aiProvider.geminiApiKey);
     }
   }, [config.aiProvider]);
 
@@ -274,6 +291,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       model: aiModel,
       temperature: aiTemperature,
       customInstructions,
+      openaiApiKey: (overrides?.openaiApiKey !== undefined ? overrides.openaiApiKey : openaiApiKey).trim(),
+      openaiBaseUrl: (overrides?.openaiBaseUrl !== undefined ? overrides.openaiBaseUrl : openaiBaseUrl).trim(),
+      deepseekApiKey: (overrides?.deepseekApiKey !== undefined ? overrides.deepseekApiKey : deepseekApiKey).trim(),
+      deepseekBaseUrl: (overrides?.deepseekBaseUrl !== undefined ? overrides.deepseekBaseUrl : deepseekBaseUrl).trim(),
+      geminiApiKey: (overrides?.geminiApiKey !== undefined ? overrides.geminiApiKey : geminiApiKey).trim(),
+      ...overrides,
+    };
+    if (nextAiProvider.openaiApiKey) nextAiProvider.openaiApiKey = nextAiProvider.openaiApiKey.trim();
+    if (nextAiProvider.deepseekApiKey) nextAiProvider.deepseekApiKey = nextAiProvider.deepseekApiKey.trim();
+    if (nextAiProvider.geminiApiKey) nextAiProvider.geminiApiKey = nextAiProvider.geminiApiKey.trim();
+
+    try {
+      localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextAiProvider));
+    } catch {}
+
+    try {
+      await fetch('/api/ai/save-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextAiProvider),
+      });
+    } catch {}
+
+    await onUpdateConfig({ aiProvider: nextAiProvider });
+  };
+
+  // Immediately persist to localStorage on every keystroke/paste and debounce-sync to server + Supabase
+  const handleAiFieldChange = (overrides: Partial<AppConfig['aiProvider']>) => {
+    isEditingAiInputRef.current = true;
+    const nextSnapshot = {
+      ...config.aiProvider,
+      provider: aiProvider,
+      model: aiModel,
+      temperature: aiTemperature,
+      customInstructions,
       openaiApiKey,
       openaiBaseUrl,
       deepseekApiKey,
@@ -282,13 +334,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       ...overrides,
     };
     try {
-      localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextAiProvider));
+      localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextSnapshot));
     } catch {}
-    await onUpdateConfig({ aiProvider: nextAiProvider });
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      syncAiConfigImmediately(overrides).then(() => {
+        setAiKeySavedBanner('✓ API Key guardada automáticamente en Servidor y Supabase');
+        setTimeout(() => setAiKeySavedBanner(null), 4000);
+      });
+    }, 450);
   };
 
   const handleSelectProvider = async (provider: AIProviderType) => {
     setAiProvider(provider);
+    setCredentialsTab(provider);
     const defaultModel = AI_MODELS_BY_PROVIDER[provider][0].id;
     setAiModel(defaultModel);
     setAiTestResult(null);
@@ -462,16 +524,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
 
   const handleSaveAiCredentials = async () => {
     setIsSaving(true);
+    isEditingAiInputRef.current = false;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
     await syncAiConfigImmediately({
-      openaiApiKey,
-      openaiBaseUrl,
-      deepseekApiKey,
-      deepseekBaseUrl,
-      geminiApiKey,
+      openaiApiKey: openaiApiKey.trim(),
+      openaiBaseUrl: openaiBaseUrl.trim(),
+      deepseekApiKey: deepseekApiKey.trim(),
+      deepseekBaseUrl: deepseekBaseUrl.trim(),
+      geminiApiKey: geminiApiKey.trim(),
     });
     setIsSaving(false);
+    setAiKeySavedBanner('✓ API Key guardada permanentemente en Servidor, Navegador y Supabase');
     setSaveToast('Credenciales de IA (Gemini, OpenAI, DeepSeek) guardadas y activadas con éxito.');
-    setTimeout(() => setSaveToast(null), 3500);
+    setTimeout(() => {
+      setSaveToast(null);
+      setAiKeySavedBanner(null);
+    }, 4500);
   };
 
   const handleSaveOdoo = async () => {
@@ -532,19 +602,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+    isEditingAiInputRef.current = false;
+    const nextAi = {
+      ...config.aiProvider,
+      provider: aiProvider,
+      model: aiModel,
+      temperature: aiTemperature,
+      customInstructions,
+      openaiApiKey: openaiApiKey.trim(),
+      openaiBaseUrl: openaiBaseUrl.trim(),
+      deepseekApiKey: deepseekApiKey.trim(),
+      deepseekBaseUrl: deepseekBaseUrl.trim(),
+      geminiApiKey: geminiApiKey.trim(),
+    };
+    try {
+      localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextAi));
+    } catch {}
+    try {
+      await fetch('/api/ai/save-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextAi),
+      });
+    } catch {}
     await onUpdateConfig({
-      aiProvider: {
-        ...config.aiProvider,
-        provider: aiProvider,
-        model: aiModel,
-        temperature: aiTemperature,
-        customInstructions,
-        openaiApiKey,
-        openaiBaseUrl,
-        deepseekApiKey,
-        deepseekBaseUrl,
-        geminiApiKey,
-      },
+      aiProvider: nextAi,
       odoo: {
         ...config.odoo,
         url: odooUrl,
@@ -567,8 +649,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       },
     });
     setIsSaving(false);
+    setAiKeySavedBanner('✓ API Key guardada permanentemente en Servidor, Navegador y Supabase');
     setSaveToast('Configuración de IA, Supabase, Servidor Central y WhatsApp guardada con éxito.');
-    setTimeout(() => setSaveToast(null), 3500);
+    setTimeout(() => {
+      setSaveToast(null);
+      setAiKeySavedBanner(null);
+    }, 4500);
   };
 
   const copyWebhook = () => {
@@ -785,8 +871,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                       type="text"
                       placeholder="sk-proj-..."
                       value={openaiApiKey}
-                      onChange={e => setOpenaiApiKey(e.target.value)}
-                      onBlur={e => syncAiConfigImmediately({ openaiApiKey: e.target.value })}
+                      onFocus={() => {
+                        isEditingAiInputRef.current = true;
+                      }}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setOpenaiApiKey(val);
+                        handleAiFieldChange({ openaiApiKey: val });
+                      }}
+                      onBlur={e => {
+                        isEditingAiInputRef.current = false;
+                        syncAiConfigImmediately({ openaiApiKey: e.target.value.trim() });
+                      }}
                       className={`w-full bg-[#090D12] border rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none ${
                         openaiApiKey && !openaiApiKey.trim().startsWith('sk-')
                           ? 'border-amber-500/60 focus:border-amber-400'
@@ -801,8 +897,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                     <input
                       type="text"
                       value={openaiBaseUrl}
-                      onChange={e => setOpenaiBaseUrl(e.target.value)}
-                      onBlur={e => syncAiConfigImmediately({ openaiBaseUrl: e.target.value })}
+                      onFocus={() => {
+                        isEditingAiInputRef.current = true;
+                      }}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setOpenaiBaseUrl(val);
+                        handleAiFieldChange({ openaiBaseUrl: val });
+                      }}
+                      onBlur={e => {
+                        isEditingAiInputRef.current = false;
+                        syncAiConfigImmediately({ openaiBaseUrl: e.target.value.trim() });
+                      }}
                       className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
                     />
                   </div>
@@ -822,11 +928,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                     DeepSeek API Key / Token de Conexión
                   </label>
                   <input
-                    type="password"
+                    type="text"
                     placeholder="sk-..."
                     value={deepseekApiKey}
-                    onChange={e => setDeepseekApiKey(e.target.value)}
-                    onBlur={e => syncAiConfigImmediately({ deepseekApiKey: e.target.value })}
+                    onFocus={() => {
+                      isEditingAiInputRef.current = true;
+                    }}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setDeepseekApiKey(val);
+                      handleAiFieldChange({ deepseekApiKey: val });
+                    }}
+                    onBlur={e => {
+                      isEditingAiInputRef.current = false;
+                      syncAiConfigImmediately({ deepseekApiKey: e.target.value.trim() });
+                    }}
                     className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
                   />
                 </div>
@@ -837,8 +953,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                   <input
                     type="text"
                     value={deepseekBaseUrl}
-                    onChange={e => setDeepseekBaseUrl(e.target.value)}
-                    onBlur={e => syncAiConfigImmediately({ deepseekBaseUrl: e.target.value })}
+                    onFocus={() => {
+                      isEditingAiInputRef.current = true;
+                    }}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setDeepseekBaseUrl(val);
+                      handleAiFieldChange({ deepseekBaseUrl: val });
+                    }}
+                    onBlur={e => {
+                      isEditingAiInputRef.current = false;
+                      syncAiConfigImmediately({ deepseekBaseUrl: e.target.value.trim() });
+                    }}
                     className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
                   />
                 </div>
@@ -852,21 +978,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                     Google Gemini API Key (Opcional — si se deja vacío usa la conexión integrada del servidor)
                   </label>
                   <input
-                    type="password"
+                    type="text"
                     placeholder="AIzaSy... (Dejar vacío para usar la credencial automática activa)"
                     value={geminiApiKey}
-                    onChange={e => setGeminiApiKey(e.target.value)}
-                    onBlur={e => syncAiConfigImmediately({ geminiApiKey: e.target.value })}
+                    onFocus={() => {
+                      isEditingAiInputRef.current = true;
+                    }}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setGeminiApiKey(val);
+                      handleAiFieldChange({ geminiApiKey: val });
+                    }}
+                    onBlur={e => {
+                      isEditingAiInputRef.current = false;
+                      syncAiConfigImmediately({ geminiApiKey: e.target.value.trim() });
+                    }}
                     className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
                   />
                 </div>
               </div>
             )}
 
-            <div className="pt-1 flex items-center justify-between">
-              <span className="text-[11px] text-slate-400">
-                Las credenciales se guardan y activan para el motor seleccionado.
-              </span>
+            <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {aiKeySavedBanner ? (
+                  <span className="text-[11px] font-semibold text-lime-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {aiKeySavedBanner}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-400">
+                    Las credenciales se guardan automáticamente al pegarlas o con el botón Guardar.
+                  </span>
+                )}
+              </div>
               {isSuperAdmin && (
                 <button
                   type="button"

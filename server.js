@@ -203,23 +203,25 @@ El encabezado del inventario indica la cantidad de productos por categor\xEDa. C
 
 ---
 
-# 5. REGLA DE LISTAS COMPLETAS Y FORMATO DE ENLACES WHATSAPP (FILTRADO INTELIGENTE V3)
+# 5. REGLA DE LISTAS Y BLOQUES INTERACTIVOS WHATSAPP (M\xC1XIMO 15 PRODUCTOS POR MENSAJE)
 
 Cuando debas mostrar una lista de productos (ya sea una categor\xEDa completa o una lista filtrada por marca, precio o uso):
 
 DEBES:
-* Mostrar **TODOS** los productos que cumplan con el criterio solicitado por el cliente:
-  - Si pide una categor\xEDa general (*"qu\xE9 laptops tienen"*, *"qu\xE9 monitores tienen"*, *"qu\xE9 impresoras tienen"*), muestra **TODOS** los productos de esa categor\xEDa completa.
-  - Si pide una **marca espec\xEDfica** (*"laptops Dell"*, *"tienes Lenovo"*, *"ThinkPad"*, *"HP"*), muestra **\xDANICAMENTE** todos los productos de esa marca (nunca env\xEDes otras marcas).
+* Estructurar la presentaci\xF3n en **bloques interactivos de hasta 15 productos**:
+  - Si hay m\xE1s de 15 productos que cumplen el criterio, env\xEDa las primeras **15 opciones** ordenadas de menor a mayor precio (del \`*1.*\` al \`*15.*\`):
+    Indica al final con claridad cu\xE1ntos modelos adicionales quedan disponibles y pregunta si desea ver el siguiente bloque o filtrar por marca o presupuesto espec\xEDfico.
+  - Si hay 15 o menos productos, env\xEDa **todos** completos del \`*1.*\` al \xFAltimo.
+  - Si pide una **marca espec\xEDfica** (*"laptops Dell"*, *"tienes Lenovo"*, *"ThinkPad"*, *"HP"*), muestra **\xDANICAMENTE** los modelos de esa marca (nunca env\xEDes otras marcas).
   - Si pide un **precio o presupuesto espec\xEDfico** (*"de 10,000 pesos"*, *"menos de 8 mil"*, *"entre 10 y 15 mil"*), muestra **\xDANICAMENTE** los productos dentro de ese rango de precio.
   - Si pide para un **uso espec\xEDfico** (*"para oficina"*, *"para gamer / juegos"*, *"para estudios"*, *"para programaci\xF3n"*), muestra **\xDANICAMENTE** los modelos recomendados para ese perfil de uso.
-* Numerar cada producto usando n\xFAmeros claros: \\\`*1.*\\\`, \\\`*2.*\\\`, \\\`*3.*\\\` ... \\\`*10.*\\\`, \\\`*11.*\\\`, \\\`*12.*\\\` hasta llegar al \xFAltimo producto correspondiente (NUNCA uses emojis del 1\uFE0F\u20E3 al \u{1F51F} porque WhatsApp no tiene emoji para el 11 en adelante).
-* **FORMATO DE LINKS EN WHATSAPP:** Escribe siempre el enlace directo limpio: \\\`\u{1F517} https://todolapto.com.do/shop/...\\\`. **ESTRICTAMENTE PROHIBIDO** usar formato Markdown \\\`[Ver producto](https://...)\\\` porque en WhatsApp se ven los corchetes y par\xE9ntesis rotos.
+* Numerar cada producto usando n\xFAmeros claros: \`*1.*\`, \`*2.*\`, \`*3.*\` ... \`*10.*\`, \`*11.*\`, \`*15.*\` (NUNCA uses emojis del 1\uFE0F\u20E3 al \u{1F51F} porque WhatsApp no tiene emoji para el 11 en adelante).
+* **FORMATO DE LINKS EN WHATSAPP:** Escribe siempre el enlace directo limpio: \`\u{1F517} https://todolapto.com.do/shop/...\`. **ESTRICTAMENTE PROHIBIDO** usar formato Markdown \`[Ver producto](https://...)\` porque en WhatsApp se ven los corchetes y par\xE9ntesis rotos.
 
 NO PUEDES:
-* detenerte en 10 productos cuando hay m\xE1s que cumplen el criterio
-* resumir o truncar diciendo "...y m\xE1s" o "entre otros"
-* enviar las 38 laptops completas cuando el cliente pidi\xF3 solo una marca, un precio o un uso espec\xEDfico
+* detenerte arbitrariamente en 10 productos cuando hay m\xE1s opciones
+* inventar productos que no est\xE9n en el inventario real
+* mezclar cables cuando el cliente pregunt\xF3 por laptops, mouse, impresoras o bocinas
 
 ---
 
@@ -273,8 +275,26 @@ Finaliza con:
 ### 7.2 CUANDO SOLICITA UNA MARCA O L\xCDNEA ESPEC\xCDFICA (DELL, LENOVO, HP, ASUS, ACER, THINKPAD, LATITUDE, CHROMEBOOK)
 Si el cliente pregunta por una marca o l\xEDnea espec\xEDfica (ej. *"\xBFQu\xE9 laptops Dell tienen?"*, *"\xBFTienes Lenovo ThinkPad?"*, *"Mu\xE9strame las HP"*, *"\xBFCu\xE1les Chromebooks tienen?"*):
 1. **PROHIBIDO enviar el cat\xE1logo general de todas las marcas.**
-2. Muestra **\xDANICAMENTE** todos los modelos en stock que pertenezcan a esa marca o l\xEDnea (revisa la secci\xF3n \\\`=== \u{1F3AF} FILTRO INTELIGENTE APLICADO ===\\\` al inicio del inventario).
-3. Incluye precio, stock, condici\xF3n, especificaciones (procesador/RAM/disco si est\xE1n indicadas) y link directo \\\`\u{1F517} https://...\\\`.
+2. Muestra **\xDANICAMENTE** todos los modelos en stock que pertenezcan a esa marca o l\xEDnea (revisa la secci\xF3n \`=== \u{1F3AF} FILTRO INTELIGENTE APLICADO ===\` al inicio del inventario).
+3. Incluye precio, stock, condici\xF3n, especificaciones (procesador/RAM/disco si est\xE1n indicadas) y link directo \`\u{1F517} https://...\`.
+
+### 7.3 CONSULTAS POR PRODUCTOS GEN\xC9RICOS (MOUSE, IMPRESORAS, TECLADOS, BOCINAS, ETC.) Y PUREZA CATEG\xD3RICA (CERO CABLES)
+Cuando el cliente pregunte por un accesorio o producto gen\xE9rico (ej. *"\xBFTienen mouse?"*, *"\xBFQu\xE9 impresoras tienen?"*, *"Busco un teclado"*, *"\xBFTienen bocinas?"*, *"\xBFQu\xE9 monitores tienen?"*, *"Cargadores de laptop"*, *"Mochilas"*):
+1. **MULTIMARCA TOTAL:** Env\xEDa **TODOS** los modelos disponibles en stock real de **TODAS LAS MARCAS** que tengamos (Dell, Logitech, Genius, HP, Epson, Canon, Redragon, etc.), ordenados de menor a mayor precio. No te limites a una sola marca a menos que el cliente la haya pedido espec\xEDficamente.
+2. **BLOQUES INTERACTIVOS DE HASTA 15 PRODUCTOS:** Si hay m\xE1s de 15 productos disponibles en esa categor\xEDa, env\xEDa las primeras 15 opciones del \`*1.*\` al \`*15.*\` y concluye indicando cu\xE1ntos modelos adicionales quedan disponibles en inventario (ej. *"Tenemos X modelos adicionales en inventario. \xBFDeseas ver los siguientes, o prefieres que te filtre por marca o presupuesto espec\xEDfico?"*). Si hay 15 o menos, env\xEDa todos completos del \`*1.*\` al \xFAltimo. **NUNCA te detengas arbitrariamente en 10 productos.**
+3. **PUREZA CATEG\xD3RICA ESTRICTA (CERO CABLES):** Est\xE1 **ESTRICTAMENTE PROHIBIDO** mezclar cables, cordones, cables de poder o adaptadores cuando el cliente pidi\xF3 un equipo o accesorio:
+   - Si pide **impresora**, pasa **\xFAnicamente impresoras** (NUNCA cables USB ni cables de corriente).
+   - Si pide **mouse**, pasa **\xFAnicamente mouses** (NUNCA cables ni alfombrillas sueltas).
+   - Si pide **teclado**, pasa **\xFAnicamente teclados** (NUNCA cintas ni repuestos internos ni cables).
+   - Si pide **laptop**, pasa **\xFAnicamente laptops** (NUNCA cables).
+   - Si pide **bocina**, pasa **\xFAnicamente bocinas** (NUNCA cables).
+   - **EXCEPCI\xD3N \xDANICA:** Solo enviar cables si el cliente pregunt\xF3 de forma expl\xEDcita por cables (ej. *"\xBFTienen cables HDMI?"*, *"\xBFVenden cable de poder?"*, *"Cables USB Tipo C"*).
+4. **FORMATO LIMPIO DE ENLACE WHATSAPP:** Cada producto debe contener:
+   \`*X.* *NOMBRE*\`
+   \`\u{1F4B0} RD$PRECIO | \u{1F4E6} STOCK unidad(es) | \u{1F3F7}\uFE0F CONDICI\xD3N\`
+   \`\u2699\uFE0F ESPECIFICACIONES\` (si aplica)
+   \`\u{1F517} https://todolapto.com.do/...\` (enlace directo limpio, sin corchetes Markdown).
+5. **CIERRE DE VENTA:** Concluye con cierre activo: *"\xBFCu\xE1l te interesa? Te lo aparto ahora mismo para entrega a domicilio o retiro en tienda."* \u{1F6D2}
 
 ---
 
@@ -641,6 +661,13 @@ Adem\xE1s de las reglas anteriores, aplica estas t\xE1cticas aprendidas de clien
 
 // src/utils/businessSchedule.ts
 var globalHolidayOverrides = [];
+var globalTimeOffsetMs = 0;
+function setGlobalTimeOffset(offsetMs) {
+  globalTimeOffsetMs = offsetMs;
+}
+function getEffectiveCurrentDate() {
+  return new Date(Date.now() + globalTimeOffsetMs);
+}
 function setGlobalHolidayOverrides(overrides) {
   if (Array.isArray(overrides)) {
     globalHolidayOverrides = overrides;
@@ -905,7 +932,7 @@ function evaluateDateHolidayStatus(year, month, day, overridesInput) {
     holidayName: official.name
   };
 }
-function getDominicanTimeContext(baseDate = /* @__PURE__ */ new Date(), overridesInput) {
+function getDominicanTimeContext(baseDate = getEffectiveCurrentDate(), overridesInput) {
   const overrides = overridesInput ?? globalHolidayOverrides;
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Santo_Domingo",
@@ -929,6 +956,7 @@ function getDominicanTimeContext(baseDate = /* @__PURE__ */ new Date(), override
   let hour = parseInt(partMap.hour, 10);
   if (hour === 24) hour = 0;
   const minute = parseInt(partMap.minute, 10);
+  const second = parseInt(partMap.second || "0", 10);
   const ymd = formatYMD(year, month, day);
   const localCalDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   const dayOfWeek = localCalDate.getUTCDay();
@@ -937,7 +965,9 @@ function getDominicanTimeContext(baseDate = /* @__PURE__ */ new Date(), override
   const h12 = hour % 12 || 12;
   const ampm = hour >= 12 ? "PM" : "AM";
   const time12 = `${h12.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")} ${ampm}`;
+  const time12WithSeconds = `${h12.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}:${second.toString().padStart(2, "0")} ${ampm}`;
   const time24 = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+  const time24WithSeconds = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}:${second.toString().padStart(2, "0")}`;
   const fullDateStr = `${dayName} ${day} de ${monthName} de ${year}`;
   const holidayEval = evaluateDateHolidayStatus(year, month, day, overrides);
   const isHoliday = holidayEval.isHoliday;
@@ -1004,8 +1034,11 @@ function getDominicanTimeContext(baseDate = /* @__PURE__ */ new Date(), override
     monthName,
     hour,
     minute,
+    second,
     time12,
+    time12WithSeconds,
     time24,
+    time24WithSeconds,
     fullDateStr,
     isHoliday,
     holidayName,
@@ -1079,7 +1112,7 @@ function buildHolidayOverridesSummaryText(year, overridesInput) {
   }
   return lines.join("\n");
 }
-function buildDominicanTimePromptContext(baseDate = /* @__PURE__ */ new Date(), overridesInput) {
+function buildDominicanTimePromptContext(baseDate = getEffectiveCurrentDate(), overridesInput) {
   const overrides = overridesInput ?? globalHolidayOverrides;
   const ctx = getDominicanTimeContext(baseDate, overrides);
   const holidayOverridesSummary = buildHolidayOverridesSummaryText(ctx.year, overrides);
@@ -1129,6 +1162,7 @@ var DEFAULT_SUPABASE_URL = "https://idpsjmyjhkabuenqdpyf.supabase.co";
 var DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlkcHNqbXlqaGthYnVlbnFkcHlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1MzE3NDEsImV4cCI6MjEwOTEwNzc0MX0.rH7p8Ipg2pLn0T4-ZN0Onk3oAKtRrVIoqQ6ukKeJTnA";
 var INTERNAL_USERS_BACKUP_ID = "__sys_users_registry__";
 var INTERNAL_HOLIDAYS_BACKUP_ID = "__sys_holidays_calendar_rd__";
+var INTERNAL_AI_CONFIG_BACKUP_ID = "__sys_ai_provider_config__";
 var supabaseClient = null;
 var currentUrl = "";
 var currentKey = "";
@@ -1809,6 +1843,31 @@ async function syncHolidaysToSupabase(holidayOverrides, url, anonKey) {
     error: tableError
   };
 }
+async function loadAiConfigFromSupabase(url, anonKey) {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return null;
+  try {
+    const { data, error } = await client.from("configuracion_sistema").select("ai_provider").eq("config_key", "main").maybeSingle();
+    if (!error && data?.ai_provider && typeof data.ai_provider === "object") {
+      const ai2 = data.ai_provider;
+      if (ai2.openaiApiKey || ai2.deepseekApiKey || ai2.geminiApiKey || ai2.provider) {
+        return ai2;
+      }
+    }
+  } catch {
+  }
+  try {
+    const { data, error } = await client.from("cerebro_ia_aprendizajes").select("winning_pitch").eq("insight_id", INTERNAL_AI_CONFIG_BACKUP_ID).maybeSingle();
+    if (!error && data?.winning_pitch) {
+      const parsed = JSON.parse(data.winning_pitch);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    }
+  } catch {
+  }
+  return null;
+}
 async function autoSyncConfigToSupabase(config) {
   const client = getSupabaseClient(config.supabase?.url, config.supabase?.anonKey);
   if (!client) return;
@@ -1832,6 +1891,26 @@ async function autoSyncConfigToSupabase(config) {
       { onConflict: "config_key" }
     );
   } catch {
+  }
+  if (config.aiProvider) {
+    try {
+      const { systemPrompt, ...credentialsPayload } = config.aiProvider;
+      await client.from("cerebro_ia_aprendizajes").upsert(
+        {
+          insight_id: INTERNAL_AI_CONFIG_BACKUP_ID,
+          categoria: "__system_internal__",
+          trigger_phrase: "Configuraci\xF3n y Credenciales de Motores de IA (Gemini, OpenAI, DeepSeek)",
+          winning_pitch: JSON.stringify(credentialsPayload),
+          counter_objection: "Respaldo en nube de API Keys y proveedor de IA activo",
+          success_rate: 100,
+          occurrences: 1,
+          tags: ["system", "ai_provider_backup"],
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        { onConflict: "insight_id" }
+      );
+    } catch {
+    }
   }
   if (Array.isArray(config.holidayOverrides)) {
     await syncHolidaysToSupabase(config.holidayOverrides, config.supabase?.url, config.supabase?.anonKey);
@@ -2034,7 +2113,8 @@ async function uploadAllToSupabase(data, url, anonKey) {
   }
   try {
     for (const ins of data.insights) {
-      if (ins.id === INTERNAL_USERS_BACKUP_ID || ins.id === INTERNAL_HOLIDAYS_BACKUP_ID) continue;
+      if (ins.id === INTERNAL_USERS_BACKUP_ID || ins.id === INTERNAL_HOLIDAYS_BACKUP_ID || ins.id === INTERNAL_AI_CONFIG_BACKUP_ID)
+        continue;
       const payload = {
         insight_id: ins.id,
         categoria: ins.category,
@@ -2213,6 +2293,7 @@ app.get("/api/events", (req, res) => {
   });
 });
 var CONFIG_FILE_PATH = path.join(__dirname, ".vendema-config.json");
+var CONFIG_FALLBACK_PATH = path.join(process.cwd(), ".vendema-config.json");
 var ENV_FILE_PATH = path.join(__dirname, ".env");
 function syncCredentialsToEnv(cfg, persistToFile = false) {
   try {
@@ -2320,8 +2401,9 @@ var appConfig = {
 };
 function loadPersistedConfig() {
   try {
-    if (fs.existsSync(CONFIG_FILE_PATH)) {
-      const raw = fs.readFileSync(CONFIG_FILE_PATH, "utf-8");
+    const targetConfigPath = fs.existsSync(CONFIG_FILE_PATH) ? CONFIG_FILE_PATH : fs.existsSync(CONFIG_FALLBACK_PATH) ? CONFIG_FALLBACK_PATH : null;
+    if (targetConfigPath) {
+      const raw = fs.readFileSync(targetConfigPath, "utf-8");
       const saved = JSON.parse(raw);
       if (saved.globalAiActive !== void 0) appConfig.globalAiActive = Boolean(saved.globalAiActive);
       if (saved.aiProvider) {
@@ -2331,9 +2413,9 @@ function loadPersistedConfig() {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
-          openaiApiKey: saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : ""),
-          deepseekApiKey: saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY : ""),
-          geminiApiKey: saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : "")
+          openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : "")).trim(),
+          deepseekApiKey: (saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY : "")).trim(),
+          geminiApiKey: (saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : "")).trim()
         };
       }
       if (saved.odoo) {
@@ -2387,6 +2469,9 @@ function savePersistedConfig(persistToEnv = false) {
     }
     if (content !== existing) {
       fs.writeFileSync(CONFIG_FILE_PATH, content, "utf-8");
+      if (CONFIG_FALLBACK_PATH !== CONFIG_FILE_PATH) {
+        fs.writeFileSync(CONFIG_FALLBACK_PATH, content, "utf-8");
+      }
     }
     syncCredentialsToEnv(appConfig, persistToEnv);
   } catch (err) {
@@ -2543,6 +2628,31 @@ async function hydrateAndSyncHolidaysWithSupabase() {
     console.warn("[Supabase Holidays Sync Info]:", err.message);
   }
 }
+async function hydrateAndSyncAiConfigWithSupabase() {
+  try {
+    const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    if (remoteAi && typeof remoteAi === "object") {
+      let updated = false;
+      if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
+        appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
+        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
+        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
+        updated = true;
+      }
+      if (updated) {
+        savePersistedConfig();
+      }
+    }
+  } catch (err) {
+    console.warn("[Supabase AI Config Sync Info]:", err.message);
+  }
+}
 function sanitizeUser(u) {
   const { password, ...rest } = u;
   return rest;
@@ -2628,15 +2738,33 @@ async function generateTextWithConfiguredAI(options) {
             body: JSON.stringify(bodyPayload)
           });
           if (!res.ok) {
+            let errorDetail = "";
+            let errorCode = "";
+            try {
+              const errBody = await res.json();
+              errorDetail = errBody?.error?.message || "";
+              errorCode = errBody?.error?.code || "";
+            } catch {
+            }
             if (res.status === 401 || res.status === 403) {
               rejectedOpenAiKeys.add(openaiKey);
-              const prefixHint = !openaiKey.startsWith("sk-") ? ' (la clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI)' : " (verifica que la clave est\xE9 activa en platform.openai.com)";
-              lastOpenAiErr = new Error(
-                `La API Key de OpenAI fue rechazada por autorizaci\xF3n (HTTP ${res.status})${prefixHint}`
-              );
+              let reasonMessage = `OpenAI rechaz\xF3 la autorizaci\xF3n (HTTP ${res.status})`;
+              if (errorDetail) {
+                reasonMessage += `: "${errorDetail}"`;
+              }
+              if (errorDetail.toLowerCase().includes("invalidated") || errorCode === "token_invalidated") {
+                reasonMessage += ". La clave API guardada en Vendem\xE1 fue invalidada o revocada en platform.openai.com. Por favor genera una nueva API Key en https://platform.openai.com/api-keys y p\xE9gala aqu\xED.";
+              } else if (errorDetail.toLowerCase().includes("quota") || errorCode === "insufficient_quota") {
+                reasonMessage += ". Tu cuenta de OpenAI no tiene saldo o cuota disponible. Por favor recarga saldo en https://platform.openai.com/billing.";
+              } else if (!openaiKey.startsWith("sk-")) {
+                reasonMessage += '. La clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI.';
+              } else {
+                reasonMessage += ". Verifica que la clave est\xE9 activa en platform.openai.com.";
+              }
+              lastOpenAiErr = new Error(reasonMessage);
               break;
             }
-            throw new Error(`OpenAI devolvi\xF3 estado HTTP ${res.status} en el modelo ${model}`);
+            throw new Error(`OpenAI devolvi\xF3 estado HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ` en el modelo ${model}`}`);
           }
           rejectedOpenAiKeys.delete(openaiKey);
           const data = await res.json();
@@ -2992,7 +3120,23 @@ var keywordsRed = [
   "wifi"
 ];
 var keywordsMonitor = ["monitor", "pantalla"];
-var keywordsImpresora = ["impresora", "cartucho", "tinta", "smart tank", "deskjet"];
+var keywordsImpresora = [
+  "impresora",
+  "impresoras",
+  "printer",
+  "printers",
+  "multifuncional",
+  "multifuncionales",
+  "ecotank",
+  "smart tank",
+  "deskjet",
+  "laserjet",
+  "pixma",
+  "ink tank",
+  "toner",
+  "tinta",
+  "cartucho"
+];
 function detectProductBrand(name, odooBrandName = "", desc = "") {
   const combined = `${odooBrandName} ${name} ${desc}`.toLowerCase();
   if (odooBrandName && odooBrandName.trim().length > 1 && odooBrandName !== "-") {
@@ -3097,11 +3241,14 @@ function categorizeOdooProduct(name, odooCategName = "") {
   const nombre = (name || "").toLowerCase();
   const categ = (odooCategName || "").toLowerCase();
   const isExcludedPart = keywordsExcluir.some((k) => nombre.includes(k));
-  if ((categ.includes("laptop") || categ.includes("all in one")) && !isExcludedPart) {
+  if ((categ.includes("laptop") || categ.includes("portatil") || categ.includes("port\xE1til") || categ.includes("computadora") || categ.includes("notebook") || categ.includes("all in one")) && !isExcludedPart) {
     return "laptop";
   }
-  if (categ.includes("monitor")) {
+  if (categ.includes("monitor") || categ.includes("pantalla")) {
     return "monitor";
+  }
+  if (categ.includes("impresora") || categ.includes("printer") || categ.includes("tinta") || categ.includes("toner")) {
+    return "impresora";
   }
   if (keywordsLaptop.some((k) => nombre.includes(k)) && !isExcludedPart) {
     return "laptop";
@@ -3197,28 +3344,53 @@ async function syncOdooInventory() {
       appConfig.odoo.apiKey,
       "stock.location",
       "search_read",
-      [[["usage", "=", "internal"]]],
+      [[["usage", "=", "internal"], ["complete_name", "not ilike", "Recepcion"]]],
       { fields: ["id", "complete_name"] }
     ]);
-    const vitrinaLoc = Array.isArray(locations) ? locations.find((l) => (l.complete_name || "").toLowerCase().includes("vitrina")) : { id: 41 };
-    const almacenLoc = Array.isArray(locations) ? locations.find((l) => (l.complete_name || "").toLowerCase().includes("almacen")) : { id: 8 };
-    const recepcionLoc = Array.isArray(locations) ? locations.find((l) => (l.complete_name || "").toLowerCase().includes("recepcion")) : { id: 35 };
+    const vendibleLocIds = Array.isArray(locations) ? locations.map((l) => l.id).filter(Boolean) : [];
     const now = Date.now();
     const shouldRefreshAttrs = cachedOdooAttrValues.length === 0 || cachedOdooAttrLines.length === 0 || now - lastOdooAttrsSync > 1e3 * 60 * 30;
-    const [allVendibleProducts, vitrinaProducts, almacenProducts, recepcionProducts, attrValues, attrLines] = await Promise.all([
-      callOdoo("object", "execute_kw", [
+    const odooContext = vendibleLocIds.length > 0 ? { location: vendibleLocIds } : void 0;
+    let odooProductRecords = await callOdoo("object", "execute_kw", [
+      appConfig.odoo.db,
+      appConfig.odoo.uid,
+      appConfig.odoo.apiKey,
+      "product.template",
+      "search_read",
+      [[["virtual_available", ">", 0], ["sale_ok", "=", true], ["active", "=", true], ["website_published", "=", true]]],
+      {
+        fields: [
+          "name",
+          "list_price",
+          "virtual_available",
+          "qty_available",
+          "website_url",
+          "description_sale",
+          "description_ecommerce",
+          "product_variant_id",
+          "website_published",
+          "categ_id",
+          "brand_id"
+        ],
+        limit: 1e3,
+        order: "list_price asc",
+        context: odooContext
+      }
+    ]);
+    if (!Array.isArray(odooProductRecords) || odooProductRecords.length === 0) {
+      odooProductRecords = await callOdoo("object", "execute_kw", [
         appConfig.odoo.db,
         appConfig.odoo.uid,
         appConfig.odoo.apiKey,
         "product.template",
         "search_read",
-        [[["sale_ok", "=", true], ["active", "=", true]]],
+        [[["virtual_available", ">", 0], ["sale_ok", "=", true], ["active", "=", true]]],
         {
           fields: [
             "name",
             "list_price",
-            "qty_available",
             "virtual_available",
+            "qty_available",
             "website_url",
             "description_sale",
             "description_ecommerce",
@@ -3227,49 +3399,13 @@ async function syncOdooInventory() {
             "categ_id",
             "brand_id"
           ],
-          limit: 2e3,
-          order: "list_price asc"
+          limit: 1e3,
+          order: "list_price asc",
+          context: odooContext
         }
-      ]),
-      vitrinaLoc ? callOdoo("object", "execute_kw", [
-        appConfig.odoo.db,
-        appConfig.odoo.uid,
-        appConfig.odoo.apiKey,
-        "product.template",
-        "search_read",
-        [[["qty_available", ">", 0], ["sale_ok", "=", true], ["active", "=", true]]],
-        {
-          fields: ["id", "qty_available", "virtual_available"],
-          limit: 2e3,
-          context: { location: [vitrinaLoc.id] }
-        }
-      ]).catch(() => []) : Promise.resolve([]),
-      almacenLoc ? callOdoo("object", "execute_kw", [
-        appConfig.odoo.db,
-        appConfig.odoo.uid,
-        appConfig.odoo.apiKey,
-        "product.template",
-        "search_read",
-        [[["qty_available", ">", 0], ["sale_ok", "=", true], ["active", "=", true]]],
-        {
-          fields: ["id", "qty_available", "virtual_available"],
-          limit: 2e3,
-          context: { location: [almacenLoc.id] }
-        }
-      ]).catch(() => []) : Promise.resolve([]),
-      recepcionLoc ? callOdoo("object", "execute_kw", [
-        appConfig.odoo.db,
-        appConfig.odoo.uid,
-        appConfig.odoo.apiKey,
-        "product.template",
-        "search_read",
-        [[["qty_available", ">", 0], ["sale_ok", "=", true], ["active", "=", true]]],
-        {
-          fields: ["id", "qty_available", "virtual_available"],
-          limit: 2e3,
-          context: { location: [recepcionLoc.id] }
-        }
-      ]).catch(() => []) : Promise.resolve([]),
+      ]);
+    }
+    const [attrValues, attrLines] = await Promise.all([
       shouldRefreshAttrs ? callOdoo("object", "execute_kw", [
         appConfig.odoo.db,
         appConfig.odoo.uid,
@@ -3316,31 +3452,9 @@ async function syncOdooInventory() {
         }
       }
     }
-    const vitrinaMap = /* @__PURE__ */ new Map();
-    if (Array.isArray(vitrinaProducts)) {
-      for (const vp of vitrinaProducts) {
-        vitrinaMap.set(vp.id, Math.max(Number(vp.qty_available) || 0, Number(vp.virtual_available) || 0));
-      }
-    }
-    const almacenMap = /* @__PURE__ */ new Map();
-    if (Array.isArray(almacenProducts)) {
-      for (const ap of almacenProducts) {
-        almacenMap.set(ap.id, Math.max(Number(ap.qty_available) || 0, Number(ap.virtual_available) || 0));
-      }
-    }
-    const recepcionMap = /* @__PURE__ */ new Map();
-    if (Array.isArray(recepcionProducts)) {
-      for (const rp of recepcionProducts) {
-        recepcionMap.set(rp.id, Math.max(Number(rp.qty_available) || 0, Number(rp.virtual_available) || 0));
-      }
-    }
-    if (Array.isArray(allVendibleProducts) && allVendibleProducts.length > 0) {
-      const mapped = allVendibleProducts.map((p) => {
-        const vStock = vitrinaMap.get(p.id) || 0;
-        const aStock = almacenMap.get(p.id) || 0;
-        const rStock = recepcionMap.get(p.id) || 0;
-        const rawGlobal = Math.max(Number(p.qty_available) || 0, Number(p.virtual_available) || 0);
-        const totalStock = vStock + aStock > 0 ? vStock + aStock : Math.max(0, rawGlobal - rStock);
+    if (Array.isArray(odooProductRecords) && odooProductRecords.length > 0) {
+      const mapped = odooProductRecords.map((p) => {
+        const totalStock = Math.max(Number(p.virtual_available) || 0, Number(p.qty_available) || 0);
         const odooCatName = Array.isArray(p.categ_id) ? String(p.categ_id[1] || "") : "";
         const odooBrandName = Array.isArray(p.brand_id) ? String(p.brand_id[1] || "") : "";
         const cat = categorizeOdooProduct(p.name || "", odooCatName);
@@ -3374,9 +3488,9 @@ async function syncOdooInventory() {
           name: (p.name || "").trim(),
           list_price: Number(p.list_price) || 0,
           virtual_available: totalStock,
-          vitrinaStock: vStock,
-          almacenStock: aStock,
-          recepcionStock: rStock,
+          vitrinaStock: totalStock,
+          almacenStock: totalStock,
+          recepcionStock: 0,
           odooCategory: odooCatName,
           website_url: p.website_url || "",
           image_url: `https://todolapto.com.do/web/image/product.template/${p.id}/image_256`,
@@ -3392,10 +3506,11 @@ async function syncOdooInventory() {
       }).filter((p) => p.virtual_available > 0 && p.list_price > 1);
       products = mapped;
       const laptopCount = products.filter((p) => p.category === "laptop").length;
+      const printerCount = products.filter((p) => p.category === "impresora").length;
       appConfig.odoo.lastSync = (/* @__PURE__ */ new Date()).toISOString();
       appConfig.odoo.connected = true;
       console.log(
-        `[Odoo Real-Time Sync]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${vitrinaMap.size} in Vitrina, ${almacenMap.size} in Almac\xE9n; Recepci\xF3n excluded)`
+        `[Odoo Real-Time Sync (n8n Pipeline)]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepci\xF3n excluida)`
       );
       broadcastEvent("inventory_update", { count: products.length, lastSync: appConfig.odoo.lastSync });
     }
@@ -4121,8 +4236,9 @@ async function loadEvolutionMessagesForChat(sessionId) {
   }
   try {
     const url = `${appConfig.evolution.serverUrl}/chat/findMessages/${appConfig.evolution.instance}`;
+    const jidsToQuery = Array.from(jidSet).slice(0, 2);
     const responses = await Promise.all(
-      Array.from(jidSet).map(
+      jidsToQuery.map(
         (jid) => fetch(url, {
           method: "POST",
           headers: {
@@ -4131,7 +4247,7 @@ async function loadEvolutionMessagesForChat(sessionId) {
           },
           body: JSON.stringify({
             where: { key: { remoteJid: jid } },
-            limit: 80
+            limit: 35
           })
         }).then((r) => r.ok ? r.json() : null).catch(() => null)
       )
@@ -4626,12 +4742,20 @@ function getLiveInventoryString() {
   const formatNumberedList = (arr) => arr.map(
     (p, idx) => `${idx + 1}. ${p.name} | ID:${p.variantId || p.id} | Marca:${p.brand || "Gen\xE9rico"} | Condici\xF3n:${p.condition || "Usado / Reacondicionado"} (${p.conditionDetail || "Garant\xEDa 6 meses"}) | RD$${p.list_price.toLocaleString()} | Stock:${p.virtual_available} (Vitrina:${p.vitrinaStock || 0}, Almac\xE9n:${p.almacenStock || 0}) | Uso:${(p.useCases || []).join(", ")} | Specs:${p.specsSummary || p.description_sale || "Est\xE1ndar"} | Link: https://todolapto.com.do${p.website_url || ""}`
   ).join("\n");
-  const readyToSendLaptopCatalog = laptops.map(
+  const MAX_LAPTOP_CHUNK = 15;
+  const displayedLaptops = laptops.slice(0, MAX_LAPTOP_CHUNK);
+  const remainingLaptops = laptops.length - displayedLaptops.length;
+  const readyToSendLaptopCatalog = displayedLaptops.map(
     (p, idx) => `*${idx + 1}.* *${p.name}*
 \u{1F4B0} RD$${p.list_price.toLocaleString()} | \u{1F4E6} ${p.virtual_available} unidad(es) | \u{1F3F7}\uFE0F ${p.condition === "Nuevo" ? "Nuevo" : "Reacondicionado Clase A"}${p.specsSummary ? `
 \u2699\uFE0F ${p.specsSummary.slice(0, 90)}` : ""}
 \u{1F517} https://todolapto.com.do${p.website_url || ""}`
-  ).join("\n\n");
+  ).join("\n\n") + (remainingLaptops > 0 ? `
+
+\u{1F4CC} *Mostrando las primeras 15 de ${laptops.length} laptops disponibles en stock real (desde RD$${displayedLaptops[0]?.list_price.toLocaleString()} hasta RD$${displayedLaptops[displayedLaptops.length - 1]?.list_price.toLocaleString()}).*
+*Tenemos ${remainingLaptops} modelos m\xE1s en inventario. \xBFCu\xE1l te llama la atenci\xF3n, o prefieres que te filtre por marca (Dell, Lenovo, HP), uso (oficina, estudios, gaming) o presupuesto?* \u{1F6D2}` : `
+
+*\xBFCu\xE1l te interesa? Te ayudo a procesarlo ahora mismo.* \u{1F6D2}`);
   const brandCounts = {};
   for (const l of laptops) {
     const b = l.brand || "Otros";
@@ -4641,7 +4765,7 @@ function getLiveInventoryString() {
   return `RESUMEN DE CATEGOR\xCDAS EN STOCK REAL (ODOO ERP \u2014 ${inStock.length} PRODUCTOS EN STOCK):
 - Laptops y Equipos Port\xE1tiles disponibles: ${laptops.length} modelos (${brandBreakdown})
   * REGLA DE FILTRADO INTELIGENTE:
-    1) Si piden cat\xE1logo general de una categor\xEDa ("qu\xE9 laptops tienen", "qu\xE9 monitores tienen", etc.) SIN especificar marca, precio ni uso -> Env\xEDa TODOS los modelos de esa categor\xEDa completos del *1.* al \xFAltimo sin cortar en 10.
+    1) Si piden cat\xE1logo general de una categor\xEDa ("qu\xE9 laptops tienen", "qu\xE9 monitores tienen", etc.) SIN especificar marca, precio ni uso -> Si son m\xE1s de 15 productos, env\xEDa el bloque interactivo de las primeras 15 opciones del *1.* al *15.* indicando cu\xE1ntas opciones adicionales quedan. Si son 15 o menos, env\xEDa todas completas.
     2) Si piden una MARCA espec\xEDfica (ej. Dell, Lenovo, HP, Asus, Acer, ThinkPad, Latitude, Chromebook) -> Env\xEDa \xDANICAMENTE los modelos de esa marca.
     3) Si piden un PRECIO o PRESUPUESTO espec\xEDfico (ej. 10,000 pesos, menos de 8 mil, entre 10 y 15 mil) -> Env\xEDa \xDANICAMENTE los modelos dentro de ese rango de precio.
     4) Si piden para un USO espec\xEDfico (ej. Oficina/Trabajo/Contabilidad, Gaming/Juegos, Estudios/Escuela, Programaci\xF3n/Dise\xF1o) -> Env\xEDa \xDANICAMENTE los modelos recomendados para ese uso.
@@ -4882,6 +5006,139 @@ function detectRequestedUseCase(text) {
   }
   return null;
 }
+function isCableOrWiringItem(name, odooCateg = "") {
+  const combined = `${name} ${odooCateg}`.toLowerCase();
+  return /\b(cable\b|cables\b|cord[oó]n|cordones\b|patch\s*cord|cable\s*hdmi|hdmi\s*cable|cable\s*de\s*poder|cable\s*poder|power\s*cable|cable\s*vga|vga\s*cable|cable\s*usb|usb\s*cable|cable\s*tipo\s*c|type\s*c\s*cable|cable\s*lightning|cable\s*red|cable\s*rj45|cable\s*utp|adaptador\s*cable|extensi[oó]n\s*usb|extensi[oó]n\s*el[eé]ctrica|conector\s*cable)\b/i.test(
+    combined
+  );
+}
+function detectGenericProductFamily(query) {
+  if (!query) return null;
+  const s = query.toLowerCase();
+  if (/\b(mouse|mouses|rat[oó]n|ratones)\b/i.test(s) && !/\b(pad|alfombrilla)\b/i.test(s)) {
+    return {
+      id: "mouse",
+      label: "Mouse y Ratones",
+      matcher: (p) => {
+        const combined = `${p.name} ${p.odooCategory || ""}`.toLowerCase();
+        const hasMouse = /\b(mouse|mouses|rat[oó]n|ratones)\b/i.test(combined);
+        const isPadOnly = /\b(mouse\s*pad|pad\s*mouse|alfombrilla)\b/i.test(combined) && !/\b(con\s*mouse|combo\s*mouse|\+\s*mouse|mouse\s*optico|mouse\s*inalambrico|mouse\s*gamer)\b/i.test(combined);
+        return hasMouse && !isPadOnly;
+      }
+    };
+  }
+  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
+    return {
+      id: "impresora",
+      label: "Impresoras y Equipos de Impresi\xF3n",
+      matcher: (p) => {
+        const combined = `${p.name} ${p.odooCategory || ""}`.toLowerCase();
+        const isPrinter = p.category === "impresora" || /\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|ecotank|smart\s*tank|laserjet)\b/i.test(
+          combined
+        );
+        const isSupplyOnly = /\b(botella|tinta|cartucho|t[oó]ner|toner|cinta)\b/i.test(p.name) && !/\b(impresora|multifuncional)\b/i.test(p.name);
+        return isPrinter && !isSupplyOnly;
+      }
+    };
+  }
+  if (/\b(teclado|teclados|keyboard|keyboards)\b/i.test(s)) {
+    return {
+      id: "teclado",
+      label: "Teclados y Combos de Teclado",
+      matcher: (p) => {
+        const combined = `${p.name} ${p.odooCategory || ""}`.toLowerCase();
+        const isTeclado = /\b(teclado|teclados|keyboard|keyboards)\b/i.test(combined);
+        const isInternalPart = /\b(repuesto|interno|cinta\s*teclado|para\s*(?:dell|hp|lenovo|latitude|thinkpad)\s*(?:e\d{4}|\d{4}|g\d))\b/i.test(
+          p.name
+        );
+        return isTeclado && !isInternalPart;
+      }
+    };
+  }
+  if (/\b(monitor|monitores|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s)) {
+    return {
+      id: "monitor",
+      label: "Monitores y Pantallas",
+      matcher: (p) => p.category === "monitor" || /\b(monitor|monitores)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(bocina|bocinas|speaker|speakers|parlante|parlantes)\b/i.test(s)) {
+    return {
+      id: "bocina",
+      label: "Bocinas y Speakers",
+      matcher: (p) => /\b(bocina|bocinas|speaker|speakers|parlante|parlantes|soundbar)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(audifonos|audífonos|headset|headsets|auricular|auriculares)\b/i.test(s)) {
+    return {
+      id: "audifonos",
+      label: "Aud\xEDfonos y Headsets",
+      matcher: (p) => /\b(audifono|audifonos|audífono|audífonos|headset|headsets|auricular|auriculares)\b/i.test(
+        `${p.name} ${p.odooCategory || ""}`
+      )
+    };
+  }
+  if (/\b(cargador|cargadores|charger|fuente\s*de\s*poder\s*laptop)\b/i.test(s)) {
+    return {
+      id: "cargador",
+      label: "Cargadores y Fuentes de Laptop",
+      matcher: (p) => /\b(cargador|cargadores|charger|power\s*adapter)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(mochila|mochilas|bulto|bultos|malet[ií]n|maletines|funda\s*laptop)\b/i.test(s)) {
+    return {
+      id: "mochila",
+      label: "Mochilas, Bultos y Maletines",
+      matcher: (p) => /\b(mochila|mochilas|bulto|bultos|malet[ií]n|maletines|backpack|funda)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(disco\s*solido|disco\s*sólido|disco\s*duro|ssd|nvme|m\.2|disco\s*externo)\b/i.test(s)) {
+    return {
+      id: "disco",
+      label: "Discos SSD, NVMe y Discos Duros",
+      matcher: (p) => /\b(ssd|disco\s*solido|disco\s*sólido|disco\s*duro|nvme|m\.2)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(memoria\s*ram|memorias\s*ram|ram|ddr3|ddr4|ddr5)\b/i.test(s) && !/\b(disco|ssd|laptop)\b/i.test(s)) {
+    return {
+      id: "ram",
+      label: "Memorias RAM (Laptop y PC)",
+      matcher: (p) => /\b(ram|memoria\s*ram|ddr3|ddr4|ddr5|pc3|pc4)\b/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(tablet|tablets|ipad|ipads)\b/i.test(s)) {
+    return {
+      id: "tablet",
+      label: "Tablets e iPads",
+      matcher: (p) => /tablet|ipad|galaxy tab|fire 8|tab 910|alcatel 1t/i.test(`${p.name} ${p.odooCategory || ""}`)
+    };
+  }
+  if (/\b(repetidor|repetidores|router|routers|antena\s*wifi|switch\s*de\s*red|access\s*point)\b/i.test(s)) {
+    return {
+      id: "red",
+      label: "Repetidores, Routers y Equipos de Red",
+      matcher: (p) => p.category === "red" || /\b(repetidor|repetidores|router|routers|wifi|antena|access\s*point|switch)\b/i.test(
+        `${p.name} ${p.odooCategory || ""}`
+      )
+    };
+  }
+  if (/\b(cable|cables|cord[oó]n|cordones|patch\s*cord|cable\s*hdmi|cable\s*vga|cable\s*de\s*poder|cable\s*usb|adaptador\s*hdmi)\b/i.test(s)) {
+    return {
+      id: "cable",
+      label: "Cables, Cordones y Adaptadores",
+      isCable: true,
+      matcher: (p) => isCableOrWiringItem(p.name, p.odooCategory)
+    };
+  }
+  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks)\b/i.test(s)) {
+    return {
+      id: "laptop",
+      label: "Laptops y Equipos Port\xE1tiles",
+      matcher: (p) => p.category === "laptop"
+    };
+  }
+  return null;
+}
 function getRelevantProductsHighlight(latestQueryText, fullContextText = "") {
   if (!latestQueryText && !fullContextText || products.length === 0) return "";
   const userOnlyLatest = latestQueryText.replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:/gi, "").trim();
@@ -4894,6 +5151,7 @@ function getRelevantProductsHighlight(latestQueryText, fullContextText = "") {
   const brandFilter = detectRequestedBrandOrLine(userOnlyLatest);
   const budgetFilter = extractBudgetQuery(userOnlyLatest);
   const useCaseFilter = detectRequestedUseCase(userOnlyLatest);
+  const genericFamily = detectGenericProductFamily(cleanLatest);
   const asksCondition = /\b(nuevo|nueva|nuevos|nuevas|usado|usada|usados|usadas|reacondicionado|reacondicionada|refurbished|de\s*caja|segunda\s*mano|condici[oó]n|estado\s*del\s*equipo)\b/i.test(
     cleanLatest
   );
@@ -4912,9 +5170,64 @@ function getRelevantProductsHighlight(latestQueryText, fullContextText = "") {
 - Si el cliente pregunta si un modelo espec\xEDfico o nuestro cat\xE1logo es nuevo o usado, resp\xF3ndele con total honestidad y claridad indicando su condici\xF3n exacta en Odoo (${newLaptops.length > 0 ? `Laptops marcadas como Nuevas: ${newLaptops.map((p) => `${p.name} (RD$${p.list_price.toLocaleString()})`).join(", ")}` : "Todas las laptops actuales en cat\xE1logo son Importadas Reacondicionadas Clase A con 6 meses de garant\xEDa"}).`
     );
   }
-  if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
-    const wantsSpecificNonLaptopCategory = /\b(monitor|monitores|pantalla)\b/i.test(cleanLatest) ? "monitor" : /\b(impresora|impresoras)\b/i.test(cleanLatest) ? "impresora" : /\b(router|repetidor|wifi|red)\b/i.test(cleanLatest) ? "red" : null;
-    let filtered = wantsSpecificNonLaptopCategory ? inStock.filter((p) => p.category === wantsSpecificNonLaptopCategory) : [...laptopsInStock];
+  if (genericFamily && genericFamily.id !== "laptop") {
+    let familyProducts = inStock.filter(genericFamily.matcher);
+    if (!genericFamily.isCable) {
+      familyProducts = familyProducts.filter((p) => !isCableOrWiringItem(p.name, p.odooCategory));
+    }
+    if (brandFilter) {
+      const brandMatches = familyProducts.filter(brandFilter.matcher);
+      if (brandMatches.length > 0) {
+        familyProducts = brandMatches;
+      }
+    }
+    if (budgetFilter) {
+      const budgetMatches = familyProducts.filter(
+        (p) => p.list_price >= budgetFilter.min && p.list_price <= budgetFilter.max
+      );
+      if (budgetMatches.length > 0) {
+        familyProducts = budgetMatches;
+      }
+    }
+    if (wantsOnlyNew) {
+      const newMatches = familyProducts.filter((p) => p.condition === "Nuevo");
+      if (newMatches.length > 0) {
+        familyProducts = newMatches;
+      }
+    }
+    familyProducts.sort((a, b) => a.list_price - b.list_price);
+    if (familyProducts.length > 0) {
+      const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : " (TODAS LAS MARCAS DISPONIBLES)";
+      const MAX_BLOCK_ITEMS = 15;
+      const displayedItems = familyProducts.slice(0, MAX_BLOCK_ITEMS);
+      const remainingCount = familyProducts.length - displayedItems.length;
+      const itemsListFormatted = displayedItems.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n");
+      const paginationFooter = remainingCount > 0 ? `
+
+\u{1F4CC} *Mostrando las primeras 15 de ${familyProducts.length} opciones disponibles (desde RD$${displayedItems[0]?.list_price.toLocaleString()} hasta RD$${displayedItems[displayedItems.length - 1]?.list_price.toLocaleString()}).*
+*Tenemos ${remainingCount} modelos adicionales en inventario. \xBFDeseas ver los siguientes ${Math.min(15, remainingCount)}, o prefieres que te filtre por una marca o presupuesto espec\xEDfico?* \u{1F6D2}` : `
+
+*${familyProducts.length} opciones disponibles en stock real. \xBFCu\xE1l te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* \u{1F6D2}`;
+      sections.push(
+        `=== \u{1F3AF} CAT\xC1LOGO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
+\u26A0\uFE0F INSTRUCCI\xD3N OBLIGATORIA PARA LA IA:
+1. El cliente consult\xF3 por "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : " de forma gen\xE9rica (multimarca total)"}.
+2. FORMATO EN BLOQUES INTERACTIVOS (M\xC1XIMO 15 PRODUCTOS POR MENSAJE): Env\xEDa EXACTAMENTE los ${displayedItems.length} productos listados a continuaci\xF3n (del *1.* al *${displayedItems.length}.*).
+3. PUREZA CATEG\xD3RICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? "El cliente solicit\xF3 cables expresamente, por lo que se env\xEDan cables disponibles." : "EST\xC1 TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, etc.)."}
+4. CIERRE INTERACTIVO: Incluye al final la invitaci\xF3n interactiva (${remainingCount > 0 ? `indicando los ${remainingCount} modelos adicionales restantes` : "confirmando el apartado"}).
+
+LISTA DE PRODUCTOS LISTA PARA ENVIAR (${displayedItems.length} opciones):
+
+${itemsListFormatted}${paginationFooter}`
+      );
+    } else {
+      sections.push(
+        `=== \u26A0\uFE0F SIN STOCK ACTUAL PARA ${genericFamily.label.toUpperCase()}${brandFilter ? ` (${brandFilter.label})` : ""} ===
+Informa cordialmente al cliente que en este momento no tenemos unidades disponibles de ${genericFamily.label}${brandFilter ? ` marca ${brandFilter.label}` : ""} en stock f\xEDsico, y ofr\xE9cele alternativas o verificar pr\xF3xima llegada.`
+      );
+    }
+  } else if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
+    let filtered = [...laptopsInStock];
     const activeFilterLabels = [];
     if (brandFilter) {
       filtered = filtered.filter(brandFilter.matcher);
@@ -4949,17 +5262,25 @@ function getRelevantProductsHighlight(latestQueryText, fullContextText = "") {
     filtered.sort((a, b) => a.list_price - b.list_price);
     if (filtered.length > 0) {
       const filterTitle = activeFilterLabels.join(" + ");
-      const readyFilteredList = filtered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n");
+      const MAX_FILTER_BLOCK = 15;
+      const displayedFiltered = filtered.slice(0, MAX_FILTER_BLOCK);
+      const remainingFiltered = filtered.length - displayedFiltered.length;
+      const readyFilteredList = displayedFiltered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n") + (remainingFiltered > 0 ? `
+
+\u{1F4CC} *Mostrando las primeras 15 de ${filtered.length} opciones disponibles dentro de este filtro.*
+*Tenemos ${remainingFiltered} modelos m\xE1s que coinciden. \xBFDeseas verlos, o te interesa apartar uno de estos?* \u{1F6D2}` : `
+
+*\xBFCu\xE1l de estas opciones te apartamos de inmediato?* \u{1F6D2}`);
       sections.push(
-        `=== \u{1F3AF} FILTRO ESTRICTO ACTIVO (${filterTitle}) \u2014 MOSTRAR \xDANICAMENTE ESTOS ${filtered.length} MODELOS ===
+        `=== \u{1F3AF} FILTRO ESTRICTO ACTIVO (${filterTitle}) \u2014 MOSTRAR ESTOS ${displayedFiltered.length} MODELOS ===
 \u26A0\uFE0F INSTRUCCI\xD3N OBLIGATORIA PARA LA IA:
 El cliente solicit\xF3 un filtro espec\xEDfico (${filterTitle}).
 ${useCaseFilter ? `\u{1F4A1} Argumento de venta para este uso: ${useCaseFilter.pitch}
-` : ""}1. Debes enviar **\xDANICAMENTE** estos ${filtered.length} productos filtrados (del *1.* al *${filtered.length}.*).
-2. **EST\xC1 ESTRICTAMENTE PROHIBIDO** enviar el cat\xE1logo general de 38 laptops cuando el cliente pidi\xF3 una marca, precio o uso espec\xEDfico.
+` : ""}1. Debes enviar estos ${displayedFiltered.length} productos filtrados (del *1.* al *${displayedFiltered.length}.*).
+2. **EST\xC1 ESTRICTAMENTE PROHIBIDO** enviar el cat\xE1logo general cuando el cliente pidi\xF3 una marca, precio o uso espec\xEDfico.
 3. Incluye en cada opci\xF3n su precio en RD$, stock, condici\xF3n (Nuevo o Reacondicionado Clase A), especificaciones clave y su link directo sin corchetes Markdown.
 
-LISTA FILTRADA LISTA PARA ENVIAR AL CLIENTE (${filtered.length} opciones):
+LISTA FILTRADA LISTA PARA ENVIAR AL CLIENTE (${displayedFiltered.length} opciones):
 
 ${readyFilteredList}`
       );
@@ -4968,41 +5289,6 @@ ${readyFilteredList}`
         `=== \u26A0\uFE0F SIN COINCIDENCIAS EXACTAS PARA EL FILTRO (${activeFilterLabels.join(" + ")}) ===
 Informa cordialmente al cliente que en este momento no tenemos un modelo exacto con esa combinaci\xF3n en stock, y mu\xE9strale las 3 opciones m\xE1s cercanas disponibles en nuestro inventario real.`
       );
-    }
-  }
-  if (!brandFilter && !budgetFilter && !useCaseFilter) {
-    if (/\b(monitor|monitores)\b/i.test(cleanLatest)) {
-      const mons = inStock.filter((p) => p.category === "monitor").sort((a, b) => a.list_price - b.list_price);
-      if (mons.length > 0) {
-        sections.push(
-          `=== \u{1F3AF} CAT\xC1LOGO COMPLETO DE MONITORES SOLICITADO (${mons.length} disponibles) \u2014 ENVIAR TODOS ===
-` + mons.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n")
-        );
-      }
-    } else if (/\b(impresora|impresoras)\b/i.test(cleanLatest)) {
-      const imps = inStock.filter((p) => p.category === "impresora").sort((a, b) => a.list_price - b.list_price);
-      if (imps.length > 0) {
-        sections.push(
-          `=== \u{1F3AF} CAT\xC1LOGO COMPLETO DE IMPRESORAS Y TINTAS SOLICITADO (${imps.length} disponibles) \u2014 ENVIAR TODOS ===
-` + imps.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n")
-        );
-      }
-    } else if (/\b(tablet|tablets|ipad|ipads)\b/i.test(cleanLatest)) {
-      const tabs = inStock.filter((p) => /tablet|ipad|galaxy tab|fire 8|tab 910|alcatel 1t/i.test(`${p.name} ${p.odooCategory || ""}`)).sort((a, b) => a.list_price - b.list_price);
-      if (tabs.length > 0) {
-        sections.push(
-          `=== \u{1F3AF} CAT\xC1LOGO COMPLETO DE TABLETS E IPADS SOLICITADO (${tabs.length} disponibles) \u2014 ENVIAR TODOS ===
-` + tabs.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n")
-        );
-      }
-    } else if (/\b(repetidor|repetidores|router|routers|antena\s*wifi)\b/i.test(cleanLatest)) {
-      const reds = inStock.filter((p) => p.category === "red").sort((a, b) => a.list_price - b.list_price);
-      if (reds.length > 0) {
-        sections.push(
-          `=== \u{1F3AF} CAT\xC1LOGO COMPLETO DE REPETIDORES Y REDES SOLICITADO (${reds.length} disponibles) \u2014 ENVIAR TODOS ===
-` + reds.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n")
-        );
-      }
     }
   }
   const stopWords = /* @__PURE__ */ new Set([
@@ -5062,7 +5348,10 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       }
     }
     scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-    const topMatches = scored.slice(0, 40).map((s) => s.product);
+    let topMatches = scored.slice(0, 40).map((s) => s.product);
+    if (genericFamily && !genericFamily.isCable) {
+      topMatches = topMatches.filter((p) => !isCableOrWiringItem(p.name, p.odooCategory));
+    }
     if (topMatches.length > 0) {
       sections.push(
         `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===
@@ -5174,11 +5463,27 @@ app.post("/api/holidays/overrides", async (req, res) => {
     holidays: getHolidaysWithOverridesForYear(ctx.year, appConfig.holidayOverrides || [])
   });
 });
-app.post("/api/config", (req, res) => {
+app.post("/api/config", async (req, res) => {
   const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== void 0) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
-    appConfig.aiProvider = { ...appConfig.aiProvider, ...aiProvider };
+    const nextAi = { ...appConfig.aiProvider, ...aiProvider };
+    if (typeof aiProvider.openaiApiKey === "string") {
+      nextAi.openaiApiKey = aiProvider.openaiApiKey.trim();
+    }
+    if (typeof aiProvider.deepseekApiKey === "string") {
+      nextAi.deepseekApiKey = aiProvider.deepseekApiKey.trim();
+    }
+    if (typeof aiProvider.geminiApiKey === "string") {
+      nextAi.geminiApiKey = aiProvider.geminiApiKey.trim();
+    }
+    if (typeof aiProvider.openaiBaseUrl === "string" && aiProvider.openaiBaseUrl.trim()) {
+      nextAi.openaiBaseUrl = aiProvider.openaiBaseUrl.trim();
+    }
+    if (typeof aiProvider.deepseekBaseUrl === "string" && aiProvider.deepseekBaseUrl.trim()) {
+      nextAi.deepseekBaseUrl = aiProvider.deepseekBaseUrl.trim();
+    }
+    appConfig.aiProvider = nextAi;
     rejectedOpenAiKeys.clear();
     rejectedDeepseekKeys.clear();
   }
@@ -5201,6 +5506,44 @@ app.post("/api/config", (req, res) => {
   }
   broadcastEvent("config_updated", appConfig);
   res.json({ success: true, config: appConfig });
+});
+app.post("/api/ai/save-credentials", async (req, res) => {
+  const {
+    provider,
+    model,
+    temperature,
+    customInstructions,
+    openaiApiKey,
+    openaiBaseUrl,
+    deepseekApiKey,
+    deepseekBaseUrl,
+    geminiApiKey
+  } = req.body;
+  appConfig.aiProvider = {
+    ...appConfig.aiProvider,
+    provider: provider || appConfig.aiProvider?.provider || "gemini",
+    model: model || appConfig.aiProvider?.model || "gemini-3.8-flash",
+    temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
+    customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? "",
+    ...openaiApiKey !== void 0 ? { openaiApiKey: String(openaiApiKey).trim() } : {},
+    ...openaiBaseUrl !== void 0 && String(openaiBaseUrl).trim() ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {},
+    ...deepseekApiKey !== void 0 ? { deepseekApiKey: String(deepseekApiKey).trim() } : {},
+    ...deepseekBaseUrl !== void 0 && String(deepseekBaseUrl).trim() ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {},
+    ...geminiApiKey !== void 0 ? { geminiApiKey: String(geminiApiKey).trim() } : {}
+  };
+  rejectedOpenAiKeys.clear();
+  rejectedDeepseekKeys.clear();
+  savePersistedConfig();
+  try {
+    await autoSyncConfigToSupabase(appConfig);
+  } catch {
+  }
+  broadcastEvent("config_updated", appConfig);
+  res.json({
+    success: true,
+    config: appConfig,
+    message: "Credenciales de IA guardadas permanentemente en el servidor y respaldadas en Supabase."
+  });
 });
 app.post("/api/supabase/test-connection", async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || "").trim();
@@ -5503,17 +5846,47 @@ app.post("/api/ai/test-provider", async (req, res) => {
       });
       res.json({
         success: false,
+        requestedProvider: requested,
         providerUsed: fallbackResult.providerUsed,
         modelUsed: fallbackResult.modelUsed,
-        message: `${err.message}. Mientras actualizas la clave, el Bot de Ventas est\xE1 respondiendo tus chats de WhatsApp autom\xE1ticamente con el motor integrado (${fallbackResult.providerUsed.toUpperCase()} ${fallbackResult.modelUsed}).`
+        isFallbackActive: true,
+        message: `${err.message} \u26A0\uFE0F Mientras actualizas la clave, el Bot de Ventas est\xE1 respondiendo tus chats de WhatsApp autom\xE1ticamente con el motor integrado de respaldo (${fallbackResult.providerUsed.toUpperCase()} ${fallbackResult.modelUsed}) para que ning\xFAn cliente quede desatendido.`
       });
     } catch {
       res.json({
         success: false,
+        requestedProvider: requested,
         message: `No se pudo conectar con ${requested.toUpperCase()}: ${err.message}`
       });
     }
   }
+});
+app.post("/api/system/time-sync", (req, res) => {
+  const { clientTimestamp } = req.body;
+  if (typeof clientTimestamp === "number" && clientTimestamp > 0) {
+    const serverNow = Date.now();
+    const driftMs = clientTimestamp - serverNow;
+    if (Math.abs(driftMs) > 3e3) {
+      setGlobalTimeOffset(driftMs);
+      console.log(`[Time Sync]: Servidor sincronizado con hora real del cliente. Drift corregido: ${driftMs}ms`);
+    }
+  }
+  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: Date.now(),
+    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    dominicanTime: rd
+  });
+});
+app.get("/api/system/time-status", (req, res) => {
+  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: Date.now(),
+    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    dominicanTime: rd
+  });
 });
 app.get("/api/odoo/products", async (req, res) => {
   const refresh = req.query.refresh === "true";
@@ -6431,8 +6804,8 @@ Si el cliente expresa intenci\xF3n de comprar, apartar, cotizar o hacer un pedid
 - Direcci\xF3n registrada: ${customerRecord?.address || "No proporcionada a\xFAn"}
 - Intereses detectados: ${(conv?.detectedProducts || []).join(", ") || "Explorando cat\xE1logo"}
 - Pedidos previos en CRM: ${customerOrders.length > 0 ? customerOrders.map((o) => `${o.id} (${o.products} - RD$${o.totalAmount.toLocaleString()} - Estado: ${o.status})`).join("; ") : "Ninguno a\xFAn"}${orderPhoneValidationDirective}`;
-  const rdTimeContext = getDominicanTimeContext(/* @__PURE__ */ new Date(), appConfig.holidayOverrides || []);
-  const rdTimePromptBlock = buildDominicanTimePromptContext(/* @__PURE__ */ new Date(), appConfig.holidayOverrides || []);
+  const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const filledInstruction = rdTimePromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + crmCustomerContext;
   return filledInstruction;
 }
@@ -6715,11 +7088,21 @@ Consulta del cliente: "${baseCustomerText}"` : baseCustomerText;
     console.log(
       `\u{1F916} [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? "S\xCD" : "NO"}" | Motor=${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`
     );
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const liveTimePromptNotice = `[\u{1F552} ESTADO Y HORA EN VIVO EN REP\xDABLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha oficial actual en RD: ${rdNow.fullDateStr}
+- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+- Pr\xF3xima apertura comercial: ${rdNow.nextOpeningStr}
+${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}
+` : ""}${rdNow.isOpen ? "\u{1F449} INSTRUCCI\xD3N DE HORARIO: La tienda f\xEDsica (Av. Charles de Gaulle #133) y el servicio de entregas est\xE1n ABIERTOS ahora mismo. Puedes confirmar despachos para hoy mismo." : `\u{1F449} INSTRUCCI\xD3N DE HORARIO: La tienda f\xEDsica y el servicio de entregas est\xE1n CERRADOS en este momento (${rdNow.statusDetail}). S\xED debes tomar el pedido y apartar el equipo con total normalidad, asegur\xE1ndole al cliente que su producto queda apartado y que ser\xE1 coordinado y despachado: ${rdNow.nextOpeningStr}.`}`;
     const aiResult = await generateTextWithConfiguredAI({
-      prompt: `Mensaje actual del cliente (${conv.customerName}):
+      prompt: `${liveTimePromptNotice}
+
+Mensaje actual del cliente (${conv.customerName}):
 ${customerMessageText}
 
-Responde ahora como el Agente Oficial de Ventas de Todo Lapto siguiendo las 36 reglas y el estado de horario/apertura en RD, usando \xFAnicamente productos y precios reales del cat\xE1logo y guiando activamente al cliente hacia la compra:`,
+Responde ahora como el Agente Oficial de Ventas de Todo Lapto siguiendo las 36 reglas y el estado de horario/apertura en RD indicado arriba en tiempo real, usando \xFAnicamente productos y precios reales del cat\xE1logo y guiando activamente al cliente hacia la compra:`,
       systemInstruction,
       chatMessages: historyTurns,
       allowFallback: true
@@ -6794,11 +7177,21 @@ Consulta del cliente: "${baseText}"` : baseText;
     historyTurns.pop();
   }
   try {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const liveTimePromptNotice = `[\u{1F552} ESTADO Y HORA EN VIVO EN REP\xDABLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
+- Fecha oficial actual en RD: ${rdNow.fullDateStr}
+- Hora exacta en este instante: ${rdNow.time12} (${rdNow.time24} hrs)
+- Estado operativo del negocio ahora mismo: ${rdNow.statusSummary} (${rdNow.statusDetail})
+- Pr\xF3xima apertura comercial: ${rdNow.nextOpeningStr}
+${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}
+` : ""}${rdNow.isOpen ? "\u{1F449} INSTRUCCI\xD3N DE HORARIO: La tienda f\xEDsica y el servicio de entregas est\xE1n ABIERTOS ahora mismo." : `\u{1F449} INSTRUCCI\xD3N DE HORARIO: La tienda f\xEDsica y el servicio de entregas est\xE1n CERRADOS en este momento (${rdNow.statusDetail}). S\xED debes tomar el pedido y apartar el producto, informando que ser\xE1 despachado: ${rdNow.nextOpeningStr}.`}`;
     const result = await generateTextWithConfiguredAI({
-      prompt: `Mensaje actual del cliente:
+      prompt: `${liveTimePromptNotice}
+
+Mensaje actual del cliente:
 ${queryText}
 
-Responde siguiendo estrictamente las 36 reglas del Agente Oficial de Ventas de Todo Lapto:`,
+Responde siguiendo estrictamente las 36 reglas del Agente Oficial de Ventas de Todo Lapto y el estado de horario/apertura en RD indicado arriba en tiempo real:`,
       systemInstruction,
       chatMessages: historyTurns,
       allowFallback: true
@@ -7097,7 +7490,7 @@ async function startServer() {
       `\u{1F680} Vendem\xE1 CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || "default(3000)"} (PID: ${process.pid})`
     );
     setTimeout(() => {
-      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.log("Initial background sync info:", e?.message || e));
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.log("Initial background sync info:", e?.message || e));
     }, 3500);
     setInterval(() => {
       syncOdooInventory().catch(() => {

@@ -12,9 +12,12 @@ export interface DominicanTimeContext {
   monthName: string; // 'Enero', 'Febrero', etc.
   hour: number; // 0-23
   minute: number; // 0-59
+  second: number; // 0-59
   time12: string; // '08:30 AM'
+  time12WithSeconds: string; // '08:30:15 AM'
   time24: string; // '08:30'
-  fullDateStr: string; // 'Jueves 29 de Octubre de 2026'
+  time24WithSeconds: string; // '08:30:15'
+  fullDateStr: string; // 'Martes 3 de Noviembre de 2026'
   isHoliday: boolean;
   holidayName?: string;
   wasOriginalHolidayMoved?: boolean;
@@ -26,7 +29,7 @@ export interface DominicanTimeContext {
   statusReason: 'open' | 'closed_night' | 'closed_morning' | 'closed_sunday' | 'closed_holiday';
   statusSummary: string; // '🟢 ABIERTO' or '🔴 CERRADO'
   statusDetail: string; // 'Abierto (Lunes a Sábado de 8:30 AM a 6:00 PM)' or 'Cerrado por horario nocturno...'
-  nextOpeningStr: string; // 'Mañana viernes a las 8:30 AM'
+  nextOpeningStr: string; // 'Mañana miércoles a las 8:30 AM'
   customerNotice: string;
 }
 
@@ -50,6 +53,19 @@ export interface EnrichedHolidayItem {
 
 // Module-level shared overrides so both backend and frontend components stay in sync
 let globalHolidayOverrides: HolidayOverride[] = [];
+let globalTimeOffsetMs = 0;
+
+export function setGlobalTimeOffset(offsetMs: number) {
+  globalTimeOffsetMs = offsetMs;
+}
+
+export function getGlobalTimeOffset(): number {
+  return globalTimeOffsetMs;
+}
+
+export function getEffectiveCurrentDate(): Date {
+  return new Date(Date.now() + globalTimeOffsetMs);
+}
 
 export function setGlobalHolidayOverrides(overrides?: HolidayOverride[]) {
   if (Array.isArray(overrides)) {
@@ -417,7 +433,7 @@ export function evaluateDateHolidayStatus(
  * - Official RD Holidays (respecting user overrides/moved dates): Closed all day
  */
 export function getDominicanTimeContext(
-  baseDate: Date = new Date(),
+  baseDate: Date = getEffectiveCurrentDate(),
   overridesInput?: HolidayOverride[]
 ): DominicanTimeContext {
   const overrides = overridesInput ?? globalHolidayOverrides;
@@ -447,6 +463,7 @@ export function getDominicanTimeContext(
   let hour = parseInt(partMap.hour, 10);
   if (hour === 24) hour = 0;
   const minute = parseInt(partMap.minute, 10);
+  const second = parseInt(partMap.second || '0', 10);
   const ymd = formatYMD(year, month, day);
 
   // Determine weekday in Santo Domingo time
@@ -460,7 +477,9 @@ export function getDominicanTimeContext(
   const h12 = hour % 12 || 12;
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const time12 = `${h12.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ${ampm}`;
+  const time12WithSeconds = `${h12.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')} ${ampm}`;
   const time24 = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  const time24WithSeconds = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
   const fullDateStr = `${dayName} ${day} de ${monthName} de ${year}`;
 
   // Evaluate holiday with user overrides (moved holidays / workdays)
@@ -545,8 +564,11 @@ export function getDominicanTimeContext(
     monthName,
     hour,
     minute,
+    second,
     time12,
+    time12WithSeconds,
     time24,
+    time24WithSeconds,
     fullDateStr,
     isHoliday,
     holidayName,
@@ -654,7 +676,7 @@ export function buildHolidayOverridesSummaryText(
  * Builds the AI prompt context block for the Dominican Republic Date, Time & Business Schedule.
  */
 export function buildDominicanTimePromptContext(
-  baseDate: Date = new Date(),
+  baseDate: Date = getEffectiveCurrentDate(),
   overridesInput?: HolidayOverride[]
 ): string {
   const overrides = overridesInput ?? globalHolidayOverrides;
