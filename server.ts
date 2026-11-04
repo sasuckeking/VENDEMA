@@ -2338,13 +2338,16 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         hasChanges = true;
       }
 
-      let messages = prevConv?.messages || (parsedLast ? [parsedLast] : []);
+      let messages = prevConv?.messages ? [...prevConv.messages] : (parsedLast ? [parsedLast] : []);
       if (
-        prevConv?.messagesLoaded &&
         parsedLast &&
-        !messages.some(m => m.evolutionMessageId === parsedLast.evolutionMessageId)
+        !messages.some(
+          m =>
+            (parsedLast.evolutionMessageId && m.evolutionMessageId === parsedLast.evolutionMessageId) ||
+            (parsedLast.id && m.id === parsedLast.id)
+        )
       ) {
-        messages = [...messages, parsedLast];
+        messages.push(parsedLast);
       }
       messages = mergeWithLocalMessages(canonicalSessionId, messages, prevConv?.messages || [], cleanPhone);
 
@@ -2672,6 +2675,7 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
             where: { key: { remoteJid: jid } },
             limit: 35,
           }),
+          signal: AbortSignal.timeout(3000),
         })
           .then(r => (r.ok ? r.json() : null))
           .catch(() => null)
@@ -3052,6 +3056,7 @@ async function sendEvolutionMessageWithStatus(
           text,
           delay: delayMs,
         }),
+        signal: AbortSignal.timeout(6000),
       });
 
       if (res.ok) {
@@ -6168,15 +6173,17 @@ async function triggerSalesBotReplyForConversation(
       await syncOdooInventory();
     }
 
-    // 2. Only fetch full Evolution message history if messages are empty or a quote needs hydration (saves 2-4 seconds!)
+    // 2. Only fetch full Evolution message history if thread is completely empty or a quoted message needs text hydration
     const needsHistoryHydration =
       !conv.messages ||
       conv.messages.length === 0 ||
-      (initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text) ||
-      (!conv.messagesLoaded && !isInitialSimpleGreeting);
+      Boolean(initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text);
 
     if (needsHistoryHydration) {
       await loadEvolutionMessagesForChat(conv.sessionId);
+    } else if (!conv.messagesLoaded && !isInitialSimpleGreeting) {
+      // Hydrate older context asynchronously without adding 2-4 seconds lag to the bot's current reply!
+      loadEvolutionMessagesForChat(conv.sessionId).catch(() => {});
     }
 
     const lastMsg = conv.messages[conv.messages.length - 1];
@@ -6539,15 +6546,29 @@ Responde ÚNICAMENTE con el objeto JSON.`;
 });
 
 // 9. Webhook for Evolution API (Real-Time Inbound Messages, Audio, Photos, Videos)
-app.post('/api/webhook/evolution', async (req, res) => {
+const handleEvolutionWebhook = async (req: express.Request, res: express.Response) => {
   res.status(200).json({ received: true });
 
-  const body = req.body;
-  const event = body?.event;
-  const messageData = body?.data;
-  const key = messageData?.key;
+  const body = req.body || {};
+  const rawEvent = (body?.event || body?.type || '').toString().trim().toLowerCase().replace(/[-_]/g, '.');
 
-  if (event !== 'messages.upsert' || !key || key.fromMe) {
+  // Accept messages.upsert, messages.update, and variants in any casing or separator format
+  const isMessageUpsert =
+    rawEvent === 'messages.upsert' ||
+    rawEvent === 'messages.update' ||
+    rawEvent === 'message' ||
+    rawEvent.endsWith('.upsert') ||
+    rawEvent.endsWith('upsert');
+
+  // Robust unpacking: Evolution API can send data as an object, array of records, or nested messages
+  const messageData = Array.isArray(body?.data)
+    ? body.data[0]
+    : Array.isArray(body?.data?.messages)
+    ? body.data.messages[0]
+    : body?.data || body?.message || body;
+
+  const key = messageData?.key;
+  if (!isMessageUpsert || !key || key.fromMe) {
     return;
   }
 
@@ -6583,6 +6604,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       (senderNumber && c.customerPhone === senderNumber) ||
       relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
   );
+
   if (!conv) {
     conv = {
       sessionId: remoteJid,
@@ -6605,20 +6627,99 @@ app.post('/api/webhook/evolution', async (req, res) => {
     conv.lastTimestamp = parsedIncoming.timestamp;
     conv.lastMessagePreview = parsedIncoming.content;
     conv.lastMessageType = parsedIncoming.type;
-    if (!conv.messages.some(m => m.evolutionMessageId === parsedIncoming.evolutionMessageId)) {
+    if (
+      !conv.messages.some(
+        m =>
+          (parsedIncoming.evolutionMessageId && m.evolutionMessageId === parsedIncoming.evolutionMessageId) ||
+          (parsedIncoming.id && m.id === parsedIncoming.id)
+      )
+    ) {
       conv.messages.push(parsedIncoming);
     }
   }
 
   broadcastEvent('new_message', { sessionId: conv.sessionId, message: parsedIncoming });
+  broadcastEvent('conversations_update', { count: conversations.length });
 
   if (appConfig.supabase?.autoSync !== false) {
     autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {});
   }
 
-  // Trigger AI Reply if active
+  // Trigger AI Reply instantly in background without blocking the webhook
   if (appConfig.globalAiActive && conv.aiEnabled) {
-    await triggerSalesBotReplyForConversation(conv, 'evolution_webhook');
+    triggerSalesBotReplyForConversation(conv, 'evolution_webhook').catch(err => {
+      console.log(`[Sales Bot Webhook Trigger Info for ${conv.customerName}]:`, err?.message || err);
+    });
+  }
+};
+
+// Mount webhook on all standard Evolution API route endpoints (both /api/webhook and root /webhook)
+app.post('/api/webhook/evolution', handleEvolutionWebhook);
+app.post('/api/webhook', handleEvolutionWebhook);
+app.post('/webhook/evolution', handleEvolutionWebhook);
+app.post('/webhook', handleEvolutionWebhook);
+
+// Allow GET for webhook health-check verification in browser
+app.get(['/api/webhook/evolution', '/api/webhook', '/webhook/evolution', '/webhook'], (_req, res) => {
+  res.json({
+    status: 'online',
+    service: 'Todo Lapto WhatsApp Evolution Webhook',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Endpoint to automatically register the webhook directly inside Evolution API via REST
+app.post('/api/evolution/register-webhook', async (req, res) => {
+  try {
+    const rawUrl = (req.body?.webhookUrl || '').trim();
+    if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
+      return res.status(400).json({ success: false, message: 'Faltan credenciales de Evolution API' });
+    }
+    const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, '');
+    const instance = appConfig.evolution.instance;
+    const hostHeader = req.get('x-forwarded-host') || req.get('host') || 'todolapto.com';
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const defaultUrl = `${proto}://${hostHeader}/api/webhook/evolution`;
+    const targetWebhookUrl = rawUrl || defaultUrl;
+
+    const setRes = await fetch(`${baseUrl}/webhook/set/${instance}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: appConfig.evolution.apiKey,
+      },
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: targetWebhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            'MESSAGES_UPSERT',
+            'MESSAGES_UPDATE',
+            'SEND_MESSAGE'
+          ]
+        }
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!setRes.ok) {
+      const errText = await setRes.text().catch(() => '');
+      return res.status(setRes.status).json({
+        success: false,
+        message: `Evolution API devolvió estado ${setRes.status}: ${errText.slice(0, 200)}`,
+      });
+    }
+
+    const data = await setRes.json().catch(() => ({}));
+    return res.json({
+      success: true,
+      message: `Webhook registrado exitosamente en Evolution API apuntando a ${targetWebhookUrl}`,
+      data,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -6843,10 +6944,10 @@ async function startServer() {
     }, 3500);
 
     // Background synchronization schedule:
-    // 1. WhatsApp Evolution API: Fast background poll every 4 seconds + real-time Webhook so incoming WhatsApp messages are answered immediately.
+    // 1. WhatsApp Evolution API: Fast background poll every 2 seconds + real-time Webhook so incoming WhatsApp messages are answered immediately.
     setInterval(() => {
       syncEvolutionChats().catch(() => {});
-    }, 4000);
+    }, 2000);
 
     // 2. Odoo Inventory: Synchronized every 30 minutes (or immediately via manual refresh in UI).
     setInterval(() => {

@@ -239,8 +239,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const [isSaving, setIsSaving] = useState(false);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [isRegisteringWebhook, setIsRegisteringWebhook] = useState(false);
+  const [webhookRegisterResult, setWebhookRegisterResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const webhookUrl = `${window.location.origin}/api/webhook/evolution`;
+
+  const handleRegisterWebhook = async () => {
+    setIsRegisteringWebhook(true);
+    setWebhookRegisterResult(null);
+    try {
+      const res = await fetch('/api/evolution/register-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookUrl }),
+      });
+      const data = await res.json();
+      setWebhookRegisterResult(data);
+    } catch (err: any) {
+      setWebhookRegisterResult({ success: false, message: err.message || 'Error al conectar con Evolution API' });
+    } finally {
+      setIsRegisteringWebhook(false);
+    }
+  };
 
   // Fetch Evolution QR & Connection Status on mount
   const fetchQrAndState = async (forceConnect = false) => {
@@ -1351,23 +1371,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
               </div>
 
               {/* Webhook Configuration helper */}
-              <div className="p-3.5 bg-[#121822] rounded-xl border border-white/[0.06] space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200">
-                    URL de Webhook en Tiempo Real (Recibe mensajes, audios, fotos y videos):
-                  </span>
-                  <button
-                    type="button"
-                    onClick={copyWebhook}
-                    className="flex items-center gap-1 text-[11px] text-lime-400 hover:text-lime-300 font-semibold"
-                  >
-                    {copiedWebhook ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedWebhook ? 'Copiado' : 'Copiar URL'}</span>
-                  </button>
+              <div className="p-3.5 bg-[#121822] rounded-xl border border-white/[0.06] space-y-2.5 text-xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold text-slate-200 block">
+                      URL de Webhook en Tiempo Real (Recibe mensajes, audios, fotos y videos al instante):
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Permite que el bot responda en menos de 1 segundo al recibir el mensaje de WhatsApp.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleRegisterWebhook}
+                      disabled={isRegisteringWebhook}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-lime-950/80 hover:bg-lime-900 border border-lime-700/60 text-lime-300 text-xs font-semibold transition-colors disabled:opacity-50"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${isRegisteringWebhook ? 'animate-spin' : ''}`} />
+                      <span>{isRegisteringWebhook ? 'Vinculando...' : 'Vincular Webhook en Evolution API'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyWebhook}
+                      className="flex items-center gap-1 text-[11px] text-lime-400 hover:text-lime-300 font-semibold px-2 py-1 rounded bg-white/[0.04]"
+                    >
+                      {copiedWebhook ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedWebhook ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                  </div>
                 </div>
+
                 <div className="p-2 bg-black/50 rounded font-mono text-slate-300 select-all overflow-x-auto text-[11px]">
                   {webhookUrl}
                 </div>
+
+                {webhookRegisterResult && (
+                  <div
+                    className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
+                      webhookRegisterResult.success
+                        ? 'bg-emerald-950/60 border-emerald-600/60 text-emerald-200'
+                        : 'bg-red-950/60 border-red-600/60 text-red-200'
+                    }`}
+                  >
+                    {webhookRegisterResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                    )}
+                    <span>{webhookRegisterResult.message}</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end pt-1">
