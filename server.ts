@@ -2446,62 +2446,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
     // Flush any queued outbound messages that were waiting for Evolution's Baileys socket to finish reconnecting
     await flushPendingOutboundQueue();
 
-    // Check top active conversations for unanswered recent customer messages and auto-reply with Sales Bot!
-    if (appConfig.globalAiActive) {
-      const nowMs = Date.now();
-      for (const conv of conversations.slice(0, 15)) {
-        const lastMsg = conv.messages[conv.messages.length - 1];
-        if (!lastMsg) continue;
-        const msgId = lastMsg.evolutionMessageId || lastMsg.id;
-
-        if (isFirstEvolutionSync) {
-          // On initial server boot, mark all pre-existing messages as already seen so we only auto-reply to NEW incoming messages
-          processedMessageIds.set(msgId, nowMs);
-          continue;
-        }
-
-        if (!conv.aiEnabled) continue;
-        // Skip WhatsApp groups and internal team/admin/support numbers
-        if (
-          isWhatsAppGroup(conv.sessionId) ||
-          isWhatsAppGroup(conv.customerPhone) ||
-          conv.sessionId === '270647783641294@lid' ||
-          conv.customerName.toLowerCase().includes('soporte todo lapto') ||
-          (conv.customerPhone &&
-            (conv.customerPhone === appConfig.evolution.teamPhone ||
-              conv.customerPhone === appConfig.evolution.adminPhone))
-        ) {
-          processedMessageIds.set(msgId, nowMs);
-          continue;
-        }
-
-        const msgTimeMs = new Date(lastMsg.timestamp).getTime();
-        const ageMs = nowMs - msgTimeMs;
-
-        // Skip if bot already replied recently, if thread last message is assistant, or if lock is active
-        const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
-        if (skipCheck.skip) continue;
-
-        const contactKeys = getConversationContactKeys(conv);
-        if (contactKeys.some(k => inFlightBotKeys.has(k))) continue;
-
-        // If a brand new message in the thread is from the customer, arrived within the last 5 minutes, and hasn't been answered yet:
-        if (
-          lastMsg.sender === 'customer' &&
-          ageMs <= 5 * 60 * 1000 &&
-          !processedMessageIds.has(msgId)
-        ) {
-          processedMessageIds.set(msgId, nowMs);
-          for (const k of contactKeys) {
-            processedMessageIds.set(`${k}::${msgId}`, nowMs);
-          }
-          triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
-            console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
-          );
-        }
-      }
-    }
-
+    // Background polling strictly synchronizes CRM data without auto-replying (Webhook handles real-time replies)
     isFirstEvolutionSync = false;
   } catch (err: any) {
     console.log(`[Evolution Live Sync Info]: ${err.message}`);
@@ -5945,6 +5890,9 @@ function buildInstantConversationalReply(conv?: Conversation, rawText = ''): str
     .replace(/\s+/g, ' ')
     .trim();
 
+  // If conversation already has prior messages in the thread, NEVER repeat the full welcome spiel
+  const hasPriorMessages = (conv?.messages || []).filter(m => m.sender === 'assistant' || m.sender === 'customer').length > 1;
+
   if (/\b(gracias|muchas gracias|mil gracias|bendiciones|amen|un placer|igualmente|igual)\b/i.test(cleaned)) {
     return `¡Siempre a tu orden en *Todo Lapto*${namePart}! 😊 Cualquier otra consulta aquí estamos para servirte.`;
   }
@@ -5954,7 +5902,11 @@ function buildInstantConversationalReply(conv?: Conversation, rawText = ''): str
   }
 
   if (/\b(disculpa|disculpe|una pregunta|tengo una pregunta|una consulta)\b/i.test(cleaned)) {
-    return `¡Claro que sí${namePart}! 😊 Cuéntanos, ¿en qué te podemos ayudar hoy en *Todo Lapto*?`;
+    return `¡Claro que sí${namePart}! 😊 Cuéntanos, ¿en qué te podemos colaborar hoy?`;
+  }
+
+  if (hasPriorMessages) {
+    return `¡Saludos de nuevo${namePart}! 😊 Cuéntanos, ¿en qué más te podemos ayudar?`;
   }
 
   let greetingWord = '¡Hola';
@@ -5970,13 +5922,93 @@ function buildInstantConversationalReply(conv?: Conversation, rawText = ''): str
     greetingWord = '¡Buenas';
   }
 
-  return `${greetingWord}${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?`;
+  return `${greetingWord}${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos colaborar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?`;
+}
+
+// Helper: Direct deterministic replies for standard operational queries (Store hours, location, delivery, warranty)
+// Responds in < 1ms, zero LLM wait, zero hallucinations, zero re-greetings
+function resolveDirectStoreQuestion(rawText: string, conv?: Conversation): string | null {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const cleaned = (rawText || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned || cleaned.length > 80) return null;
+
+  // 1. Horario / ¿Están abiertos? / ¿Hasta qué hora? / ¿A qué hora abren?
+  if (
+    /\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy)\b/i.test(
+      cleaned
+    ) ||
+    /^(abierto|abiertos|horario)\??$/i.test(cleaned)
+  ) {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    if (rdNow.isOpen) {
+      return `¡Claro que sí${namePart}! Estamos abiertos ahora mismo en nuestra tienda física en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el envío directo a tu dirección. 🛒`;
+    } else {
+      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda física en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido por aquí para despacharlo a primera hora. 🛒`;
+    }
+  }
+
+  // 2. Ubicación / ¿Dónde están ubicados? / Dirección
+  if (
+    /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(
+      cleaned
+    ) ||
+    /^(ubicacion|direccion)\??$/i.test(cleaned)
+  ) {
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la estación del teleférico). ¿Tienes pensado pasar por la tienda hoy o prefieres que coordinemos el envío a domicilio? 📍`;
+  }
+
+  // 3. Envíos / Delivery / Envíos al interior
+  if (
+    /\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(
+      cleaned
+    ) ||
+    /^(envio|envios|delivery)\??$/i.test(cleaned)
+  ) {
+    return `Sí, realizamos envíos a todo el país${namePart}. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. ¿En qué sector o provincia te encuentras? 🚚`;
+  }
+
+  // 4. Garantía
+  if (
+    /\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(
+      cleaned
+    ) ||
+    /^(garantia)\??$/i.test(cleaned)
+  ) {
+    return `Todos nuestros equipos cuentan con **garantía certificada de 6 meses por escrito** y soporte técnico directo en Todo Lapto. ¿Buscas alguna laptop o equipo en específico? 🛡️`;
+  }
+
+  // 5. Cuentas bancarias / Transferencias
+  if (
+    /\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(
+      cleaned
+    )
+  ) {
+    return `Aceptamos pago contra entrega (efectivo o transferencia al recibir tu equipo en Santo Domingo) y transferencias bancarias a nuestras cuentas de **Banreservas, Banco Popular y BHD**. ¿Qué método te resulta más cómodo? 💳`;
+  }
+
+  return null;
 }
 
 // Helper: Resilient catalog fallback if all AI models experience a temporary 503 spike during a product query
 function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): string {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
   const namePart = customerName ? `, ${customerName}` : '';
+
+  // 1. Check if it is a direct operational store question (hours, location, shipping, warranty)
+  const storeAnswer = resolveDirectStoreQuestion(queryText, conv);
+  if (storeAnswer) {
+    return storeAnswer;
+  }
+
+  // 2. Check product catalog highlights
   const highlight = getRelevantProductsHighlight(queryText, '');
   if (highlight) {
     const markerIdx = highlight.indexOf('):\n\n');
@@ -5987,6 +6019,12 @@ function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): st
       }
     }
   }
+
+  const hasPrior = (conv?.messages || []).filter(m => m.sender === 'assistant' || m.sender === 'customer').length > 1;
+  if (hasPrior) {
+    return `¡Con gusto${namePart}! Cuéntanos qué equipo o modelo específico estás buscando para ayudarte con los detalles y precios.`;
+  }
+
   return `¡Hola${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?`;
 }
 
@@ -6483,12 +6521,25 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     : `👉 INSTRUCCIÓN DE HORARIO: Si el cliente SOLO está saludando o preguntando por productos/precios, NO menciones que estamos cerrados; responde directo al grano. ÚNICAMENTE menciona que estamos cerrados (y que despachamos ${rdNow.nextOpeningStr}) si el cliente pregunta por el horario, si puede pasar por la tienda ahora mismo, o al momento de confirmar el despacho de un pedido.`
 }`;
 
+    const hasPriorMessages = (conv.messages || []).filter(m => m.id !== lastMsg.id).length > 0;
+    const conversationStateNotice = hasPriorMessages
+      ? `\n⚠️ REGLA ESTRICTA DE CONVERSACIÓN EN CURSO: El cliente ya está en medio de una conversación previa contigo en este chat. ESTÁ TERMINANTEMENTE PROHIBIDO volver a saludarlo ("¡Hola [Nombre]!", "Bienvenido a Todo Lapto...", "¿En qué te podemos ayudar hoy?"). Responde DIRECTO y únicamente a lo que acaba de consultar en 1 a 2 líneas concisas, sin mensajes de más ni párrafos innecesarios.`
+      : '';
+
     const promptToSend = isSimpleMsg
       ? `Mensaje actual del cliente (${conv.customerName}): "${baseCustomerText}"\n\n⚠️ El cliente envió un mensaje sencillo de saludo o cortesía. Responde directo al grano en 1 a 2 líneas cortas máximo (sin enviar listas de productos y sin decir que estamos cerrados):`
-      : `${liveTimePromptNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+      : `${liveTimePromptNotice}${conversationStateNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+
+    const directStoreReply = resolveDirectStoreQuestion(baseCustomerText, conv);
 
     let aiResult: { text: string; providerUsed: string; modelUsed: string };
-    if (isSimpleMsg) {
+    if (directStoreReply) {
+      aiResult = {
+        text: directStoreReply,
+        providerUsed: 'direct-operational-engine',
+        modelUsed: 'instant-store-faq',
+      };
+    } else if (isSimpleMsg) {
       aiResult = {
         text: buildInstantConversationalReply(conv, baseCustomerText),
         providerUsed: appConfig.aiProvider?.provider || 'gemini',
