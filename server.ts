@@ -975,7 +975,23 @@ const keywordsRed = [
   '300mbps','linkzone','alcatel link','hotspot','switch ','wifi'
 ];
 const keywordsMonitor = ['monitor','pantalla'];
-const keywordsImpresora = ['impresora','cartucho','tinta','smart tank','deskjet'];
+const keywordsImpresora = [
+  'impresora',
+  'impresoras',
+  'printer',
+  'printers',
+  'multifuncional',
+  'multifuncionales',
+  'ecotank',
+  'smart tank',
+  'deskjet',
+  'laserjet',
+  'pixma',
+  'ink tank',
+  'toner',
+  'tinta',
+  'cartucho',
+];
 
 function detectProductBrand(name: string, odooBrandName = '', desc = ''): string {
   const combined = `${odooBrandName} ${name} ${desc}`.toLowerCase();
@@ -1122,11 +1138,22 @@ function categorizeOdooProduct(name: string, odooCategName = ''): ProductItem['c
   const categ = (odooCategName || '').toLowerCase();
   const isExcludedPart = keywordsExcluir.some(k => nombre.includes(k));
 
-  if ((categ.includes('laptop') || categ.includes('all in one')) && !isExcludedPart) {
+  if (
+    (categ.includes('laptop') ||
+      categ.includes('portatil') ||
+      categ.includes('portátil') ||
+      categ.includes('computadora') ||
+      categ.includes('notebook') ||
+      categ.includes('all in one')) &&
+    !isExcludedPart
+  ) {
     return 'laptop';
   }
-  if (categ.includes('monitor')) {
+  if (categ.includes('monitor') || categ.includes('pantalla')) {
     return 'monitor';
+  }
+  if (categ.includes('impresora') || categ.includes('printer') || categ.includes('tinta') || categ.includes('toner')) {
+    return 'impresora';
   }
   if (keywordsLaptop.some(k => nombre.includes(k)) && !isExcludedPart) {
     return 'laptop';
@@ -1231,26 +1258,20 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
   isOdooSyncRunning = true;
 
   try {
-    // 1. Fetch all internal locations in Odoo (Vitrina, Almacen, Recepcion, Existencias)
+    // 1. Fetch vendible internal locations in Odoo (matching n8n node: usage=internal and complete_name not ilike Recepcion)
     const locations = await callOdoo('object', 'execute_kw', [
       appConfig.odoo.db,
       appConfig.odoo.uid,
       appConfig.odoo.apiKey,
       'stock.location',
       'search_read',
-      [[['usage', '=', 'internal']]],
+      [[['usage', '=', 'internal'], ['complete_name', 'not ilike', 'Recepcion']]],
       { fields: ['id', 'complete_name'] },
     ]);
 
-    const vitrinaLoc = Array.isArray(locations)
-      ? locations.find((l: any) => (l.complete_name || '').toLowerCase().includes('vitrina'))
-      : { id: 41 };
-    const almacenLoc = Array.isArray(locations)
-      ? locations.find((l: any) => (l.complete_name || '').toLowerCase().includes('almacen'))
-      : { id: 8 };
-    const recepcionLoc = Array.isArray(locations)
-      ? locations.find((l: any) => (l.complete_name || '').toLowerCase().includes('recepcion'))
-      : { id: 35 };
+    const vendibleLocIds: number[] = Array.isArray(locations)
+      ? locations.map((l: any) => l.id).filter(Boolean)
+      : [];
 
     // Refresh static product attribute definitions every 30 minutes
     const now = Date.now();
@@ -1259,102 +1280,92 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
       cachedOdooAttrLines.length === 0 ||
       now - lastOdooAttrsSync > 1000 * 60 * 30;
 
-    // 2. Fetch active vendible products + location stock + cached/fresh Odoo product attributes
-    const [allVendibleProducts, vitrinaProducts, almacenProducts, recepcionProducts, attrValues, attrLines] =
-      await Promise.all([
-        callOdoo('object', 'execute_kw', [
-          appConfig.odoo.db,
-          appConfig.odoo.uid,
-          appConfig.odoo.apiKey,
-          'product.template',
-          'search_read',
-          [[['sale_ok', '=', true], ['active', '=', true]]],
-          {
-            fields: [
-              'name',
-              'list_price',
-              'qty_available',
-              'virtual_available',
-              'website_url',
-              'description_sale',
-              'description_ecommerce',
-              'product_variant_id',
-              'website_published',
-              'categ_id',
-              'brand_id',
-            ],
-            limit: 2000,
-            order: 'list_price asc',
-          },
-        ]),
-        vitrinaLoc
-          ? callOdoo('object', 'execute_kw', [
-              appConfig.odoo.db,
-              appConfig.odoo.uid,
-              appConfig.odoo.apiKey,
-              'product.template',
-              'search_read',
-              [[['qty_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true]]],
-              {
-                fields: ['id', 'qty_available', 'virtual_available'],
-                limit: 2000,
-                context: { location: [vitrinaLoc.id] },
-              },
-            ]).catch(() => [])
-          : Promise.resolve([]),
-        almacenLoc
-          ? callOdoo('object', 'execute_kw', [
-              appConfig.odoo.db,
-              appConfig.odoo.uid,
-              appConfig.odoo.apiKey,
-              'product.template',
-              'search_read',
-              [[['qty_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true]]],
-              {
-                fields: ['id', 'qty_available', 'virtual_available'],
-                limit: 2000,
-                context: { location: [almacenLoc.id] },
-              },
-            ]).catch(() => [])
-          : Promise.resolve([]),
-        recepcionLoc
-          ? callOdoo('object', 'execute_kw', [
-              appConfig.odoo.db,
-              appConfig.odoo.uid,
-              appConfig.odoo.apiKey,
-              'product.template',
-              'search_read',
-              [[['qty_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true]]],
-              {
-                fields: ['id', 'qty_available', 'virtual_available'],
-                limit: 2000,
-                context: { location: [recepcionLoc.id] },
-              },
-            ]).catch(() => [])
-          : Promise.resolve([]),
-        shouldRefreshAttrs
-          ? callOdoo('object', 'execute_kw', [
-              appConfig.odoo.db,
-              appConfig.odoo.uid,
-              appConfig.odoo.apiKey,
-              'product.attribute.value',
-              'search_read',
-              [[]],
-              { fields: ['id', 'name', 'attribute_id'], limit: 500 },
-            ]).catch(() => cachedOdooAttrValues)
-          : Promise.resolve(cachedOdooAttrValues),
-        shouldRefreshAttrs
-          ? callOdoo('object', 'execute_kw', [
-              appConfig.odoo.db,
-              appConfig.odoo.uid,
-              appConfig.odoo.apiKey,
-              'product.template.attribute.line',
-              'search_read',
-              [[]],
-              { fields: ['id', 'product_tmpl_id', 'attribute_id', 'value_ids'], limit: 2000 },
-            ]).catch(() => cachedOdooAttrLines)
-          : Promise.resolve(cachedOdooAttrLines),
+    // 2. Fetch products using the exact n8n domain & context:
+    // [[["virtual_available",">",0],["sale_ok","=",true],["active","=",true],["website_published","=",true]]]
+    // with context: { location: vendibleLocIds }
+    const odooContext = vendibleLocIds.length > 0 ? { location: vendibleLocIds } : undefined;
+
+    let odooProductRecords = await callOdoo('object', 'execute_kw', [
+      appConfig.odoo.db,
+      appConfig.odoo.uid,
+      appConfig.odoo.apiKey,
+      'product.template',
+      'search_read',
+      [[['virtual_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true], ['website_published', '=', true]]],
+      {
+        fields: [
+          'name',
+          'list_price',
+          'virtual_available',
+          'qty_available',
+          'website_url',
+          'description_sale',
+          'description_ecommerce',
+          'product_variant_id',
+          'website_published',
+          'categ_id',
+          'brand_id',
+        ],
+        limit: 1000,
+        order: 'list_price asc',
+        context: odooContext,
+      },
+    ]);
+
+    // Fallback: if website_published is false for some products in stock, search active vendible products
+    if (!Array.isArray(odooProductRecords) || odooProductRecords.length === 0) {
+      odooProductRecords = await callOdoo('object', 'execute_kw', [
+        appConfig.odoo.db,
+        appConfig.odoo.uid,
+        appConfig.odoo.apiKey,
+        'product.template',
+        'search_read',
+        [[['virtual_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true]]],
+        {
+          fields: [
+            'name',
+            'list_price',
+            'virtual_available',
+            'qty_available',
+            'website_url',
+            'description_sale',
+            'description_ecommerce',
+            'product_variant_id',
+            'website_published',
+            'categ_id',
+            'brand_id',
+          ],
+          limit: 1000,
+          order: 'list_price asc',
+          context: odooContext,
+        },
       ]);
+    }
+
+    const [attrValues, attrLines] = await Promise.all([
+      shouldRefreshAttrs
+        ? callOdoo('object', 'execute_kw', [
+            appConfig.odoo.db,
+            appConfig.odoo.uid,
+            appConfig.odoo.apiKey,
+            'product.attribute.value',
+            'search_read',
+            [[]],
+            { fields: ['id', 'name', 'attribute_id'], limit: 500 },
+          ]).catch(() => cachedOdooAttrValues)
+        : Promise.resolve(cachedOdooAttrValues),
+      shouldRefreshAttrs
+        ? callOdoo('object', 'execute_kw', [
+            appConfig.odoo.db,
+            appConfig.odoo.uid,
+            appConfig.odoo.apiKey,
+            'product.template.attribute.line',
+            'search_read',
+            [[]],
+            { fields: ['id', 'product_tmpl_id', 'attribute_id', 'value_ids'], limit: 2000 },
+          ]).catch(() => cachedOdooAttrLines)
+        : Promise.resolve(cachedOdooAttrLines),
+    ]);
 
     if (Array.isArray(attrValues) && attrValues.length > 0) {
       cachedOdooAttrValues = attrValues;
@@ -1389,39 +1400,10 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
       }
     }
 
-    const vitrinaMap = new Map<number, number>();
-    if (Array.isArray(vitrinaProducts)) {
-      for (const vp of vitrinaProducts) {
-        vitrinaMap.set(vp.id, Math.max(Number(vp.qty_available) || 0, Number(vp.virtual_available) || 0));
-      }
-    }
-
-    const almacenMap = new Map<number, number>();
-    if (Array.isArray(almacenProducts)) {
-      for (const ap of almacenProducts) {
-        almacenMap.set(ap.id, Math.max(Number(ap.qty_available) || 0, Number(ap.virtual_available) || 0));
-      }
-    }
-
-    const recepcionMap = new Map<number, number>();
-    if (Array.isArray(recepcionProducts)) {
-      for (const rp of recepcionProducts) {
-        recepcionMap.set(rp.id, Math.max(Number(rp.qty_available) || 0, Number(rp.virtual_available) || 0));
-      }
-    }
-
-    if (Array.isArray(allVendibleProducts) && allVendibleProducts.length > 0) {
-      const mapped: ProductItem[] = allVendibleProducts
+    if (Array.isArray(odooProductRecords) && odooProductRecords.length > 0) {
+      const mapped: ProductItem[] = odooProductRecords
         .map((p: any) => {
-          const vStock = vitrinaMap.get(p.id) || 0;
-          const aStock = almacenMap.get(p.id) || 0;
-          const rStock = recepcionMap.get(p.id) || 0;
-          // Exclude RCP/Recepcion stock (uninspected/repair warehouse) from vendible stock
-          const rawGlobal = Math.max(Number(p.qty_available) || 0, Number(p.virtual_available) || 0);
-          const totalStock =
-            vStock + aStock > 0
-              ? vStock + aStock
-              : Math.max(0, rawGlobal - rStock);
+          const totalStock = Math.max(Number(p.virtual_available) || 0, Number(p.qty_available) || 0);
           const odooCatName = Array.isArray(p.categ_id) ? String(p.categ_id[1] || '') : '';
           const odooBrandName = Array.isArray(p.brand_id) ? String(p.brand_id[1] || '') : '';
           const cat = categorizeOdooProduct(p.name || '', odooCatName);
@@ -1470,9 +1452,9 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
             name: (p.name || '').trim(),
             list_price: Number(p.list_price) || 0,
             virtual_available: totalStock,
-            vitrinaStock: vStock,
-            almacenStock: aStock,
-            recepcionStock: rStock,
+            vitrinaStock: totalStock,
+            almacenStock: totalStock,
+            recepcionStock: 0,
             odooCategory: odooCatName,
             website_url: p.website_url || '',
             image_url: `https://todolapto.com.do/web/image/product.template/${p.id}/image_256`,
@@ -1486,16 +1468,16 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
             useCases,
           };
         })
-        // Keep all products with positive stock (in Vitrina/Almacén) and valid price (> RD$1)
         .filter((p: ProductItem) => p.virtual_available > 0 && p.list_price > 1);
 
       products = mapped;
       const laptopCount = products.filter(p => p.category === 'laptop').length;
+      const printerCount = products.filter(p => p.category === 'impresora').length;
 
       appConfig.odoo.lastSync = new Date().toISOString();
       appConfig.odoo.connected = true;
       console.log(
-        `[Odoo Real-Time Sync]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${vitrinaMap.size} in Vitrina, ${almacenMap.size} in Almacén; Recepción excluded)`
+        `[Odoo Real-Time Sync (n8n Pipeline)]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepción excluida)`
       );
       broadcastEvent('inventory_update', { count: products.length, lastSync: appConfig.odoo.lastSync });
     }
@@ -2612,8 +2594,9 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
 
   try {
     const url = `${appConfig.evolution.serverUrl}/chat/findMessages/${appConfig.evolution.instance}`;
+    const jidsToQuery = Array.from(jidSet).slice(0, 2);
     const responses = await Promise.all(
-      Array.from(jidSet).map(jid =>
+      jidsToQuery.map(jid =>
         fetch(url, {
           method: 'POST',
           headers: {
@@ -2622,7 +2605,7 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
           },
           body: JSON.stringify({
             where: { key: { remoteJid: jid } },
-            limit: 80,
+            limit: 35,
           }),
         })
           .then(r => (r.ok ? r.json() : null))
@@ -3295,12 +3278,20 @@ function getLiveInventoryString(): string {
       )
       .join('\n');
 
-  const readyToSendLaptopCatalog = laptops
-    .map(
-      (p, idx) =>
-        `*${idx + 1}.* *${p.name}*\n💰 RD$${p.list_price.toLocaleString()} | 📦 ${p.virtual_available} unidad(es) | 🏷️ ${p.condition === 'Nuevo' ? 'Nuevo' : 'Reacondicionado Clase A'}${p.specsSummary ? `\n⚙️ ${p.specsSummary.slice(0, 90)}` : ''}\n🔗 https://todolapto.com.do${p.website_url || ''}`
-    )
-    .join('\n\n');
+  const MAX_LAPTOP_CHUNK = 15;
+  const displayedLaptops = laptops.slice(0, MAX_LAPTOP_CHUNK);
+  const remainingLaptops = laptops.length - displayedLaptops.length;
+
+  const readyToSendLaptopCatalog =
+    displayedLaptops
+      .map(
+        (p, idx) =>
+          `*${idx + 1}.* *${p.name}*\n💰 RD$${p.list_price.toLocaleString()} | 📦 ${p.virtual_available} unidad(es) | 🏷️ ${p.condition === 'Nuevo' ? 'Nuevo' : 'Reacondicionado Clase A'}${p.specsSummary ? `\n⚙️ ${p.specsSummary.slice(0, 90)}` : ''}\n🔗 https://todolapto.com.do${p.website_url || ''}`
+      )
+      .join('\n\n') +
+    (remainingLaptops > 0
+      ? `\n\n📌 *Mostrando las primeras 15 de ${laptops.length} laptops disponibles en stock real (desde RD$${displayedLaptops[0]?.list_price.toLocaleString()} hasta RD$${displayedLaptops[displayedLaptops.length - 1]?.list_price.toLocaleString()}).*\n*Tenemos ${remainingLaptops} modelos más en inventario. ¿Cuál te llama la atención, o prefieres que te filtre por marca (Dell, Lenovo, HP), uso (oficina, estudios, gaming) o presupuesto?* 🛒`
+      : `\n\n*¿Cuál te interesa? Te ayudo a procesarlo ahora mismo.* 🛒`);
 
   // Count laptops by brand for quick reference
   const brandCounts: Record<string, number> = {};
@@ -3315,7 +3306,7 @@ function getLiveInventoryString(): string {
   return `RESUMEN DE CATEGORÍAS EN STOCK REAL (ODOO ERP — ${inStock.length} PRODUCTOS EN STOCK):
 - Laptops y Equipos Portátiles disponibles: ${laptops.length} modelos (${brandBreakdown})
   * REGLA DE FILTRADO INTELIGENTE:
-    1) Si piden catálogo general de una categoría ("qué laptops tienen", "qué monitores tienen", etc.) SIN especificar marca, precio ni uso -> Envía TODOS los modelos de esa categoría completos del *1.* al último sin cortar en 10.
+    1) Si piden catálogo general de una categoría ("qué laptops tienen", "qué monitores tienen", etc.) SIN especificar marca, precio ni uso -> Si son más de 15 productos, envía el bloque interactivo de las primeras 15 opciones del *1.* al *15.* indicando cuántas opciones adicionales quedan. Si son 15 o menos, envía todas completas.
     2) Si piden una MARCA específica (ej. Dell, Lenovo, HP, Asus, Acer, ThinkPad, Latitude, Chromebook) -> Envía ÚNICAMENTE los modelos de esa marca.
     3) Si piden un PRECIO o PRESUPUESTO específico (ej. 10,000 pesos, menos de 8 mil, entre 10 y 15 mil) -> Envía ÚNICAMENTE los modelos dentro de ese rango de precio.
     4) Si piden para un USO específico (ej. Oficina/Trabajo/Contabilidad, Gaming/Juegos, Estudios/Escuela, Programación/Diseño) -> Envía ÚNICAMENTE los modelos recomendados para ese uso.
@@ -3901,17 +3892,30 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
 
     if (familyProducts.length > 0) {
       const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : ' (TODAS LAS MARCAS DISPONIBLES)';
+      const MAX_BLOCK_ITEMS = 15;
+      const displayedItems = familyProducts.slice(0, MAX_BLOCK_ITEMS);
+      const remainingCount = familyProducts.length - displayedItems.length;
+
+      const itemsListFormatted = displayedItems
+        .map((p, idx) => formatWhatsAppProductBlock(p, idx))
+        .join('\n\n');
+
+      const paginationFooter =
+        remainingCount > 0
+          ? `\n\n📌 *Mostrando las primeras 15 de ${familyProducts.length} opciones disponibles (desde RD$${displayedItems[0]?.list_price.toLocaleString()} hasta RD$${displayedItems[displayedItems.length - 1]?.list_price.toLocaleString()}).*\n*Tenemos ${remainingCount} modelos adicionales en inventario. ¿Deseas ver los siguientes ${Math.min(15, remainingCount)}, o prefieres que te filtre por una marca o presupuesto específico?* 🛒`
+          : `\n\n*${familyProducts.length} opciones disponibles en stock real. ¿Cuál te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* 🛒`;
+
       sections.push(
-        `=== 🎯 CATÁLOGO COMPLETO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) — ENVIAR TODOS SIN EXCLUIR NINGUNO ===
+        `=== 🎯 CATÁLOGO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
 ⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
 1. El cliente consultó por "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : ' de forma genérica (multimarca total)'}.
-2. DEBES ENVIAR TODOS los ${familyProducts.length} productos listados a continuación (del *1.* al *${familyProducts.length}.*), sin omitir ninguno y sin importar la marca (mostrando todas las marcas disponibles en stock).
+2. FORMATO EN BLOQUES INTERACTIVOS (MÁXIMO 15 PRODUCTOS POR MENSAJE): Envía EXACTAMENTE los ${displayedItems.length} productos listados a continuación (del *1.* al *${displayedItems.length}.*).
 3. PUREZA CATEGÓRICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? 'El cliente solicitó cables expresamente, por lo que se envían cables disponibles.' : 'ESTÁ TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, etc.).'}
-4. NO LIMITES ARBITRARIAMENTE: No te detengas en 4 ni en 10 productos; envía la lista completa con precios en RD$, stock real, condición y enlaces limpios sin formato Markdown.
+4. CIERRE INTERACTIVO: Incluye al final la invitación interactiva (${remainingCount > 0 ? `indicando los ${remainingCount} modelos adicionales restantes` : 'confirmando el apartado'}).
 
-LISTA DE PRODUCTOS LISTA PARA ENVIAR (${familyProducts.length} opciones):
+LISTA DE PRODUCTOS LISTA PARA ENVIAR (${displayedItems.length} opciones):
 
-${familyProducts.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n')}`
+${itemsListFormatted}${paginationFooter}`
       );
     } else {
       sections.push(
@@ -3961,17 +3965,25 @@ Informa cordialmente al cliente que en este momento no tenemos unidades disponib
 
     if (filtered.length > 0) {
       const filterTitle = activeFilterLabels.join(' + ');
-      const readyFilteredList = filtered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n');
+      const MAX_FILTER_BLOCK = 15;
+      const displayedFiltered = filtered.slice(0, MAX_FILTER_BLOCK);
+      const remainingFiltered = filtered.length - displayedFiltered.length;
+
+      const readyFilteredList =
+        displayedFiltered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n') +
+        (remainingFiltered > 0
+          ? `\n\n📌 *Mostrando las primeras 15 de ${filtered.length} opciones disponibles dentro de este filtro.*\n*Tenemos ${remainingFiltered} modelos más que coinciden. ¿Deseas verlos, o te interesa apartar uno de estos?* 🛒`
+          : `\n\n*¿Cuál de estas opciones te apartamos de inmediato?* 🛒`);
 
       sections.push(
-        `=== 🎯 FILTRO ESTRICTO ACTIVO (${filterTitle}) — MOSTRAR ÚNICAMENTE ESTOS ${filtered.length} MODELOS ===
+        `=== 🎯 FILTRO ESTRICTO ACTIVO (${filterTitle}) — MOSTRAR ESTOS ${displayedFiltered.length} MODELOS ===
 ⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
 El cliente solicitó un filtro específico (${filterTitle}).
-${useCaseFilter ? `💡 Argumento de venta para este uso: ${useCaseFilter.pitch}\n` : ''}1. Debes enviar **ÚNICAMENTE** estos ${filtered.length} productos filtrados (del *1.* al *${filtered.length}.*).
-2. **ESTÁ ESTRICTAMENTE PROHIBIDO** enviar el catálogo general de 38 laptops cuando el cliente pidió una marca, precio o uso específico.
+${useCaseFilter ? `💡 Argumento de venta para este uso: ${useCaseFilter.pitch}\n` : ''}1. Debes enviar estos ${displayedFiltered.length} productos filtrados (del *1.* al *${displayedFiltered.length}.*).
+2. **ESTÁ ESTRICTAMENTE PROHIBIDO** enviar el catálogo general cuando el cliente pidió una marca, precio o uso específico.
 3. Incluye en cada opción su precio en RD$, stock, condición (Nuevo o Reacondicionado Clase A), especificaciones clave y su link directo sin corchetes Markdown.
 
-LISTA FILTRADA LISTA PARA ENVIAR AL CLIENTE (${filtered.length} opciones):
+LISTA FILTRADA LISTA PARA ENVIAR AL CLIENTE (${displayedFiltered.length} opciones):
 
 ${readyFilteredList}`
       );
