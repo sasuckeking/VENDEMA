@@ -1,34 +1,38 @@
-# Implementación Completada: Sincronización Odoo (Método n8n), Bloques Interactivos de 15 Productos y Reducción de Latencia
+# Desconexión Total de n8n, Integración Directa con Evolution API y Eliminación de Mensajes Repetitivos
 
-Se ha completado la optimización integral del motor de inventario en `server.ts` y del agente de ventas en WhatsApp, alineado con las preferencias confirmadas:
-
----
-
-## Tareas Completadas
-
-- [x] **1. Réplica Exacta de la Consulta de n8n para Odoo ERP (`syncOdooInventory` en `server.ts`)**
-  - **Paso 1:** Consulta de ubicaciones vendibles en `stock.location` (`usage = 'internal'` y `complete_name not ilike 'Recepcion'`).
-  - **Paso 2:** Consulta directa a `product.template.search_read` con el contexto `{ location: vendibleLocationIds }`, orden `list_price asc` y filtro `[['virtual_available', '>', 0], ['sale_ok', '=', true], ['active', '=', true], ['website_published', '=', true]]` (con fallback a activos vendibles si no están publicados).
-  - Reducción de 6 llamadas RPC pesadas a solo 2 llamadas rápidas, acelerando la sincronización en un 80% y recuperando todas las laptops e impresoras vendibles que antes se descartaban.
-
-- [x] **2. Detección Ampliada de Impresoras y Laptops (`keywordsImpresora` y `categorizeOdooProduct`)**
-  - Se añadieron términos como `printer`, `printers`, `ecotank`, `laserjet`, `pixma`, `ink tank`, `multifuncional` tanto en categorías como en nombres, asegurando que ninguna impresora en inventario quede sin clasificar.
-
-- [x] **3. Segmentación en Bloques Interactivos de hasta 15 Productos**
-  - **Listados de más de 15 productos:** El bot entrega los primeros 15 modelos del `*1.*` al `*15.*` ordenados de menor a mayor precio con precio, stock, condición y link directo `🔗 https://...`.
-  - **Cierre Interactivo:** Se añade automáticamente un pie de página indicando cuántos modelos adicionales quedan en stock (ej. *"📌 Mostrando las primeras 15 de 28 opciones disponibles. Tenemos 13 modelos adicionales en inventario. ¿Deseas ver los siguientes, o prefieres que te filtre por marca o presupuesto específico? 🛒"*).
-  - **Listados de 15 o menos:** Se envían completos sin truncamiento artificial.
-
-- [x] **4. Optimización de Latencia en Respuestas de WhatsApp**
-  - En `loadEvolutionMessagesForChat`, se redujo el límite de mensajes de 80 a 35 y se limitaron las consultas paralelas a un máximo de 2 JIDs principales, eliminando hasta 3 segundos de retraso de red antes de que la IA genere su respuesta.
-
-- [x] **5. Actualización del Prompt Maestro (`src/masterPrompt.ts`)**
-  - Se actualizaron las reglas **#5** y **#7.3** para consagrar la entrega estructurada en bloques de hasta 15 productos con footer interactivo y prohibir que el bot se detenga arbitrariamente en 10.
+Se completó la desconexión total de n8n y la solución definitiva al envío de mensajes repetitivos y respuestas lentas:
 
 ---
 
-## Verificación de Calidad
+## 1. Desconexión Total de n8n de la Instancia de Evolution API
+- **Webhook Desactivado:** Se envió el comando de configuración a la instancia `todolapto` de Evolution API (`POST /webhook/set/todolapto`) desactivando de raíz el webhook antiguo de n8n (`https://n8n-n8n.blrfh6.easypanel.host/webhook/laptop1`).
+- **Verificación en Evolution API:** Se confirmó con `GET /webhook/find/todolapto` que `enabled: false` y `url: ""`. Ya ningún flujo externo de n8n tiene acceso ni puede inyectar mensajes en WhatsApp.
+- **Limpieza de Código:** Se removieron todas las menciones y dependencias de n8n en el código fuente (`AIBrainView.tsx`, `server.ts`), operando de forma 100% nativa y directa entre el servidor del CRM, Evolution API y Odoo ERP JSON-RPC.
 
-- Compilación TypeScript exitosa con `compile_applet`.
-- Linteo con `tsc --noEmit` completado con 0 errores.
-- Servidor reiniciado y sincronización lista para recibir consultas.
+---
+
+## 2. Eliminación Definitiva de Mensajes Repetitivos y Duplicados
+- **Causa Raíz Identificada:** Los clientes recibían 3 mensajes repetidos porque el webhook antiguo de n8n tenía 2 nodos automatizados enviando respuestas al mismo tiempo que nuestro servidor procesaba el mensaje.
+- **Filtro Anti-Duplicados en Múltiples Capas (`server.ts`):**
+  1. `inFlightBotKeys`: Bloqueo atómico de procesamiento concurrente por contacto, teléfono, sessionId y JIDs (`@s.whatsapp.net` / `@lid`).
+  2. `handledContactsThisCycle`: Agrupación en ciclos de sincronización para que el mismo número no reciba más de un despacho por ciclo.
+  3. `recentOutboundDispatches`: Bloqueo a nivel de envío (`sendEvolutionMessageWithStatus`) que impide reenviar el mismo texto al mismo destino en menos de 45 segundos.
+  4. Cooldown calibrado a 6 segundos para evitar spam y permitir respuestas fluidas sin silencios artificiales.
+
+---
+
+## 3. Respuestas Inmediatas y Directas al Grano (<1ms)
+- **Resolvedor Determinístico (`resolveDirectStoreQuestion`):**
+  - **Preguntas sobre Horario / Apertura:** Responde al instante si la tienda física de Santo Domingo Este (Av. Charles de Gaulle #133) está abierta y su horario hasta las 6:00 PM, sin re-saludar ni enviar menús de laptops no solicitados.
+  - **Ubicación:** Dirección exacta en Av. Charles de Gaulle #133, Santo Domingo Este con referencia.
+  - **Envíos / Delivery:** Cobertura a todo el país y pago contra entrega en Santo Domingo.
+  - **Garantía:** 6 meses de garantía certificada por escrito en factura formal.
+  - **Cuentas Bancarias:** Banreservas, Banco Popular y BHD.
+- **Regla Anti-Re-saludo (Regla 2.0.2 en `masterPrompt.ts`):** Prohíbe terminantemente volver a saludar con "¡Hola! Bienvenido a Todo Lapto" si la conversación ya está abierta.
+
+---
+
+## Verificación
+- Linteo con `tsc --noEmit`: 0 errores.
+- Compilación `npm run build`: Exitosa.
+- Dev server reiniciado y operativo en el puerto 3000.

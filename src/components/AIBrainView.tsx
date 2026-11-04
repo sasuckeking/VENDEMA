@@ -178,7 +178,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
                   : 'Cerebro IA: Días Feriados RD & Tácticas de Venta'}
               </h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-lime-950 text-lime-400 border border-lime-800/60">
-                {isSuperAdmin ? 'Adaptado de n8n a Vendemá CRM' : 'Ventas Todo Lapto'}
+                {isSuperAdmin ? 'Cerebro Nativo Vendemá CRM' : 'Ventas Todo Lapto'}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
@@ -295,7 +295,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
               <div className="flex items-center gap-2 pb-2 border-b border-white/[0.06]">
                 <Database className="w-4 h-4 text-lime-400" />
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Variables Dinámicas (Reemplazo de n8n)
+                  Variables Dinámicas en Tiempo Real
                 </h3>
               </div>
               <p className="text-xs text-slate-400">
@@ -307,7 +307,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
                     {'{{TELEFONO_CLIENTE}}'}
                   </code>
                   <span className="text-slate-400 text-[11px]">
-                    Reemplaza a <code>$json.telefono_cliente</code> con el teléfono real detectado en Evolution API (ej. <code>18495393496</code>).
+                    El teléfono real detectado directamente desde Evolution API (ej. <code>18495393496</code>).
                   </span>
                 </div>
 
@@ -316,7 +316,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
                     {'{{INVENTARIO_COMPLETO}}'}
                   </code>
                   <span className="text-slate-400 text-[11px]">
-                    Reemplaza a <code>$json.inventario_completo</code> con los 607+ productos vendibles en vivo desde el catálogo central ordenados por categoría y precio.
+                    Los 607+ productos vendibles sincronizados en vivo desde Odoo ERP ordenados por categoría y precio.
                   </span>
                 </div>
 
@@ -366,7 +366,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
                 </h3>
               </div>
               <p className="text-xs text-slate-400">
-                Los nodos antiguos de n8n ahora son funciones nativas del servidor que la IA ejecuta directamente sobre el ERP central y WhatsApp:
+                Funciones nativas de alto rendimiento que la IA ejecuta directamente sobre Odoo ERP y Evolution API:
               </p>
 
               <div className="space-y-2 text-[11px]">

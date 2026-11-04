@@ -156,7 +156,7 @@ app.get('/api/events', (req, res) => {
 });
 
 // ---------------------------------------------------------
-// Global State & Preconfigured Credentials from n8n Workflow
+// Global State & Preconfigured Production Credentials
 // ---------------------------------------------------------
 const CONFIG_FILE_PATH = path.join(__dirname, '.vendema-config.json');
 const CONFIG_FALLBACK_PATH = path.join(process.cwd(), '.vendema-config.json');
@@ -1323,7 +1323,7 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
   isOdooSyncRunning = true;
 
   try {
-    // 1. Fetch vendible internal locations in Odoo (matching n8n node: usage=internal and complete_name not ilike Recepcion)
+    // 1. Fetch vendible internal locations in Odoo (internal locations excluding reception)
     const locations = await callOdoo('object', 'execute_kw', [
       appConfig.odoo.db,
       appConfig.odoo.uid,
@@ -1345,7 +1345,7 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
       cachedOdooAttrLines.length === 0 ||
       now - lastOdooAttrsSync > 1000 * 60 * 30;
 
-    // 2. Fetch products using the exact n8n domain & context:
+    // 2. Fetch products using the verified sales inventory domain & context:
     // [[["virtual_available",">",0],["sale_ok","=",true],["active","=",true],["website_published","=",true]]]
     // with context: { location: vendibleLocIds }
     const odooContext = vendibleLocIds.length > 0 ? { location: vendibleLocIds } : undefined;
@@ -1542,7 +1542,7 @@ async function syncOdooInventory(): Promise<ProductItem[]> {
       appConfig.odoo.lastSync = new Date().toISOString();
       appConfig.odoo.connected = true;
       console.log(
-        `[Odoo Real-Time Sync (n8n Pipeline)]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepción excluida)`
+        `[Odoo Real-Time Sync]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepción excluida)`
       );
       broadcastEvent('inventory_update', { count: products.length, lastSync: appConfig.odoo.lastSync });
     }

@@ -1,6 +1,6 @@
 {
-  "summary": "Implementación completada: réplica exacta del pipeline n8n para Odoo ERP (ubicaciones internas sin Recepción con context location), segmentación de catálogos en bloques interactivos de hasta 15 productos con llamada interactiva de continuidad, y optimización de latencia de Evolution API.",
-  "updatedAt": "2026-11-04T01:47:11.302163511Z",
+  "summary": "Desconexión total de n8n, operación 100% directa con Evolution API y Odoo ERP, y eliminación de respuestas duplicadas.",
+  "updatedAt": "2026-11-04T13:41:06.144729982Z",
   "requestFeedback": true,
   "userFacing": true
 }
