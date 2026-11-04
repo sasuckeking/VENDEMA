@@ -549,7 +549,7 @@ async function hydrateAndSyncHolidaysWithSupabase(): Promise<void> {
 async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
   try {
     const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
-    if (remoteAi && typeof remoteAi === 'object') {
+    if (remoteAi && typeof remoteAi === 'object' && appConfig.aiProvider) {
       let updated = false;
       if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
         appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
@@ -2478,14 +2478,23 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
 
+        // Skip if bot already replied recently, if thread last message is assistant, or if lock is active
+        const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
+        if (skipCheck.skip) continue;
+
+        const contactKeys = getConversationContactKeys(conv);
+        if (contactKeys.some(k => inFlightBotKeys.has(k))) continue;
+
         // If a brand new message in the thread is from the customer, arrived within the last 5 minutes, and hasn't been answered yet:
         if (
           lastMsg.sender === 'customer' &&
           ageMs <= 5 * 60 * 1000 &&
-          !processedMessageIds.has(msgId) &&
-          !inFlightBotSessions.has(conv.sessionId)
+          !processedMessageIds.has(msgId)
         ) {
           processedMessageIds.set(msgId, nowMs);
+          for (const k of contactKeys) {
+            processedMessageIds.set(`${k}::${msgId}`, nowMs);
+          }
           triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
             console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
           );
@@ -2943,9 +2952,154 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
 // Helper: Evolution API WhatsApp Senders (Text, Media, Audio) with Auto-Reconnect & Retry Queue
 // ---------------------------------------------------------
 let isFirstEvolutionSync = true;
-const inFlightBotSessions = new Set<string>();
+const inFlightBotKeys = new Set<string>();
+// Backward compatibility reference if needed elsewhere
+const inFlightBotSessions = inFlightBotKeys;
 const pendingOutboundQueue = new Map<string, { conv: Conversation; text: string; attempts: number }>();
 let lastEvolutionRestartMs = 0;
+
+// Universal helper to resolve all contact identity keys (phone, session ID, JID, contact name)
+function getConversationContactKeys(conv: Conversation | undefined | null, extraPhone?: string): string[] {
+  if (!conv) return extraPhone ? [extraPhone.replace(/\D/g, '')] : [];
+  const keys = new Set<string>();
+
+  if (conv.sessionId) {
+    keys.add(conv.sessionId.toLowerCase().trim());
+  }
+
+  const cleanPhone = (conv.customerPhone || extraPhone || '').replace(/\D/g, '');
+  if (cleanPhone) {
+    keys.add(cleanPhone);
+    if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      keys.add(std);
+      keys.add(`${std}@s.whatsapp.net`);
+      keys.add(std.slice(-10));
+    }
+  }
+
+  if (conv.customerName && !isGenericContactName(conv.customerName)) {
+    keys.add(`name:${conv.customerName.trim().toLowerCase()}`);
+  }
+
+  const related = relatedJidsBySession.get(conv.sessionId);
+  if (related) {
+    for (const r of related) {
+      if (r) keys.add(r.toLowerCase().trim());
+    }
+  }
+
+  return Array.from(keys);
+}
+
+interface BotReplyRecord {
+  timestamp: number;
+  customerMsgId: string;
+  customerText: string;
+  botReplyText: string;
+}
+
+const lastBotReplyByContactKey = new Map<string, BotReplyRecord>();
+
+function acquireBotLock(conv: Conversation): boolean {
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    if (inFlightBotKeys.has(k)) {
+      return false;
+    }
+  }
+  for (const k of keys) {
+    inFlightBotKeys.add(k);
+  }
+  return true;
+}
+
+function releaseBotLock(conv: Conversation): void {
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    inFlightBotKeys.delete(k);
+  }
+}
+
+function recordBotReplyForConversation(
+  conv: Conversation,
+  customerMsgId: string,
+  customerText: string,
+  botReplyText: string
+): void {
+  const record: BotReplyRecord = {
+    timestamp: Date.now(),
+    customerMsgId,
+    customerText: (customerText || '').trim(),
+    botReplyText: (botReplyText || '').trim(),
+  };
+
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    lastBotReplyByContactKey.set(k, record);
+  }
+}
+
+function shouldSkipBotReply(
+  conv: Conversation,
+  lastCustomerMsg: ChatMessage | undefined,
+  triggerSource: string
+): { skip: boolean; reason?: string } {
+  // Never answer WhatsApp groups
+  if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
+    return { skip: true, reason: 'WhatsApp group excluded' };
+  }
+
+  // If thread already has an assistant or team reply as the last message
+  if (conv.messages && conv.messages.length > 0) {
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    if (lastMsg.sender !== 'customer' && triggerSource !== 'manual_crm_trigger') {
+      return { skip: true, reason: 'El último mensaje ya fue respondido por el equipo o el bot' };
+    }
+  }
+
+  if (!lastCustomerMsg) {
+    return { skip: true, reason: 'No hay mensaje del cliente para responder' };
+  }
+
+  const keys = getConversationContactKeys(conv);
+  const now = Date.now();
+  const incomingId = lastCustomerMsg.evolutionMessageId || lastCustomerMsg.id;
+  const incomingText = (lastCustomerMsg.transcription || lastCustomerMsg.content || '').trim();
+
+  for (const k of keys) {
+    const prev = lastBotReplyByContactKey.get(k);
+    if (!prev) continue;
+
+    // 1. Same exact customer message ID already replied to
+    if (incomingId && (prev.customerMsgId === incomingId || prev.customerMsgId === `evo-${incomingId}`)) {
+      return { skip: true, reason: `Mensaje ID "${incomingId}" ya fue respondido anteriormente.` };
+    }
+
+    // 2. Anti-spam cooldown (15 seconds) for automated triggers
+    if (triggerSource !== 'manual_crm_trigger') {
+      const elapsedMs = now - prev.timestamp;
+      if (elapsedMs < 15000) {
+        return {
+          skip: true,
+          reason: `Cooldown activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 15s).`,
+        };
+      }
+
+      // 3. Same customer text sent within 2 minutes already answered
+      if (incomingText && prev.customerText === incomingText && elapsedMs < 120000) {
+        return {
+          skip: true,
+          reason: `El cliente envió el mismo texto ("${incomingText.slice(0, 30)}") que ya fue atendido.`,
+        };
+      }
+    }
+  }
+
+  return { skip: false };
+}
+
+const recentOutboundDispatches = new Map<string, number>();
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -3040,6 +3194,21 @@ async function sendEvolutionMessageWithStatus(
   if (!target || isWhatsAppGroup(target)) {
     return { ok: false, socketClosed: false };
   }
+
+  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 45 seconds
+  const cleanTargetKey = target.replace(/@.*$/, '').replace(/\D/g, '') || target;
+  const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
+  const lastSentAt = recentOutboundDispatches.get(dispatchKey);
+  const now = Date.now();
+  if (lastSentAt && now - lastSentAt < 45000) {
+    console.log(
+      `🛡️ [Outbound Anti-Duplicate]: Mensaje idéntico ya entregado a ${target} hace ${Math.round(
+        (now - lastSentAt) / 1000
+      )}s. Omitiendo duplicado.`
+    );
+    return { ok: true, socketClosed: false };
+  }
+
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/message/sendText/${appConfig.evolution.instance}`;
 
   const maxAttempts = 2;
@@ -3060,6 +3229,7 @@ async function sendEvolutionMessageWithStatus(
       });
 
       if (res.ok) {
+        recentOutboundDispatches.set(dispatchKey, Date.now());
         appConfig.evolution.connected = true;
         return { ok: true, socketClosed: false };
       }
@@ -6154,13 +6324,17 @@ async function triggerSalesBotReplyForConversation(
     return { success: false, error: 'Los grupos de WhatsApp están expresamente excluidos de las respuestas del bot' };
   }
 
-  if (inFlightBotSessions.has(conv.sessionId)) {
+  const initialLastMsg = conv.messages[conv.messages.length - 1];
+  const initialSkip = shouldSkipBotReply(conv, initialLastMsg, triggerSource);
+  if (initialSkip.skip) {
+    return { success: false, error: initialSkip.reason };
+  }
+
+  if (!acquireBotLock(conv)) {
     return { success: false, error: 'Ya se está generando una respuesta para este chat' };
   }
-  inFlightBotSessions.add(conv.sessionId);
 
   try {
-    const initialLastMsg = conv.messages[conv.messages.length - 1];
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting =
@@ -6191,8 +6365,8 @@ async function triggerSalesBotReplyForConversation(
       return { success: false, error: 'Sin mensajes en la conversación' };
     }
 
-    // If triggered by background poll, double-check that the last message in the full thread is from the customer
-    if (triggerSource === 'live_evolution_poll' && lastMsg.sender !== 'customer') {
+    // Strictly enforce that the bot never answers if the last message in the thread is already from the assistant or agent
+    if (lastMsg.sender !== 'customer' && triggerSource !== 'manual_crm_trigger') {
       return { success: false, error: 'El último mensaje ya fue respondido por el equipo o el bot' };
     }
 
@@ -6364,6 +6538,14 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     // Send to WhatsApp via Evolution API using smart JID/phone resolution (fast 150ms dispatch)
     const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 150);
 
+    // Record this answered customer message and cooldown across all contact identity keys
+    recordBotReplyForConversation(
+      conv,
+      initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
+      baseCustomerText,
+      aiReply
+    );
+
     return {
       success: true,
       reply: aiReply,
@@ -6376,7 +6558,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     console.log(`[Sales Bot Info for ${conv.customerName}]:`, err.message);
     return { success: false, error: err.message };
   } finally {
-    inFlightBotSessions.delete(conv.sessionId);
+    releaseBotLock(conv);
   }
 }
 
@@ -6552,13 +6734,12 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
   const body = req.body || {};
   const rawEvent = (body?.event || body?.type || '').toString().trim().toLowerCase().replace(/[-_]/g, '.');
 
-  // Accept messages.upsert, messages.update, and variants in any casing or separator format
+  // Accept ONLY messages.upsert and incoming message events (STRICTLY EXCLUDE messages.update, which are delivery status updates)
   const isMessageUpsert =
     rawEvent === 'messages.upsert' ||
-    rawEvent === 'messages.update' ||
+    rawEvent === 'messages_upsert' ||
     rawEvent === 'message' ||
-    rawEvent.endsWith('.upsert') ||
-    rawEvent.endsWith('upsert');
+    (rawEvent.endsWith('.upsert') && !rawEvent.includes('update'));
 
   // Robust unpacking: Evolution API can send data as an object, array of records, or nested messages
   const messageData = Array.isArray(body?.data)
@@ -6647,6 +6828,19 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
 
   // Trigger AI Reply instantly in background without blocking the webhook
   if (appConfig.globalAiActive && conv.aiEnabled) {
+    // Check if this contact is already being processed or was just answered
+    const skipCheck = shouldSkipBotReply(conv, parsedIncoming, 'evolution_webhook');
+    if (skipCheck.skip) {
+      console.log(`🛡️ [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
+      return;
+    }
+
+    const contactKeys = getConversationContactKeys(conv);
+    if (contactKeys.some(k => inFlightBotKeys.has(k))) {
+      console.log(`🛡️ [Webhook Skip]: Respuesta ya en proceso para ${conv.customerName}`);
+      return;
+    }
+
     triggerSalesBotReplyForConversation(conv, 'evolution_webhook').catch(err => {
       console.log(`[Sales Bot Webhook Trigger Info for ${conv.customerName}]:`, err?.message || err);
     });
@@ -6695,9 +6889,7 @@ app.post('/api/evolution/register-webhook', async (req, res) => {
           byEvents: false,
           base64: false,
           events: [
-            'MESSAGES_UPSERT',
-            'MESSAGES_UPDATE',
-            'SEND_MESSAGE'
+            'MESSAGES_UPSERT'
           ]
         }
       }),

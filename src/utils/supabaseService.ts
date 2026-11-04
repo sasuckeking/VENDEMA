@@ -889,8 +889,8 @@ export async function loadAiConfigFromSupabase(
       .maybeSingle();
 
     if (!error && data?.ai_provider && typeof data.ai_provider === 'object') {
-      const ai = data.ai_provider as Partial<AppConfig['aiProvider']>;
-      if (ai.openaiApiKey || ai.deepseekApiKey || ai.geminiApiKey || ai.provider) {
+      const ai = data.ai_provider as Partial<AppConfig['aiProvider']> | undefined;
+      if (ai && (ai.openaiApiKey || ai.deepseekApiKey || ai.geminiApiKey || ai.provider)) {
         return ai;
       }
     }
