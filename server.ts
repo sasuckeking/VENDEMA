@@ -2446,7 +2446,65 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
     // Flush any queued outbound messages that were waiting for Evolution's Baileys socket to finish reconnecting
     await flushPendingOutboundQueue();
 
-    // Background polling strictly synchronizes CRM data without auto-replying (Webhook handles real-time replies)
+    // Auto-reply to recent unanswered customer messages with strict contact identity deduplication
+    if (appConfig.globalAiActive) {
+      const nowMs = Date.now();
+      const handledContactsThisCycle = new Set<string>();
+
+      for (const conv of conversations.slice(0, 15)) {
+        if (!conv.aiEnabled) continue;
+        if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) continue;
+
+        const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
+        if (
+          cleanPhone === appConfig.evolution.teamPhone ||
+          cleanPhone === appConfig.evolution.adminPhone ||
+          conv.customerName.toLowerCase().includes('soporte todo lapto')
+        ) {
+          continue;
+        }
+
+        const lastMsg = conv.messages[conv.messages.length - 1];
+        if (!lastMsg) continue;
+        const msgId = lastMsg.evolutionMessageId || lastMsg.id;
+
+        // Only reply if the last message in the thread is from the customer
+        if (lastMsg.sender !== 'customer') continue;
+
+        const msgTimeMs = new Date(lastMsg.timestamp).getTime();
+        const ageMs = nowMs - msgTimeMs;
+
+        // Only reply to messages arrived within the last 30 minutes
+        if (ageMs > 30 * 60 * 1000) continue;
+
+        const contactKeys = getConversationContactKeys(conv);
+        // Avoid duplicate triggers across multiple JIDs for the same customer in the same cycle
+        if (contactKeys.some(k => handledContactsThisCycle.has(k) || inFlightBotKeys.has(k))) {
+          continue;
+        }
+
+        // Check if message ID was already processed
+        if (processedMessageIds.has(msgId)) continue;
+        if (contactKeys.some(k => processedMessageIds.has(`${k}::${msgId}`))) continue;
+
+        // Check cooldown and answered state
+        const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
+        if (skipCheck.skip) continue;
+
+        // Lock contact across ALL keys immediately
+        for (const k of contactKeys) {
+          handledContactsThisCycle.add(k);
+          processedMessageIds.set(`${k}::${msgId}`, nowMs);
+        }
+        processedMessageIds.set(msgId, nowMs);
+
+        console.log(`🤖 [Auto-Reply Polling Trigger]: Respondiendo a ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
+          console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
+        );
+      }
+    }
+
     isFirstEvolutionSync = false;
   } catch (err: any) {
     console.log(`[Evolution Live Sync Info]: ${err.message}`);
@@ -3021,21 +3079,13 @@ function shouldSkipBotReply(
       return { skip: true, reason: `Mensaje ID "${incomingId}" ya fue respondido anteriormente.` };
     }
 
-    // 2. Anti-spam cooldown (15 seconds) for automated triggers
+    // 2. Anti-spam cooldown (6 seconds) for automated triggers
     if (triggerSource !== 'manual_crm_trigger') {
       const elapsedMs = now - prev.timestamp;
-      if (elapsedMs < 15000) {
+      if (elapsedMs < 6000) {
         return {
           skip: true,
-          reason: `Cooldown activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 15s).`,
-        };
-      }
-
-      // 3. Same customer text sent within 2 minutes already answered
-      if (incomingText && prev.customerText === incomingText && elapsedMs < 120000) {
-        return {
-          skip: true,
-          reason: `El cliente envió el mismo texto ("${incomingText.slice(0, 30)}") que ya fue atendido.`,
+          reason: `Cooldown activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 6s).`,
         };
       }
     }
