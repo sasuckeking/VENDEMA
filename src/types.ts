@@ -240,3 +240,29 @@ export interface AuthState {
   token?: string;
 }
 
+export type BotDecisionType =
+  | 'sent'
+  | 'blocked_duplicate_text'
+  | 'blocked_duplicate_id'
+  | 'blocked_cooldown'
+  | 'blocked_in_flight'
+  | 'blocked_already_answered'
+  | 'blocked_group'
+  | 'error';
+
+export interface BotAuditLogEntry {
+  id: string;
+  timestamp: string;
+  timeRd: string;
+  customerName: string;
+  customerPhone: string;
+  sessionId: string;
+  triggerSource: string;
+  incomingMessageId: string;
+  incomingText: string;
+  decision: BotDecisionType;
+  reason: string;
+  replyText?: string;
+  evolutionMessageId?: string;
+  durationMs: number;
+}

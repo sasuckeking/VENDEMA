@@ -26,10 +26,12 @@ import {
   ShieldCheck,
   Truck,
   Zap,
-  Clock
+  Clock,
+  X
 } from 'lucide-react';
 import type { Conversation, ProductItem, CustomerLead, ChatMessage } from '../types';
 import { getDominicanTimeContext, formatDominicanTimeOnly } from '../utils/businessSchedule';
+import { BotAuditLogPanel } from './BotAuditLogPanel';
 
 interface LiveInboxProps {
   conversations: Conversation[];
@@ -124,6 +126,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
   const [sendingProductId, setSendingProductId] = useState<number | null>(null);
   const [failedPickerImages, setFailedPickerImages] = useState<Record<number, boolean>>({});
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const [showAuditModal, setShowAuditModal] = useState(false);
 
   // Dominican Republic business schedule state
   const [rdTime, setRdTime] = useState(() => getDominicanTimeContext());
@@ -836,6 +839,16 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                   }`}
                 />
                 <span className="hidden md:inline">Actualizar Chat</span>
+              </button>
+
+              {/* Bot Diagnostic Audit Modal Button */}
+              <button
+                onClick={() => setShowAuditModal(true)}
+                title="Ver diagnósticos en tiempo real y auditoría anti-duplicados del bot"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-600/40 transition-colors cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">Auditoría Bot</span>
               </button>
 
               {/* Individual AI Pause/Resume Button */}
@@ -1683,6 +1696,34 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
               >
                 Cerrar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bot Audit & Diagnostics Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#0B0F15] border border-white/[0.08] rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between bg-[#0F141C]">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">
+                  Auditoría del Bot {activeConversation?.customerName ? `— Chat: ${activeConversation.customerName}` : ''}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAuditModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <BotAuditLogPanel
+                initialSearchTerm={activeConversation?.customerName || ''}
+                onClose={() => setShowAuditModal(false)}
+              />
             </div>
           </div>
         </div>

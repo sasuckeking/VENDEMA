@@ -16,7 +16,9 @@ import type {
   ChatMessage,
   QuotedMessage,
   UserAccount,
-  UserRole
+  UserRole,
+  BotAuditLogEntry,
+  BotDecisionType
 } from './src/types.ts';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.ts';
 import { 
@@ -2443,8 +2445,6 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       broadcastEvent('conversations_update', { count: conversations.length });
     }
 
-    // Flush any queued outbound messages that were waiting for Evolution's Baileys socket to finish reconnecting
-    await flushPendingOutboundQueue();
 
     // Auto-reply to recent unanswered customer messages with strict contact identity deduplication
     if (appConfig.globalAiActive) {
@@ -2493,6 +2493,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
 
         // Lock contact across ALL keys immediately
         for (const k of contactKeys) {
+          inFlightBotKeys.add(k);
           handledContactsThisCycle.add(k);
           processedMessageIds.set(`${k}::${msgId}`, nowMs);
         }
@@ -2952,14 +2953,92 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
 }
 
 // ---------------------------------------------------------
-// Helper: Evolution API WhatsApp Senders (Text, Media, Audio) with Auto-Reconnect & Retry Queue
+// Helper: Evolution API WhatsApp Senders & Live Audit / Anti-Duplicate Engine
 // ---------------------------------------------------------
 let isFirstEvolutionSync = true;
 const inFlightBotKeys = new Set<string>();
-// Backward compatibility reference if needed elsewhere
 const inFlightBotSessions = inFlightBotKeys;
-const pendingOutboundQueue = new Map<string, { conv: Conversation; text: string; attempts: number }>();
 let lastEvolutionRestartMs = 0;
+
+// Persistent Audit Log for Admin inspection & duplicate diagnostics
+const BOT_AUDIT_LOG_FILE = path.join(__dirname, '.vendema-bot-audit.json');
+let botAuditLogs: BotAuditLogEntry[] = [];
+
+try {
+  if (fs.existsSync(BOT_AUDIT_LOG_FILE)) {
+    const raw = fs.readFileSync(BOT_AUDIT_LOG_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      botAuditLogs = parsed.slice(0, 300);
+    }
+  }
+} catch {
+  botAuditLogs = [];
+}
+
+let auditSaveTimeout: NodeJS.Timeout | null = null;
+function scheduleAuditLogSave() {
+  if (auditSaveTimeout) return;
+  auditSaveTimeout = setTimeout(() => {
+    auditSaveTimeout = null;
+    try {
+      fs.writeFileSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
+    } catch {}
+  }, 1000);
+}
+
+const lastAuditLogKeyByPhone = new Map<string, { key: string; ts: number }>();
+
+function recordBotAuditLog(entry: {
+  customerName: string;
+  customerPhone: string;
+  sessionId: string;
+  triggerSource: string;
+  incomingMessageId: string;
+  incomingText: string;
+  decision: BotDecisionType;
+  reason: string;
+  replyText?: string;
+  evolutionMessageId?: string;
+  durationMs: number;
+}): void {
+  const phone = entry.customerPhone || (entry.sessionId || '').replace(/@.*$/, '').replace(/\D/g, '');
+  const dedupeKey = `${phone}::${entry.incomingMessageId || 'none'}::${entry.decision}`;
+  const now = Date.now();
+  const prevAudit = lastAuditLogKeyByPhone.get(phone);
+
+  // If this exact decision for the same incoming message was logged within 8 seconds, don't spam the audit log
+  if (prevAudit && prevAudit.key === dedupeKey && now - prevAudit.ts < 8000) {
+    return;
+  }
+  lastAuditLogKeyByPhone.set(phone, { key: dedupeKey, ts: now });
+
+  const rdContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const item: BotAuditLogEntry = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    timeRd: rdContext.time12,
+    customerName: entry.customerName || `Cliente +${phone}`,
+    customerPhone: phone,
+    sessionId: entry.sessionId,
+    triggerSource: entry.triggerSource,
+    incomingMessageId: entry.incomingMessageId || 'N/A',
+    incomingText: (entry.incomingText || '').slice(0, 150),
+    decision: entry.decision,
+    reason: entry.reason,
+    replyText: entry.replyText ? entry.replyText.slice(0, 200) : undefined,
+    evolutionMessageId: entry.evolutionMessageId,
+    durationMs: entry.durationMs,
+  };
+
+  botAuditLogs.unshift(item);
+  if (botAuditLogs.length > 300) {
+    botAuditLogs.pop();
+  }
+
+  broadcastEvent('bot_audit_update', item);
+  scheduleAuditLogSave();
+}
 
 // Universal helper to resolve all contact identity keys (phone, session ID, JID, contact name)
 function getConversationContactKeys(conv: Conversation | undefined | null, extraPhone?: string): string[] {
@@ -3004,10 +3083,24 @@ interface BotReplyRecord {
 
 const lastBotReplyByContactKey = new Map<string, BotReplyRecord>();
 
-function acquireBotLock(conv: Conversation): boolean {
+function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean {
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
     if (inFlightBotKeys.has(k)) {
+      const lastMsg = conv.messages[conv.messages.length - 1];
+      const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || '';
+      const incomingText = lastMsg?.content || '';
+      recordBotAuditLog({
+        customerName: conv.customerName,
+        customerPhone: conv.customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: 'blocked_in_flight',
+        reason: 'Ya hay una respuesta generándose concurrentemente para este contacto. Bloqueo atómico activo.',
+        durationMs: 0,
+      });
       return false;
     }
   }
@@ -3048,16 +3141,47 @@ function shouldSkipBotReply(
   lastCustomerMsg: ChatMessage | undefined,
   triggerSource: string
 ): { skip: boolean; reason?: string } {
-  // Never answer WhatsApp groups
+  const keys = getConversationContactKeys(conv);
+  const now = Date.now();
+  const customerName = conv.customerName || 'Cliente';
+  const customerPhone = conv.customerPhone || '';
+  const incomingId = lastCustomerMsg?.evolutionMessageId || lastCustomerMsg?.id || '';
+  const incomingText = (lastCustomerMsg?.transcription || lastCustomerMsg?.content || '').trim();
+
+  // 1. Never answer WhatsApp groups
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
-    return { skip: true, reason: 'WhatsApp group excluded' };
+    const reason = 'Excluido: Grupo de WhatsApp (el bot solo atiende chats individuales)';
+    recordBotAuditLog({
+      customerName,
+      customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: incomingId,
+      incomingText,
+      decision: 'blocked_group',
+      reason,
+      durationMs: 0,
+    });
+    return { skip: true, reason };
   }
 
-  // If thread already has an assistant or team reply as the last message
+  // 2. If thread already has an assistant or team reply as the last message
   if (conv.messages && conv.messages.length > 0) {
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (lastMsg.sender !== 'customer' && triggerSource !== 'manual_crm_trigger') {
-      return { skip: true, reason: 'El último mensaje ya fue respondido por el equipo o el bot' };
+      const reason = `El último mensaje en el chat ya fue respondido por el equipo o el bot ("${(lastMsg.content || '').slice(0, 40)}...")`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: 'blocked_already_answered',
+        reason,
+        durationMs: 0,
+      });
+      return { skip: true, reason };
     }
   }
 
@@ -3065,28 +3189,71 @@ function shouldSkipBotReply(
     return { skip: true, reason: 'No hay mensaje del cliente para responder' };
   }
 
-  const keys = getConversationContactKeys(conv);
-  const now = Date.now();
-  const incomingId = lastCustomerMsg.evolutionMessageId || lastCustomerMsg.id;
-  const incomingText = (lastCustomerMsg.transcription || lastCustomerMsg.content || '').trim();
-
   for (const k of keys) {
     const prev = lastBotReplyByContactKey.get(k);
     if (!prev) continue;
 
-    // 1. Same exact customer message ID already replied to
-    if (incomingId && (prev.customerMsgId === incomingId || prev.customerMsgId === `evo-${incomingId}`)) {
-      return { skip: true, reason: `Mensaje ID "${incomingId}" ya fue respondido anteriormente.` };
+    // 3. Same exact customer message ID already replied to
+    if (
+      incomingId &&
+      (prev.customerMsgId === incomingId ||
+        prev.customerMsgId === `evo-${incomingId}` ||
+        `evo-${prev.customerMsgId}` === incomingId)
+    ) {
+      const reason = `Mensaje ID "${incomingId}" ya fue atendido con éxito anteriormente. Previniendo duplicado.`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: 'blocked_duplicate_id',
+        reason,
+        durationMs: 0,
+      });
+      return { skip: true, reason };
     }
 
-    // 2. Anti-spam cooldown (6 seconds) for automated triggers
+    // 4. Repeated identical incoming text received within 20 seconds
+    if (
+      incomingText &&
+      prev.customerText &&
+      prev.customerText.toLowerCase() === incomingText.toLowerCase() &&
+      now - prev.timestamp < 20000
+    ) {
+      const reason = `Texto repetido "${incomingText.slice(0, 30)}" recibido hace menos de 20s. Ya existe respuesta en pantalla.`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: 'blocked_duplicate_text',
+        reason,
+        durationMs: 0,
+      });
+      return { skip: true, reason };
+    }
+
+    // 5. Anti-spam cooldown (6 seconds) for automated triggers
     if (triggerSource !== 'manual_crm_trigger') {
       const elapsedMs = now - prev.timestamp;
       if (elapsedMs < 6000) {
-        return {
-          skip: true,
-          reason: `Cooldown activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 6s).`,
-        };
+        const reason = `Cooldown de seguridad activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 6s entre mensajes automáticos).`;
+        recordBotAuditLog({
+          customerName,
+          customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: incomingId,
+          incomingText,
+          decision: 'blocked_cooldown',
+          reason,
+          durationMs: 0,
+        });
+        return { skip: true, reason };
       }
     }
   }
@@ -3190,19 +3357,34 @@ async function sendEvolutionMessageWithStatus(
     return { ok: false, socketClosed: false };
   }
 
-  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 45 seconds
+  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 60 seconds
   const cleanTargetKey = target.replace(/@.*$/, '').replace(/\D/g, '') || target;
   const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
   const lastSentAt = recentOutboundDispatches.get(dispatchKey);
   const now = Date.now();
-  if (lastSentAt && now - lastSentAt < 45000) {
+  if (lastSentAt && now - lastSentAt < 60000) {
     console.log(
       `🛡️ [Outbound Anti-Duplicate]: Mensaje idéntico ya entregado a ${target} hace ${Math.round(
         (now - lastSentAt) / 1000
       )}s. Omitiendo duplicado.`
     );
+    recordBotAuditLog({
+      customerName: `Destino ${target}`,
+      customerPhone: cleanTargetKey,
+      sessionId: target,
+      triggerSource: 'outbound_dispatch_guard',
+      incomingMessageId: '',
+      incomingText: '',
+      decision: 'blocked_duplicate_text',
+      reason: `Texto de respuesta idéntico ya entregado hace ${Math.round((now - lastSentAt) / 1000)}s a este número. Duplicado bloqueado en despacho.`,
+      replyText: text,
+      durationMs: 0,
+    });
     return { ok: true, socketClosed: false };
   }
+
+  // Optimistically lock dispatchKey BEFORE network call so parallel attempts are blocked
+  recentOutboundDispatches.set(dispatchKey, now);
 
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/message/sendText/${appConfig.evolution.instance}`;
 
@@ -3262,88 +3444,45 @@ async function sendEvolutionMessage(numberOrJid: string, text: string, delayMs =
 async function sendEvolutionMessageToConversation(
   conv: Conversation,
   text: string,
-  delayMs = 600,
-  isRetryFromQueue = false
+  delayMs = 600
 ): Promise<boolean> {
   // Never send automated or bot messages to WhatsApp groups
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
     console.log(`🛡️ [Grupo bloqueado]: Envío a grupo cancelado para sesión ${conv.sessionId}`);
-    pendingOutboundQueue.delete(conv.sessionId);
     return false;
   }
 
-  const candidates: string[] = [];
-
-  // 1. If customerPhone is a valid 10-13 digit phone number (e.g. 1809..., 1829..., 1849...), try it first
   const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
+  let primaryTarget = '';
+
+  // 1. If valid Dominican/international phone number (10-12 digits), the standard JID is canonical
   if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
     const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
-    candidates.push(std);
-    if (!candidates.includes(`${std}@s.whatsapp.net`)) {
-      candidates.push(`${std}@s.whatsapp.net`);
-    }
+    primaryTarget = `${std}@s.whatsapp.net`;
+  } else if (conv.sessionId && !conv.sessionId.includes('@lid')) {
+    primaryTarget = conv.sessionId;
+  } else if (cleanPhone) {
+    primaryTarget = cleanPhone;
+  } else {
+    primaryTarget = conv.sessionId;
   }
 
-  // 2. Try canonical sessionId
-  if (conv.sessionId && !candidates.includes(conv.sessionId)) {
-    candidates.push(conv.sessionId);
+  const { ok, socketClosed } = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs);
+  if (ok) {
+    console.log(`✅ [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${primaryTarget})`);
+    return true;
   }
 
-  // 3. Try any related JIDs (@s.whatsapp.net or @lid) mapped to this conversation
-  const related = relatedJidsBySession.get(conv.sessionId);
-  if (related) {
-    for (const jid of related) {
-      if (jid && !candidates.includes(jid)) {
-        candidates.push(jid);
-      }
-    }
-  }
-
-  // 4. If customerPhone is a 14+ digit LID, add @lid candidate
-  if (cleanPhone.length >= 14 && !candidates.includes(`${cleanPhone}@lid`)) {
-    candidates.push(`${cleanPhone}@lid`);
-  }
-
-  for (const target of candidates) {
-    const { ok, socketClosed } = await sendEvolutionMessageWithStatus(target, text, delayMs);
-    if (ok) {
-      pendingOutboundQueue.delete(conv.sessionId);
-      console.log(`✅ [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${target})`);
+  // Fallback to related LID only if primary failed and socket is not closed
+  if (!socketClosed && conv.sessionId && conv.sessionId !== primaryTarget) {
+    const fallbackRes = await sendEvolutionMessageWithStatus(conv.sessionId, text, delayMs);
+    if (fallbackRes.ok) {
+      console.log(`✅ [WhatsApp Bot Sent Fallback]: Respuesta entregada a ${conv.customerName} (${conv.sessionId})`);
       return true;
     }
-    // If Evolution API's own WhatsApp socket is temporarily disconnected, stop trying alternate JIDs immediately
-    // and let the pendingOutboundQueue deliver as soon as the socket reconnects.
-    if (socketClosed) {
-      break;
-    }
   }
 
-  // Queue for automatic delivery on next poll once Evolution API's Baileys socket finishes reconnecting
-  if (!isRetryFromQueue) {
-    pendingOutboundQueue.set(conv.sessionId, { conv, text, attempts: 1 });
-    console.log(
-      `⏳ [WhatsApp Queue]: Respuesta para ${conv.customerName} programada para entrega automática al reconectar WhatsApp.`
-    );
-  }
   return false;
-}
-
-async function flushPendingOutboundQueue(): Promise<void> {
-  if (pendingOutboundQueue.size === 0) return;
-  const isOpen = await ensureEvolutionInstanceConnected(false);
-  if (!isOpen) return;
-
-  for (const [sessionId, item] of Array.from(pendingOutboundQueue.entries())) {
-    const delivered = await sendEvolutionMessageToConversation(item.conv, item.text, 500, true);
-    if (delivered) {
-      pendingOutboundQueue.delete(sessionId);
-    } else {
-      item.attempts += 1;
-      if (item.attempts >= 12) {
-        pendingOutboundQueue.delete(sessionId);
-      }
-    }
-  }
 }
 
 async function sendEvolutionMedia(
@@ -5811,6 +5950,48 @@ app.get('/api/ai/insights', (req, res) => {
   res.json({ success: true, insights: learnedInsights });
 });
 
+// 8.1 Admin Bot Audit Log & Duplicate Diagnostics API
+app.get('/api/admin/bot-audit-log', (_req, res) => {
+  const total = botAuditLogs.length;
+  const sent = botAuditLogs.filter(l => l.decision === 'sent').length;
+  const blocked = botAuditLogs.filter(l => l.decision.startsWith('blocked_')).length;
+  const errors = botAuditLogs.filter(l => l.decision === 'error').length;
+  const avgDuration =
+    sent > 0
+      ? Math.round(
+          botAuditLogs
+            .filter(l => l.decision === 'sent')
+            .reduce((acc, l) => acc + (l.durationMs || 0), 0) / sent
+        )
+      : 0;
+
+  res.json({
+    success: true,
+    logs: botAuditLogs,
+    stats: {
+      total,
+      sent,
+      blocked,
+      errors,
+      avgDurationMs: avgDuration,
+      inFlightCount: inFlightBotKeys.size,
+      activeCooldowns: lastBotReplyByContactKey.size,
+    },
+  });
+});
+
+app.post('/api/admin/bot-audit-log/clear', (_req, res) => {
+  botAuditLogs.length = 0;
+  lastAuditLogKeyByPhone.clear();
+  try {
+    if (fs.existsSync(BOT_AUDIT_LOG_FILE)) {
+      fs.unlinkSync(BOT_AUDIT_LOG_FILE);
+    }
+  } catch {}
+  broadcastEvent('bot_audit_update', { type: 'clear' });
+  res.json({ success: true, message: 'Registro de auditoría limpiado exitosamente' });
+});
+
 app.post('/api/ai/insights', (req, res) => {
   const { category, triggerPhrase, winningPitch, counterObjection, tags } = req.body;
   const newInsight: AILearnedInsight = {
@@ -6418,10 +6599,11 @@ async function triggerSalesBotReplyForConversation(
     return { success: false, error: initialSkip.reason };
   }
 
-  if (!acquireBotLock(conv)) {
+  if (!acquireBotLock(conv, triggerSource)) {
     return { success: false, error: 'Ya se está generando una respuesta para este chat' };
   }
 
+  const startTime = Date.now();
   try {
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
@@ -6638,6 +6820,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
 
     // Send to WhatsApp via Evolution API using smart JID/phone resolution (fast 150ms dispatch)
     const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 150);
+    const durationMs = Date.now() - startTime;
 
     // Record this answered customer message and cooldown across all contact identity keys
     recordBotReplyForConversation(
@@ -6646,6 +6829,19 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       baseCustomerText,
       aiReply
     );
+
+    recordBotAuditLog({
+      customerName: conv.customerName,
+      customerPhone: conv.customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
+      incomingText: baseCustomerText,
+      decision: 'sent',
+      reason: `Respuesta entregada con éxito a WhatsApp en ${durationMs}ms vía Evolution API (${aiResult.providerUsed} / ${aiResult.modelUsed})`,
+      replyText: aiReply,
+      durationMs,
+    });
 
     return {
       success: true,
@@ -6656,6 +6852,18 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       sentToWhatsApp: sentOk,
     };
   } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    recordBotAuditLog({
+      customerName: conv.customerName,
+      customerPhone: conv.customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
+      incomingText: initialLastMsg?.transcription || initialLastMsg?.content || '',
+      decision: 'error',
+      reason: `Error al procesar/enviar respuesta: ${err.message}`,
+      durationMs,
+    });
     console.log(`[Sales Bot Info for ${conv.customerName}]:`, err.message);
     return { success: false, error: err.message };
   } finally {

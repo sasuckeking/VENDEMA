@@ -12,11 +12,13 @@ import {
   RotateCcw,
   Wrench,
   Database,
-  CalendarClock
+  CalendarClock,
+  ShieldCheck
 } from 'lucide-react';
 import type { AILearnedInsight, AppConfig, UserAccount } from '../types';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from '../masterPrompt';
 import { HolidayManagerPanel } from './HolidayManagerPanel';
+import { BotAuditLogPanel } from './BotAuditLogPanel';
 
 interface AIBrainViewProps {
   insights: AILearnedInsight[];
@@ -36,7 +38,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
   currentUser,
 }) => {
   const isSuperAdmin = currentUser?.role === 'super_admin';
-  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics'>(() => {
+  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics' | 'audit_log'>(() => {
     return isSuperAdmin ? 'master_prompt' : 'holidays_rd';
   });
 
@@ -233,6 +235,18 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
             <Sparkles className="w-3.5 h-3.5" />
             <span>Tácticas Aprendidas ({insights.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveSubTab('audit_log')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeSubTab === 'audit_log'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-emerald-300 hover:text-white bg-emerald-500/10 border border-emerald-500/20'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Auditoría & Anti-Duplicados</span>
+          </button>
         </div>
       </div>
 
@@ -243,7 +257,9 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
         </div>
       )}
 
-      {activeSubTab === 'master_prompt' && isSuperAdmin ? (
+      {activeSubTab === 'audit_log' ? (
+        <BotAuditLogPanel />
+      ) : activeSubTab === 'master_prompt' && isSuperAdmin ? (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Left Column: Master Prompt Editor */}
           <div className="xl:col-span-8 p-5 rounded-2xl bg-[#0F141C] border border-white/[0.06] flex flex-col space-y-4">
