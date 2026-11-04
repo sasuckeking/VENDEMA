@@ -14,7 +14,7 @@ import {
   Database,
   CalendarClock
 } from 'lucide-react';
-import type { AILearnedInsight, AppConfig } from '../types';
+import type { AILearnedInsight, AppConfig, UserAccount } from '../types';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from '../masterPrompt';
 import { HolidayManagerPanel } from './HolidayManagerPanel';
 
@@ -24,6 +24,7 @@ interface AIBrainViewProps {
   onTriggerGlobalLearning: () => Promise<void>;
   config: AppConfig;
   onUpdateConfig: (newConfig: Partial<AppConfig>) => Promise<void>;
+  currentUser?: UserAccount | null;
 }
 
 export const AIBrainView: React.FC<AIBrainViewProps> = ({
@@ -32,8 +33,19 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
   onTriggerGlobalLearning,
   config,
   onUpdateConfig,
+  currentUser,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics'>('master_prompt');
+  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics'>(() => {
+    return isSuperAdmin ? 'master_prompt' : 'holidays_rd';
+  });
+
+  useEffect(() => {
+    if (!isSuperAdmin && activeSubTab === 'master_prompt') {
+      setActiveSubTab('holidays_rd');
+    }
+  }, [isSuperAdmin, activeSubTab]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -161,31 +173,37 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-base font-bold text-white tracking-tight">
-                Cerebro IA: Prompt Maestro Oficial (36 Reglas) & Aprendizaje Continuo
+                {isSuperAdmin
+                  ? 'Cerebro IA: Prompt Maestro Oficial (36 Reglas) & Aprendizaje Continuo'
+                  : 'Cerebro IA: Días Feriados RD & Tácticas de Venta'}
               </h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-lime-950 text-lime-400 border border-lime-800/60">
-                Adaptado de n8n a Vendemá CRM
+                {isSuperAdmin ? 'Adaptado de n8n a Vendemá CRM' : 'Ventas Todo Lapto'}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Combina las 36 reglas oficiales de venta de Todo Lapto con herramientas nativas del CRM, Evolution API y aprendizaje automático de objeciones.
+              {isSuperAdmin
+                ? 'Combina las 36 reglas oficiales de venta de Todo Lapto con herramientas nativas del CRM, Evolution API y aprendizaje automático de objeciones.'
+                : 'Consulta y gestiona los feriados oficiales de República Dominicana y las tácticas comerciales aprendidas de conversaciones de WhatsApp.'}
             </p>
           </div>
         </div>
 
         {/* Sub-navigation Switcher */}
         <div className="flex flex-wrap items-center gap-1.5 bg-[#121822] p-1 rounded-xl border border-white/[0.06] text-xs">
-          <button
-            onClick={() => setActiveSubTab('master_prompt')}
-            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeSubTab === 'master_prompt'
-                ? 'bg-lime-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <FileCode2 className="w-3.5 h-3.5" />
-            <span>Prompt Maestro (36 Reglas)</span>
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => setActiveSubTab('master_prompt')}
+              className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeSubTab === 'master_prompt'
+                  ? 'bg-lime-500 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <FileCode2 className="w-3.5 h-3.5" />
+              <span>Prompt Maestro (36 Reglas)</span>
+            </button>
+          )}
 
           <button
             onClick={() => setActiveSubTab('holidays_rd')}
@@ -225,7 +243,7 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
         </div>
       )}
 
-      {activeSubTab === 'master_prompt' ? (
+      {activeSubTab === 'master_prompt' && isSuperAdmin ? (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Left Column: Master Prompt Editor */}
           <div className="xl:col-span-8 p-5 rounded-2xl bg-[#0F141C] border border-white/[0.06] flex flex-col space-y-4">

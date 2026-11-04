@@ -932,6 +932,7 @@ export default function App() {
             onUpdateConfig={handleUpdateConfig}
             onAddInsight={handleAddInsight}
             onTriggerGlobalLearning={handleTriggerGlobalLearning}
+            currentUser={currentUser}
           />
         )}
 

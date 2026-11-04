@@ -47,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const canAccessUsers = isSuperAdmin || isDueno;
   const canAccessSettings = true; // Super Admin (control total), Dueño y Empleados (modo solo lectura)
-  const canAccessBrain = isSuperAdmin || isDueno;
+  const canAccessBrain = true; // Super Admin (Prompt Maestro exclusivo), Dueño y Empleados (Feriados RD y Tácticas)
 
   return (
     <header className="border-b border-white/[0.07] bg-[#090D12]/95 backdrop-blur-xl sticky top-0 z-50 px-4 lg:px-8 py-2.5 transition-all">
