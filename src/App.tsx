@@ -179,7 +179,24 @@ export default function App() {
       }
     }
     combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    return combined;
+
+    // Discard any lingering optimistic local msg- records that match a confirmed WhatsApp message
+    const deduped: Conversation['messages'] = [];
+    const seenConfirmedKeys = new Set<string>();
+    for (const m of combined) {
+      if (m.evolutionMessageId) {
+        seenConfirmedKeys.add(`${m.sender}::${(m.content || '').trim()}`);
+      }
+    }
+    for (const m of combined) {
+      if (!m.evolutionMessageId && (m.id.startsWith('msg-') || m.id.startsWith('sim-'))) {
+        const key = `${m.sender}::${(m.content || '').trim()}`;
+        if (seenConfirmedKeys.has(key)) continue;
+      }
+      deduped.push(m);
+    }
+
+    return deduped;
   };
 
   function isGenericContactName(name?: string | null): boolean {
@@ -659,10 +676,7 @@ export default function App() {
 
     const interval = setInterval(() => {
       loadData(true);
-      if (selectedSessionRef.current) {
-        handleRefreshMessages(selectedSessionRef.current, true);
-      }
-    }, 4000);
+    }, 8000);
 
     return () => {
       eventSource.close();

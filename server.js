@@ -60,13 +60,29 @@ El bot de Todo Lapto opera **\xDANICAMENTE en chats directos privados con client
 ### 2.0.1 MENSAJES SENCILLOS, SALUDOS Y CORTES\xCDA: IR DIRECTO AL GRANO (1 A 2 L\xCDNEAS M\xC1XIMO)
 Cuando el cliente env\xEDe un mensaje sencillo de saludo o cortes\xEDa sin pedir todav\xEDa un producto espec\xEDfico (por ejemplo: *"Saludos"*, *"Hola"*, *"Buenas"*, *"Buenos d\xEDas"*, *"Buenas tardes"*, *"Buenas noches"*, *"Qu\xE9 tal"*, *"C\xF3mo est\xE1n"*, *"Klk"*, *"Gracias"*, *"Muchas gracias"*, *"Ok"*, *"Perfecto"*, *"Est\xE1 bien"*):
 1. **VE DIRECTO AL GRANO EN 1 A 2 L\xCDNEAS CORTAS:**
-   - Ejemplo para saludos (*"Saludos"*, *"Hola"*, *"Buenas"*):
+   - Ejemplo para saludos iniciales (*"Saludos"*, *"Hola"*, *"Buenas"*):
      *"\xA1Saludos, [Nombre]! \u{1F60A} Bienvenido a *Todo Lapto*. \xBFEn qu\xE9 te podemos ayudar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?"*
    - Ejemplo para agradecimientos o confirmaciones cortas (*"Gracias"*, *"Ok"*, *"Perfecto"*):
      *"\xA1Siempre a tu orden en *Todo Lapto*! \u{1F60A} Cualquier otra consulta aqu\xED estamos para servirte."*
 2. **ESTRICTAMENTE PROHIBIDO EN SALUDOS SENCILLOS:**
    - \u274C **NO env\xEDes listas de laptops ni cat\xE1logos de productos** cuando el cliente solo dijo *"Saludos"* o *"Hola"*. No canses al cliente con textos largos que no ha pedido.
    - \u274C **NO digas *"Actualmente estamos cerrados"* en un simple saludo.** Solo menciona el horario o que estamos cerrados si el cliente pregunta expresamente por el horario, si puede pasar por la tienda ahora mismo, o al momento de coordinar el env\xEDo de un pedido.
+
+### 2.0.2 PROHIBIDO RE-SALUDAR EN CONVERSACIONES EN CURSO Y RESPONDER DIRECTO A PREGUNTAS PUNTUALES
+1. **NUNCA RE-SALUDES SI LA CONVERSACI\xD3N YA COMENZ\xD3:**
+   - Si en el historial ya hubo un saludo previo o ya se han cruzado mensajes con el cliente, **EST\xC1 TERMINANTEMENTE PROHIBIDO** volver a decir *"\xA1Hola [Nombre]!"*, *"Bienvenido a Todo Lapto \u{1F4BB}"* o repetir *"\xBFEn qu\xE9 te podemos ayudar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?"*.
+   - Habla como una persona normal por WhatsApp: ve directo al grano y responde \xFAnicamente a lo que el cliente acaba de preguntar.
+2. **RESPONDE LA PREGUNTA EXACTA Y LISTO (1 A 2 L\xCDNEAS):**
+   - **Horario / "\xBFEst\xE1n abiertos?" / "\xBFA qu\xE9 hora abren?":**
+     Responde DIRECTAMENTE al estado del horario:
+     *"\xA1Claro que s\xED! Estamos abiertos hoy en nuestra tienda f\xEDsica de la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el env\xEDo directo a tu direcci\xF3n. \u{1F6D2}"*
+   - **Ubicaci\xF3n / "\xBFD\xF3nde est\xE1n ubicados?":**
+     *"Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la parada del telef\xE9rico). \xBFTienes pensado pasar por la tienda hoy o prefieres coordinar env\xEDo a domicilio? \u{1F4CD}"*
+   - **Env\xEDos / Delivery:**
+     *"S\xED, realizamos env\xEDos a todo el pa\xEDs. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. \xBFEn qu\xE9 sector o provincia te encuentras? \u{1F69A}"*
+   - **Garant\xEDa:**
+     *"Todos nuestros equipos cuentan con **6 meses de garant\xEDa certificada por escrito** y soporte t\xE9cnico de Todo Lapto. \xBFBuscas alguna laptop en espec\xEDfico? \u{1F6E1}\uFE0F"*
+   - **PROHIBIDO MENSAJES DE M\xC1S:** No agregues p\xE1rrafos innecesarios, discursos corporativos ni rellenos que no fueron solicitados por el cliente.
 
 ### 2.1 INVENTARIO
 
@@ -1859,7 +1875,7 @@ async function loadAiConfigFromSupabase(url, anonKey) {
     const { data, error } = await client.from("configuracion_sistema").select("ai_provider").eq("config_key", "main").maybeSingle();
     if (!error && data?.ai_provider && typeof data.ai_provider === "object") {
       const ai2 = data.ai_provider;
-      if (ai2.openaiApiKey || ai2.deepseekApiKey || ai2.geminiApiKey || ai2.provider) {
+      if (ai2 && (ai2.openaiApiKey || ai2.deepseekApiKey || ai2.geminiApiKey || ai2.provider)) {
         return ai2;
       }
     }
@@ -2418,13 +2434,20 @@ function loadPersistedConfig() {
       if (saved.aiProvider) {
         const savedPrompt = saved.aiProvider.systemPrompt || "";
         const shouldRefreshPrompt = !savedPrompt || savedPrompt.includes("1\uFE0F\u20E3 *NOMBRE COMPLETO*") || !savedPrompt.includes("REGLA DE CITAS MEJORADA V2") || !savedPrompt.includes("FILTRADO INTELIGENTE V3");
+        const savedModel = String(saved.aiProvider.model || "").trim();
+        const migratedModel = !savedModel || savedModel === "gemini-2.5-flash" || savedModel === "gemini-2.0-flash" || savedModel === "gemini-1.5-flash" || savedModel === "gemini-3-flash-preview" || savedModel === "gemini-3.8-flash" || savedModel === "gemini-flash-latest" ? "gemini-3.1-flash-lite" : savedModel;
+        const rawSavedGeminiKey = (saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : "")).trim();
+        const validGeminiKey = /^AIza[0-9A-Za-z_-]{25,}$/.test(rawSavedGeminiKey) ? rawSavedGeminiKey : "";
+        const migratedProvider = saved.aiProvider.provider === "openai" && !saved.aiProvider.openaiApiKey ? "gemini" : saved.aiProvider.provider || "gemini";
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
+          provider: migratedProvider,
+          model: migratedModel,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
           openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : "")).trim(),
           deepseekApiKey: (saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY : "")).trim(),
-          geminiApiKey: (saved.aiProvider.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : "")).trim()
+          geminiApiKey: validGeminiKey
         };
       }
       if (saved.odoo) {
@@ -2640,7 +2663,7 @@ async function hydrateAndSyncHolidaysWithSupabase() {
 async function hydrateAndSyncAiConfigWithSupabase() {
   try {
     const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
-    if (remoteAi && typeof remoteAi === "object") {
+    if (remoteAi && typeof remoteAi === "object" && appConfig.aiProvider) {
       let updated = false;
       if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
         appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
@@ -2650,8 +2673,13 @@ async function hydrateAndSyncAiConfigWithSupabase() {
         appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
         updated = true;
       }
-      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
-        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
+      const remoteGemKey = String(remoteAi.geminiApiKey || "").trim();
+      if (!appConfig.aiProvider.geminiApiKey && /^AIza[0-9A-Za-z_-]{25,}$/.test(remoteGemKey)) {
+        appConfig.aiProvider.geminiApiKey = remoteGemKey;
+        updated = true;
+      }
+      if (appConfig.aiProvider.geminiApiKey && !/^AIza[0-9A-Za-z_-]{25,}$/.test(appConfig.aiProvider.geminiApiKey)) {
+        appConfig.aiProvider.geminiApiKey = "";
         updated = true;
       }
       if (updated) {
@@ -2683,15 +2711,71 @@ function resolveChatCompletionsUrl(rawUrl, defaultUrl) {
 }
 var rejectedOpenAiKeys = /* @__PURE__ */ new Set();
 var rejectedDeepseekKeys = /* @__PURE__ */ new Set();
+var exhaustedGeminiModelsUntil = /* @__PURE__ */ new Map();
 var lastFastGeminiModel = "gemini-3.1-flash-lite";
 function sanitizeBearerKey(raw) {
   if (!raw) return "";
   return raw.trim().replace(/^['"]+|['"]+$/g, "").replace(/^Bearer\s+/i, "").trim();
 }
+function sanitizeValidGeminiKey(raw) {
+  const cleaned = sanitizeBearerKey(raw);
+  if (/^AIza[0-9A-Za-z_-]{25,}$/.test(cleaned)) {
+    return cleaned;
+  }
+  return "";
+}
+function getActiveGeminiClient() {
+  const customGeminiKey = sanitizeValidGeminiKey(appConfig.aiProvider?.geminiApiKey) || sanitizeValidGeminiKey(process.env.GEMINI_API_KEY);
+  if (customGeminiKey) {
+    return new GoogleGenAI({
+      apiKey: customGeminiKey,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } }
+    });
+  }
+  return ai;
+}
+function formatCleanAiError(err) {
+  const raw = String(err?.message || err || "");
+  const lower = raw.toLowerCase();
+  const isQuota429 = raw.includes("429") || lower.includes("resource_exhausted") || lower.includes("quota exceeded") || lower.includes("insufficient_quota");
+  const isDailyQuota = lower.includes("generaterequestsperday") || lower.includes("per day limit exceeded") || lower.includes("free_tier_requests");
+  const isBusy503 = raw.includes("503") || lower.includes("unavailable") || lower.includes("high demand") || lower.includes("timeout r\xE1pido");
+  if (isDailyQuota) {
+    return {
+      isQuota429: true,
+      isDailyQuota: true,
+      isBusy503: false,
+      summary: "Cuota diaria gratuita del modelo alcanzada; cambiando a motor activo."
+    };
+  }
+  if (isQuota429) {
+    return {
+      isQuota429: true,
+      isDailyQuota: false,
+      isBusy503: false,
+      summary: "L\xEDmite de cuota del proveedor alcanzado temporalmente; cambiando a motor de respaldo."
+    };
+  }
+  if (isBusy503) {
+    return {
+      isQuota429: false,
+      isDailyQuota: false,
+      isBusy503: true,
+      summary: "Alta demanda temporal en el modelo; alternando a motor de respuesta inmediata."
+    };
+  }
+  const cleanLine = raw.replace(/\s+/g, " ").slice(0, 140);
+  return {
+    isQuota429: false,
+    isDailyQuota: false,
+    isBusy503: false,
+    summary: cleanLine || "Error de conexi\xF3n con proveedor IA"
+  };
+}
 async function generateTextWithConfiguredAI(options) {
   const providerCfg = appConfig.aiProvider || {
     provider: "gemini",
-    model: "gemini-3.8-flash",
+    model: "gemini-3.1-flash-lite",
     temperature: 0.35
   };
   const provider = providerCfg.provider || "gemini";
@@ -2716,7 +2800,7 @@ async function generateTextWithConfiguredAI(options) {
     if (allowFallback && rejectedOpenAiKeys.has(openaiKey)) {
     } else {
       const primaryOpenAiModel = providerCfg.model?.startsWith("gpt") || providerCfg.model?.startsWith("o") ? providerCfg.model : "gpt-4o-mini";
-      const openAiCandidates = primaryOpenAiModel === "gpt-4o-mini" ? ["gpt-4o-mini"] : [primaryOpenAiModel, "gpt-4o-mini"];
+      const openAiCandidates = allowFallback ? [primaryOpenAiModel] : primaryOpenAiModel === "gpt-4o-mini" ? ["gpt-4o-mini"] : [primaryOpenAiModel, "gpt-4o-mini"];
       let lastOpenAiErr = null;
       for (const model of openAiCandidates) {
         try {
@@ -2746,7 +2830,7 @@ async function generateTextWithConfiguredAI(options) {
               Authorization: `Bearer ${openaiKey}`
             },
             body: JSON.stringify(bodyPayload),
-            signal: AbortSignal.timeout(12e3)
+            signal: AbortSignal.timeout(4500)
           });
           if (!res.ok) {
             let errorDetail = "";
@@ -2757,25 +2841,22 @@ async function generateTextWithConfiguredAI(options) {
               errorCode = errBody?.error?.code || "";
             } catch {
             }
-            if (res.status === 401 || res.status === 403) {
+            const isQuotaExhausted = res.status === 429 && (errorCode === "insufficient_quota" || errorDetail.toLowerCase().includes("quota") || errorDetail.toLowerCase().includes("billing"));
+            if (res.status === 401 || res.status === 403 || res.status === 429 || isQuotaExhausted) {
               rejectedOpenAiKeys.add(openaiKey);
-              let reasonMessage = `OpenAI rechaz\xF3 la autorizaci\xF3n (HTTP ${res.status})`;
-              if (errorDetail) {
+              let reasonMessage = isQuotaExhausted ? "Tu cuenta de OpenAI no tiene saldo o cuota disponible actualmente." : `OpenAI rechaz\xF3 la autorizaci\xF3n (HTTP ${res.status})`;
+              if (!isQuotaExhausted && errorDetail) {
                 reasonMessage += `: "${errorDetail}"`;
               }
               if (errorDetail.toLowerCase().includes("invalidated") || errorCode === "token_invalidated") {
-                reasonMessage += ". La clave API guardada en Vendem\xE1 fue invalidada o revocada en platform.openai.com. Por favor genera una nueva API Key en https://platform.openai.com/api-keys y p\xE9gala aqu\xED.";
-              } else if (errorDetail.toLowerCase().includes("quota") || errorCode === "insufficient_quota") {
-                reasonMessage += ". Tu cuenta de OpenAI no tiene saldo o cuota disponible. Por favor recarga saldo en https://platform.openai.com/billing.";
-              } else if (!openaiKey.startsWith("sk-")) {
-                reasonMessage += '. La clave ingresada no comienza con "sk-" ni "sk-proj-", verifica haberla copiado completa desde OpenAI.';
-              } else {
-                reasonMessage += ". Verifica que la clave est\xE9 activa en platform.openai.com.";
+                reasonMessage += " Por favor genera una nueva API Key en https://platform.openai.com/api-keys.";
+              } else if (isQuotaExhausted) {
+                reasonMessage += " Por favor recarga saldo en https://platform.openai.com/billing o utiliza el motor Gemini integrado.";
               }
               lastOpenAiErr = new Error(reasonMessage);
               break;
             }
-            throw new Error(`OpenAI devolvi\xF3 estado HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ` en el modelo ${model}`}`);
+            throw new Error(`OpenAI devolvi\xF3 estado HTTP ${res.status} en el modelo ${model}`);
           }
           rejectedOpenAiKeys.delete(openaiKey);
           const data = await res.json();
@@ -2786,13 +2867,14 @@ async function generateTextWithConfiguredAI(options) {
           throw new Error("OpenAI devolvi\xF3 una respuesta vac\xEDa");
         } catch (err) {
           lastOpenAiErr = err;
-          console.log(`[AI Engine Info]: Reintento o respaldo desde OpenAI (${model}) -> ${err.message}`);
+          if (allowFallback) {
+            rejectedOpenAiKeys.add(openaiKey);
+          }
+          const cleanErr = formatCleanAiError(err);
+          console.log(`[AI Engine]: Reintento o respaldo desde OpenAI (${model}) -> ${cleanErr.summary}`);
         }
       }
       if (!allowFallback && lastOpenAiErr) throw lastOpenAiErr;
-      console.log(
-        "[AI Engine]: Aplicando respaldo autom\xE1tico con Google Gemini para responder al cliente en tiempo real."
-      );
     }
   }
   if (provider === "deepseek" && deepseekKey) {
@@ -2841,31 +2923,33 @@ async function generateTextWithConfiguredAI(options) {
         }
         throw new Error("DeepSeek devolvi\xF3 una respuesta vac\xEDa");
       } catch (err) {
-        console.log(`[AI Engine Info]: Respaldo desde DeepSeek -> ${err.message}`);
-        if (!allowFallback) throw err;
+        const cleanErr = formatCleanAiError(err);
+        console.log(`[AI Engine]: Respaldo desde DeepSeek -> ${cleanErr.summary}`);
+        if (!allowFallback) throw new Error(cleanErr.summary);
       }
     }
   }
-  const geminiCandidates = Array.from(
+  const rawConfiguredGeminiModel = provider === "gemini" && providerCfg.model?.startsWith("gemini") ? providerCfg.model : "gemini-3.1-flash-lite";
+  const validConfiguredGeminiModel = rawConfiguredGeminiModel === "gemini-2.5-flash" || rawConfiguredGeminiModel === "gemini-2.0-flash" || rawConfiguredGeminiModel === "gemini-1.5-flash" || rawConfiguredGeminiModel === "gemini-3-flash-preview" || rawConfiguredGeminiModel === "gemini-3.8-flash" || rawConfiguredGeminiModel === "gemini-flash-latest" ? "gemini-3.1-flash-lite" : rawConfiguredGeminiModel;
+  const allGeminiCandidates = Array.from(
     /* @__PURE__ */ new Set([
-      lastFastGeminiModel,
-      "gemini-2.5-flash",
       "gemini-3.1-flash-lite",
-      "gemini-3-flash-preview",
-      provider === "gemini" && providerCfg.model?.startsWith("gemini") ? providerCfg.model : "gemini-2.5-flash",
-      "gemini-3.8-flash"
+      lastFastGeminiModel,
+      validConfiguredGeminiModel
     ])
   );
-  const customGeminiKey = sanitizeBearerKey(providerCfg.geminiApiKey);
-  const geminiClient = customGeminiKey ? new GoogleGenAI({
-    apiKey: customGeminiKey,
-    httpOptions: { headers: { "User-Agent": "aistudio-build" } }
-  }) : ai;
+  const nowMs = Date.now();
+  const activeGeminiCandidates = allGeminiCandidates.filter((m) => {
+    const blockedUntil = exhaustedGeminiModelsUntil.get(m) || 0;
+    return nowMs >= blockedUntil;
+  });
+  const geminiCandidates = activeGeminiCandidates.length > 0 ? activeGeminiCandidates.slice(0, 2) : ["gemini-3.1-flash-lite"];
+  const geminiClient = getActiveGeminiClient();
   const fullPromptForGemini = options.chatMessages && options.chatMessages.length > 0 ? `Historial reciente de mensajes:
 ${options.chatMessages.map((m) => `${m.role === "user" ? "CLIENTE" : "TODO LAPTO (AGENTE)"}: ${m.content}`).join("\n")}
 
 ${options.prompt}` : options.prompt;
-  let lastGeminiErr = null;
+  let lastCleanErrorSummary = "Motor IA temporalmente ocupado";
   for (const gModel of geminiCandidates) {
     try {
       const response = await Promise.race([
@@ -2879,11 +2963,12 @@ ${options.prompt}` : options.prompt;
           }
         }),
         new Promise(
-          (_, reject) => setTimeout(() => reject(new Error(`Timeout r\xE1pido en modelo ${gModel}`)), 4500)
+          (_, reject) => setTimeout(() => reject(new Error(`Timeout r\xE1pido en modelo ${gModel}`)), 5500)
         )
       ]);
       if (response?.text) {
         lastFastGeminiModel = gModel;
+        exhaustedGeminiModelsUntil.delete(gModel);
         return {
           text: response.text,
           providerUsed: "gemini",
@@ -2891,11 +2976,23 @@ ${options.prompt}` : options.prompt;
         };
       }
     } catch (err) {
-      lastGeminiErr = err;
-      console.log(`[AI Engine Info]: Alternando modelo Gemini (${gModel}) -> ${err.message}`);
+      const parsedErr = formatCleanAiError(err);
+      lastCleanErrorSummary = parsedErr.summary;
+      if (parsedErr.isDailyQuota) {
+        const cooldownUntil = Date.now() + 4 * 60 * 60 * 1e3;
+        exhaustedGeminiModelsUntil.set(gModel, cooldownUntil);
+        if (lastFastGeminiModel === gModel) {
+          lastFastGeminiModel = "gemini-3.1-flash-lite";
+        }
+        continue;
+      }
+      if (parsedErr.isQuota429) {
+        exhaustedGeminiModelsUntil.set(gModel, Date.now() + 2 * 60 * 1e3);
+        continue;
+      }
     }
   }
-  throw lastGeminiErr || new Error("No se pudo generar respuesta con los modelos disponibles.");
+  throw new Error(lastCleanErrorSummary);
 }
 var products = [];
 var aiEnabledBySession = /* @__PURE__ */ new Map();
@@ -3023,6 +3120,59 @@ var learnedInsights = [
 ];
 var followUps = [];
 var processedMessageIds = /* @__PURE__ */ new Map();
+var PROCESSED_IDS_FILE = path.join(__dirname, ".vendema-processed-ids.json");
+try {
+  if (fs.existsSync(PROCESSED_IDS_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(PROCESSED_IDS_FILE, "utf-8"));
+    const cutoff = Date.now() - 24 * 60 * 60 * 1e3;
+    if (raw && typeof raw === "object") {
+      for (const [k, ts] of Object.entries(raw)) {
+        if (typeof ts === "number" && ts > cutoff) {
+          processedMessageIds.set(k, ts);
+        }
+      }
+    }
+  }
+} catch {
+}
+var saveProcessedIdsTimer = null;
+function scheduleSaveProcessedIds() {
+  if (saveProcessedIdsTimer) return;
+  saveProcessedIdsTimer = setTimeout(() => {
+    saveProcessedIdsTimer = null;
+    try {
+      const cutoff = Date.now() - 12 * 60 * 60 * 1e3;
+      const entries = Array.from(processedMessageIds.entries()).filter(([, ts]) => ts > cutoff).slice(-1500);
+      fs.writeFileSync(PROCESSED_IDS_FILE, JSON.stringify(Object.fromEntries(entries)), "utf-8");
+    } catch {
+    }
+  }, 1500);
+}
+function normalizeMsgIdKey(rawId) {
+  return (rawId || "").trim().replace(/^evo-/, "");
+}
+function markMessageIdProcessed(rawId, contactKeys = []) {
+  const cleanId = normalizeMsgIdKey(rawId);
+  if (!cleanId) return;
+  const now = Date.now();
+  processedMessageIds.set(cleanId, now);
+  processedMessageIds.set(`evo-${cleanId}`, now);
+  for (const k of contactKeys) {
+    processedMessageIds.set(`${k}::${cleanId}`, now);
+    processedMessageIds.set(`${k}::evo-${cleanId}`, now);
+  }
+  scheduleSaveProcessedIds();
+}
+function isMessageIdAlreadyProcessed(rawId, contactKeys = []) {
+  const cleanId = normalizeMsgIdKey(rawId);
+  if (!cleanId) return false;
+  if (processedMessageIds.has(cleanId) || processedMessageIds.has(`evo-${cleanId}`)) {
+    return true;
+  }
+  return contactKeys.some(
+    (k) => processedMessageIds.has(`${k}::${cleanId}`) || processedMessageIds.has(`${k}::evo-${cleanId}`)
+  );
+}
 var keywordsLaptop = [
   "chromebook",
   "thinkpad",
@@ -3148,18 +3298,39 @@ var keywordsImpresora = [
   "impresoras",
   "printer",
   "printers",
-  "multifuncional",
-  "multifuncionales",
   "ecotank",
   "smart tank",
   "deskjet",
   "laserjet",
   "pixma",
   "ink tank",
-  "toner",
-  "tinta",
-  "cartucho"
+  "officejet"
 ];
+function isPrinterSupplyOrConsumable(name, odooCateg = "") {
+  const n = (name || "").toLowerCase().trim();
+  const c = (odooCateg || "").toLowerCase().trim();
+  return (/\b(cartucho|cartuchos|tinta|tintas|toner|t[oó]ner|botella\s*de\s*tinta|ink\s*tinta|cinta\s*para\s*impresora|cabezal)\b/i.test(
+    n
+  ) || /\b(tinta|toner|t[oó]ner|cartucho|consumible)\b/i.test(c)) && !/^(impresora|multifuncional|printer)\b/i.test(n);
+}
+function isActualPrinterMachine(name, odooCateg = "") {
+  const n = (name || "").toLowerCase().trim();
+  const c = (odooCateg || "").toLowerCase().trim();
+  if (/\b(teclado|teclados|keyboard|mouse|rat[oó]n|combo\s*teclado|cable|cables|cord[oó]n|cargador|ups\b|power\s*bank|bater[ií]a|adaptador|hub\b|soporte|mesa|mochila|bulto|funda|bocina|speaker|aud[ií]fono|headset)\b/i.test(
+    n
+  )) {
+    return false;
+  }
+  if (isPrinterSupplyOrConsumable(n, c)) {
+    return false;
+  }
+  if (/\b(para\s+impresoras?|de\s+impresoras?)\b/i.test(n) && !/^(impresora|multifuncional|printer)\b/i.test(n)) {
+    return false;
+  }
+  return keywordsImpresora.some((k) => n.includes(k)) || /\b(multifuncional|multifuncionales|todo-en-uno|todo\s*en\s*uno)\b/i.test(n) && /\b(impresora|hp|epson|canon|brother|deskjet|laserjet|ecotank|smart\s*tank|pixma|copia|escaner|esc[aá]ner)\b/i.test(
+    n
+  ) || c.includes("impresora") || c.includes("printer");
+}
 function detectProductBrand(name, odooBrandName = "", desc = "") {
   const combined = `${odooBrandName} ${name} ${desc}`.toLowerCase();
   if (odooBrandName && odooBrandName.trim().length > 1 && odooBrandName !== "-") {
@@ -3206,7 +3377,7 @@ function classifyProductCondition(p, category, odooAttrs, cleanEcomDesc) {
       conditionDetail: "Usado / Reacondicionado Importado Clase A (Prueba de 25 puntos \u2014 Garant\xEDa 6 meses)"
     };
   }
-  if (category === "red" || /\b(mouse|teclado|combo|hub|adaptador|cable|mochila|bulto|funda|estuche|cooling|stand|soporte|aud[ií]fono|headset|karaoke|barra de sonido|repetidor|router|candado|control|ups)\b/i.test(
+  if (category === "red" || /\b(mouse|teclado|combo|hub|adaptador|cable|mochila|bulto|funda|estuche|cooling|stand|soporte|aud[ií]fono|headset|karaoke|barra de sonido|repetidor|router|candado|control|ups|cartucho|cartuchos|tinta|tintas|toner|t[oó]ner)\b/i.test(
     textCombined
   )) {
     return {
@@ -3270,14 +3441,11 @@ function categorizeOdooProduct(name, odooCategName = "") {
   if (categ.includes("monitor") || categ.includes("pantalla")) {
     return "monitor";
   }
-  if (categ.includes("impresora") || categ.includes("printer") || categ.includes("tinta") || categ.includes("toner")) {
+  if (isActualPrinterMachine(nombre, categ)) {
     return "impresora";
   }
-  if (keywordsLaptop.some((k) => nombre.includes(k)) && !isExcludedPart) {
+  if (keywordsLaptop.some((k) => nombre.includes(k)) && !isExcludedPart && !isPrinterSupplyOrConsumable(nombre, categ)) {
     return "laptop";
-  }
-  if (keywordsImpresora.some((k) => nombre.includes(k))) {
-    return "impresora";
   }
   if (keywordsMonitor.some((k) => nombre.includes(k))) {
     return "monitor";
@@ -3482,8 +3650,8 @@ async function syncOdooInventory() {
         const odooBrandName = Array.isArray(p.brand_id) ? String(p.brand_id[1] || "") : "";
         const cat = categorizeOdooProduct(p.name || "", odooCatName);
         const odooAttrs = prodAttrsByTmplId.get(p.id) || {};
-        const rawSaleDesc = typeof p.description_sale === "string" ? p.description_sale.replace(/\s+/g, " ").trim() : "";
-        const cleanEcomDesc = typeof p.description_ecommerce === "string" ? p.description_ecommerce.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim() : "";
+        const rawSaleDesc = typeof p.description_sale === "string" ? p.description_sale.replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim() : "";
+        const cleanEcomDesc = typeof p.description_ecommerce === "string" ? p.description_ecommerce.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/\s+/g, " ").trim() : "";
         const attrSpecsParts = [];
         if (odooAttrs["Procesador"]) attrSpecsParts.push(`CPU: ${odooAttrs["Procesador"]}`);
         if (odooAttrs["Ram"] || odooAttrs["ram"]) attrSpecsParts.push(`RAM: ${odooAttrs["Ram"] || odooAttrs["ram"]}`);
@@ -3533,7 +3701,7 @@ async function syncOdooInventory() {
       appConfig.odoo.lastSync = (/* @__PURE__ */ new Date()).toISOString();
       appConfig.odoo.connected = true;
       console.log(
-        `[Odoo Real-Time Sync (n8n Pipeline)]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepci\xF3n excluida)`
+        `[Odoo Real-Time Sync]: Loaded ${products.length} in-stock products (${laptopCount} laptops, ${printerCount} impresoras, ${vendibleLocIds.length} ubicaciones vendibles; Recepci\xF3n excluida)`
       );
       broadcastEvent("inventory_update", { count: products.length, lastSync: appConfig.odoo.lastSync });
     }
@@ -3836,7 +4004,7 @@ function isGenericContactName(name) {
 }
 async function syncEvolutionContactsIfNeeded() {
   const now = Date.now();
-  if (now - lastContactsSync < 1e3 * 60 * 5 && evolutionContactsMap.size > 0) return;
+  if (now - lastContactsSync < 1e3 * 60 * 60 * 4 && evolutionContactsMap.size > 0) return;
   try {
     const url = `${appConfig.evolution.serverUrl}/chat/findContacts/${appConfig.evolution.instance}`;
     const res = await fetch(url, {
@@ -3876,8 +4044,12 @@ var isEvoSyncRunning = false;
 var lastEvolutionChatsSync = 0;
 async function syncEvolutionChats() {
   if (isEvoSyncRunning) return conversations;
+  const now = Date.now();
+  if (now - lastEvolutionChatsSync < 12e3 && conversations.length > 0) {
+    return conversations;
+  }
   isEvoSyncRunning = true;
-  lastEvolutionChatsSync = Date.now();
+  lastEvolutionChatsSync = now;
   try {
     await syncEvolutionContactsIfNeeded();
     const url = `${appConfig.evolution.serverUrl}/chat/findChats/${appConfig.evolution.instance}`;
@@ -4053,9 +4225,11 @@ async function syncEvolutionChats() {
       if (!prevConv || prevConv.lastTimestamp !== lastTimestamp) {
         hasChanges = true;
       }
-      let messages = prevConv?.messages || (parsedLast ? [parsedLast] : []);
-      if (prevConv?.messagesLoaded && parsedLast && !messages.some((m) => m.evolutionMessageId === parsedLast.evolutionMessageId)) {
-        messages = [...messages, parsedLast];
+      let messages = prevConv?.messages ? [...prevConv.messages] : parsedLast ? [parsedLast] : [];
+      if (parsedLast && !messages.some(
+        (m) => parsedLast.evolutionMessageId && m.evolutionMessageId === parsedLast.evolutionMessageId || parsedLast.id && m.id === parsedLast.id
+      )) {
+        messages.push(parsedLast);
       }
       messages = mergeWithLocalMessages(canonicalSessionId, messages, prevConv?.messages || [], cleanPhone);
       const latestMerged = messages[messages.length - 1];
@@ -4117,30 +4291,37 @@ async function syncEvolutionChats() {
     if (hasChanges) {
       broadcastEvent("conversations_update", { count: conversations.length });
     }
-    await flushPendingOutboundQueue();
-    if (appConfig.globalAiActive) {
+    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
       const nowMs = Date.now();
+      const handledContactsThisCycle = /* @__PURE__ */ new Set();
       for (const conv of conversations.slice(0, 15)) {
+        if (!conv.aiEnabled) continue;
+        if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) continue;
+        const cleanPhone = (conv.customerPhone || "").replace(/\D/g, "");
+        if (cleanPhone === appConfig.evolution.teamPhone || cleanPhone === appConfig.evolution.adminPhone || conv.customerName.toLowerCase().includes("soporte todo lapto")) {
+          continue;
+        }
         const lastMsg = conv.messages[conv.messages.length - 1];
         if (!lastMsg) continue;
-        const msgId = lastMsg.evolutionMessageId || lastMsg.id;
-        if (isFirstEvolutionSync) {
-          processedMessageIds.set(msgId, nowMs);
-          continue;
-        }
-        if (!conv.aiEnabled) continue;
-        if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone) || conv.sessionId === "270647783641294@lid" || conv.customerName.toLowerCase().includes("soporte todo lapto") || conv.customerPhone && (conv.customerPhone === appConfig.evolution.teamPhone || conv.customerPhone === appConfig.evolution.adminPhone)) {
-          processedMessageIds.set(msgId, nowMs);
-          continue;
-        }
+        const msgId = normalizeMsgIdKey(lastMsg.evolutionMessageId || lastMsg.id);
+        if (lastMsg.sender !== "customer") continue;
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
-        if (lastMsg.sender === "customer" && ageMs <= 5 * 60 * 1e3 && !processedMessageIds.has(msgId) && !inFlightBotSessions.has(conv.sessionId)) {
-          processedMessageIds.set(msgId, nowMs);
-          triggerSalesBotReplyForConversation(conv, "live_evolution_poll").catch(
-            (err) => console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
-          );
+        if (ageMs > 10 * 60 * 1e3) continue;
+        const contactKeys = getConversationContactKeys(conv);
+        if (contactKeys.some((k) => handledContactsThisCycle.has(k) || isBotLockActive(k))) {
+          continue;
         }
+        if (isMessageIdAlreadyProcessed(msgId, contactKeys)) continue;
+        const skipCheck = shouldSkipBotReply(conv, lastMsg, "live_evolution_poll");
+        if (skipCheck.skip) continue;
+        for (const k of contactKeys) {
+          handledContactsThisCycle.add(k);
+        }
+        console.log(`\u{1F916} [Auto-Reply Polling Trigger]: Respondiendo a ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        triggerSalesBotReplyForConversation(conv, "live_evolution_poll").catch(
+          (err) => console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
+        );
       }
     }
     isFirstEvolutionSync = false;
@@ -4193,6 +4374,7 @@ function recordLocalMessage(sessionId, msg, customerPhone) {
 function mergeWithLocalMessages(sessionId, evoList, existingList = [], customerPhone) {
   const combined = [...evoList];
   const candidateLocals = [];
+  const isFullEvoRefresh = evoList.length >= 2;
   const addCandidates = (arr, localOnly = true) => {
     if (!arr) return;
     for (const m of arr) {
@@ -4212,17 +4394,28 @@ function mergeWithLocalMessages(sessionId, evoList, existingList = [], customerP
     }
   }
   addCandidates(existingList, false);
+  const claimedEvoIndices = /* @__PURE__ */ new Set();
+  const nowMs = Date.now();
   for (const localMsg of candidateLocals) {
     const localTime = new Date(localMsg.timestamp).getTime();
     const localText = (localMsg.content || "").trim();
-    const existingIdx = combined.findIndex((evo) => {
+    let existingIdx = combined.findIndex((evo) => {
       if (evo.id === localMsg.id) return true;
       if (localMsg.evolutionMessageId && evo.evolutionMessageId === localMsg.evolutionMessageId) return true;
-      if (evo.sender !== "customer" && localMsg.sender !== "customer" && localText.length > 0 && (evo.content || "").trim() === localText && Math.abs(new Date(evo.timestamp).getTime() - localTime) < 3e5) {
-        return true;
-      }
       return false;
     });
+    if (existingIdx < 0 && !localMsg.evolutionMessageId) {
+      existingIdx = combined.findIndex((evo, idx) => {
+        if (claimedEvoIndices.has(idx)) return false;
+        if (evo.sender !== "customer" && localMsg.sender !== "customer" && localText.length > 0 && (evo.content || "").trim() === localText && Math.abs(new Date(evo.timestamp).getTime() - localTime) < 45e3) {
+          return true;
+        }
+        return false;
+      });
+      if (existingIdx >= 0) {
+        claimedEvoIndices.add(existingIdx);
+      }
+    }
     if (existingIdx >= 0) {
       if (localMsg.quotedMessage && !combined[existingIdx].quotedMessage) {
         combined[existingIdx].quotedMessage = localMsg.quotedMessage;
@@ -4231,11 +4424,27 @@ function mergeWithLocalMessages(sessionId, evoList, existingList = [], customerP
         combined[existingIdx].mediaUrl = localMsg.mediaUrl;
       }
     } else {
-      combined.push(localMsg);
+      if (localMsg.evolutionMessageId || !isFullEvoRefresh || nowMs - localTime < 25e3) {
+        combined.push(localMsg);
+      }
     }
   }
   combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  return combined;
+  const deduped = [];
+  const seenConfirmedKeys = /* @__PURE__ */ new Set();
+  for (const m of combined) {
+    if (m.evolutionMessageId) {
+      seenConfirmedKeys.add(`${m.sender}::${(m.content || "").trim()}`);
+    }
+  }
+  for (const m of combined) {
+    if (!m.evolutionMessageId && (m.id.startsWith("msg-") || m.id.startsWith("sim-"))) {
+      const key = `${m.sender}::${(m.content || "").trim()}`;
+      if (seenConfirmedKeys.has(key)) continue;
+    }
+    deduped.push(m);
+  }
+  return deduped;
 }
 async function loadEvolutionMessagesForChat(sessionId) {
   const conv = conversations.find((c) => c.sessionId === sessionId) || conversations.find(
@@ -4271,7 +4480,8 @@ async function loadEvolutionMessagesForChat(sessionId) {
           body: JSON.stringify({
             where: { key: { remoteJid: jid } },
             limit: 35
-          })
+          }),
+          signal: AbortSignal.timeout(3e3)
         }).then((r) => r.ok ? r.json() : null).catch(() => null)
       )
     );
@@ -4454,51 +4664,487 @@ async function loadEvolutionMessagesForChat(sessionId) {
   }
 }
 var isFirstEvolutionSync = true;
-var inFlightBotSessions = /* @__PURE__ */ new Set();
-var pendingOutboundQueue = /* @__PURE__ */ new Map();
-var lastEvolutionRestartMs = 0;
-function sleepMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+var inFlightBotKeys = /* @__PURE__ */ new Map();
+var BOT_LOCK_TTL_MS = 9e4;
+var lastFrontendHeartbeatMs = 0;
+function recordFrontendHeartbeat() {
+  lastFrontendHeartbeatMs = Date.now();
 }
-async function ensureEvolutionInstanceConnected(forceRestart = false) {
-  if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) return false;
-  const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, "");
-  const instance = appConfig.evolution.instance;
-  const headers = { apikey: appConfig.evolution.apiKey };
+function isAiStudioIdleBackgroundContainer() {
+  const isAiStudioContainer = Boolean(process.env.AISTUDIO_APPLET_ID);
+  if (!isAiStudioContainer) return false;
+  if (process.env.AISTUDIO_ALLOW_AUTO_REPLY !== "true") return true;
+  if (!lastFrontendHeartbeatMs) return true;
+  return Date.now() - lastFrontendHeartbeatMs > 2e4;
+}
+function isBotLockActive(key) {
+  const lockedAt = inFlightBotKeys.get(key);
+  if (!lockedAt) return false;
+  if (Date.now() - lockedAt > BOT_LOCK_TTL_MS) {
+    inFlightBotKeys.delete(key);
+    return false;
+  }
+  return true;
+}
+var BOT_AUDIT_LOG_FILE = path.join(__dirname, ".vendema-bot-audit.json");
+var botAuditLogs = [];
+try {
+  if (fs.existsSync(BOT_AUDIT_LOG_FILE)) {
+    const raw = fs.readFileSync(BOT_AUDIT_LOG_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      botAuditLogs = parsed.filter((item) => item?.decision !== "blocked_in_flight").slice(0, 300);
+    }
+  }
+} catch {
+  botAuditLogs = [];
+}
+var auditSaveTimeout = null;
+function scheduleAuditLogSave() {
+  if (auditSaveTimeout) return;
+  auditSaveTimeout = setTimeout(() => {
+    auditSaveTimeout = null;
+    try {
+      fs.writeFileSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
+    } catch {
+    }
+  }, 1e3);
+}
+var lastAuditLogKeyByPhone = /* @__PURE__ */ new Map();
+function recordBotAuditLog(entry) {
+  const phone = entry.customerPhone || (entry.sessionId || "").replace(/@.*$/, "").replace(/\D/g, "");
+  const dedupeKey = `${phone}::${entry.incomingMessageId || "none"}::${entry.decision}`;
+  const now = Date.now();
+  const prevAudit = lastAuditLogKeyByPhone.get(phone);
+  if (prevAudit && prevAudit.key === dedupeKey && now - prevAudit.ts < 8e3) {
+    return;
+  }
+  lastAuditLogKeyByPhone.set(phone, { key: dedupeKey, ts: now });
+  const rdContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const item = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    timeRd: rdContext.time12,
+    customerName: entry.customerName || `Cliente +${phone}`,
+    customerPhone: phone,
+    sessionId: entry.sessionId,
+    triggerSource: entry.triggerSource,
+    incomingMessageId: entry.incomingMessageId || "N/A",
+    incomingText: (entry.incomingText || "").slice(0, 150),
+    decision: entry.decision,
+    reason: entry.reason,
+    replyText: entry.replyText ? entry.replyText.slice(0, 200) : void 0,
+    evolutionMessageId: entry.evolutionMessageId,
+    durationMs: entry.durationMs
+  };
+  botAuditLogs.unshift(item);
+  if (botAuditLogs.length > 300) {
+    botAuditLogs.pop();
+  }
+  broadcastEvent("bot_audit_update", item);
+  scheduleAuditLogSave();
+}
+function getConversationContactKeys(conv, extraPhone) {
+  if (!conv) return extraPhone ? [extraPhone.replace(/\D/g, "")] : [];
+  const keys = /* @__PURE__ */ new Set();
+  if (conv.sessionId) {
+    keys.add(conv.sessionId.toLowerCase().trim());
+  }
+  const cleanPhone = (conv.customerPhone || extraPhone || "").replace(/\D/g, "");
+  if (cleanPhone) {
+    keys.add(cleanPhone);
+    if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      keys.add(std);
+      keys.add(`${std}@s.whatsapp.net`);
+      keys.add(std.slice(-10));
+    }
+  }
+  if (conv.customerName && !isGenericContactName(conv.customerName)) {
+    keys.add(`name:${conv.customerName.trim().toLowerCase()}`);
+  }
+  const related = relatedJidsBySession.get(conv.sessionId);
+  if (related) {
+    for (const r of related) {
+      if (r) keys.add(r.toLowerCase().trim());
+    }
+  }
+  return Array.from(keys);
+}
+var lastBotReplyByContactKey = /* @__PURE__ */ new Map();
+var BOT_OUTBOUND_LOCKS_FILE = path.join(__dirname, ".vendema-outbound-locks.json");
+function acquireCrossProcessBotLock(lockKeys, ttlMs = 45e3) {
   try {
-    if (!forceRestart) {
-      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers });
-      if (stateRes.ok) {
-        const data = await stateRes.json().catch(() => null);
-        const state = data?.instance?.state || data?.state;
-        if (state === "open") {
-          appConfig.evolution.connected = true;
-          return true;
-        }
+    let data = {};
+    if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
+      try {
+        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, "utf-8"));
+      } catch {
+        data = {};
       }
     }
     const now = Date.now();
-    if (now - lastEvolutionRestartMs > 15e3) {
-      lastEvolutionRestartMs = now;
-      await fetch(`${baseUrl}/instance/restart/${instance}`, { method: "POST", headers }).catch(() => null);
-      await sleepMs(1500);
-      await fetch(`${baseUrl}/instance/connect/${instance}`, { headers }).catch(() => null);
-      await sleepMs(2e3);
-    } else {
-      await sleepMs(1800);
+    for (const [k, exp] of Object.entries(data)) {
+      if (now > exp) delete data[k];
     }
-    const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers });
-    if (verifyRes.ok) {
-      const vData = await verifyRes.json().catch(() => null);
-      const vState = vData?.instance?.state || vData?.state;
-      if (vState === "open") {
-        appConfig.evolution.connected = true;
-        return true;
+    for (const key of lockKeys) {
+      if (data[key] && now < data[key]) {
+        return false;
       }
+    }
+    for (const key of lockKeys) {
+      data[key] = now + ttlMs;
+    }
+    fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
+    return true;
+  } catch {
+    return true;
+  }
+}
+function releaseCrossProcessBotLock(lockKeys) {
+  try {
+    if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
+      let data = {};
+      try {
+        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, "utf-8"));
+      } catch {
+        data = {};
+      }
+      for (const key of lockKeys) {
+        delete data[key];
+      }
+      fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
     }
   } catch {
   }
-  return false;
+}
+function acquireBotLock(conv, triggerSource = "unknown") {
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    if (isBotLockActive(k)) {
+      const lastMsg = conv.messages[conv.messages.length - 1];
+      const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || "";
+      const incomingText = lastMsg?.content || "";
+      recordBotAuditLog({
+        customerName: conv.customerName,
+        customerPhone: conv.customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: "blocked_in_flight",
+        reason: "Ya hay una respuesta gener\xE1ndose concurrentemente para este contacto. Bloqueo at\xF3mico activo.",
+        durationMs: 0
+      });
+      return false;
+    }
+  }
+  if (!acquireCrossProcessBotLock(keys, BOT_LOCK_TTL_MS)) {
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || "";
+    const incomingText = lastMsg?.content || "";
+    recordBotAuditLog({
+      customerName: conv.customerName,
+      customerPhone: conv.customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: incomingId,
+      incomingText,
+      decision: "blocked_in_flight",
+      reason: "Ya hay una respuesta gener\xE1ndose en otro worker de Hostinger. Bloqueo multi-proceso activo.",
+      durationMs: 0
+    });
+    return false;
+  }
+  const now = Date.now();
+  for (const k of keys) {
+    inFlightBotKeys.set(k, now);
+  }
+  return true;
+}
+function releaseBotLock(conv) {
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    inFlightBotKeys.delete(k);
+  }
+  releaseCrossProcessBotLock(keys);
+}
+function recordBotReplyForConversation(conv, customerMsgId, customerText, botReplyText) {
+  const record = {
+    timestamp: Date.now(),
+    customerMsgId,
+    customerText: (customerText || "").trim(),
+    botReplyText: (botReplyText || "").trim()
+  };
+  const keys = getConversationContactKeys(conv);
+  for (const k of keys) {
+    lastBotReplyByContactKey.set(k, record);
+  }
+}
+function isClosingCourtesyOrNonCommercialAck(rawText, hasQuote = false) {
+  if (hasQuote) return false;
+  const trimmed = (rawText || "").trim();
+  if (!trimmed) return true;
+  const withoutEmojis = trimmed.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]/gu, "");
+  if (withoutEmojis.length === 0) return true;
+  if (/^https?:\/\/(www\.)?(youtu\.be|youtube\.com|tiktok\.com|vm\.tiktok\.com|instagram\.com|facebook\.com|fb\.watch)\/\S+$/i.test(
+    trimmed
+  )) {
+    return true;
+  }
+  const cleaned = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned || cleaned.length > 55) return false;
+  return /^(ok|okay|oki|ah ok|ah esta bien|esta bien|ta bien|perfecto|excelente|entendido|listo|dale|de acuerdo|vale|gracias|muchas gracias|mil gracias|amen|bendiciones|un placer|igualmente|igual|si|sii|lo se|ya|claro|bueno|bien|chevere|super|jaja|jajaja|jeje|dime|dimelo|dime a ver|cuentame|que paso|como asi|amor|mi amor|bb|bebe)(\s+(gracias|amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|mi amor|amor|carino|bb|bebe))?$/i.test(
+    cleaned
+  );
+}
+function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
+  const keys = getConversationContactKeys(conv);
+  const now = Date.now();
+  const customerName = conv.customerName || "Cliente";
+  const customerPhone = conv.customerPhone || "";
+  const incomingId = normalizeMsgIdKey(lastCustomerMsg?.evolutionMessageId || lastCustomerMsg?.id || "");
+  const incomingText = (lastCustomerMsg?.transcription || lastCustomerMsg?.content || "").trim();
+  if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
+    const reason = "Excluido: Grupo de WhatsApp (el bot solo atiende chats individuales)";
+    recordBotAuditLog({
+      customerName,
+      customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: incomingId,
+      incomingText,
+      decision: "blocked_group",
+      reason,
+      durationMs: 0
+    });
+    return { skip: true, reason };
+  }
+  if (conv.messages && conv.messages.length > 0) {
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    if (lastMsg.sender !== "customer" && triggerSource !== "manual_crm_trigger") {
+      const reason = `El \xFAltimo mensaje en el chat ya fue respondido por el equipo o el bot ("${(lastMsg.content || "").slice(0, 40)}...")`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: "blocked_already_answered",
+        reason,
+        durationMs: 0
+      });
+      return { skip: true, reason };
+    }
+  }
+  if (!lastCustomerMsg) {
+    return { skip: true, reason: "No hay mensaje del cliente para responder" };
+  }
+  if (triggerSource !== "manual_crm_trigger" && incomingId && isMessageIdAlreadyProcessed(incomingId, keys)) {
+    return { skip: true, reason: `Mensaje ID "${incomingId}" ya registrado como procesado.` };
+  }
+  if (triggerSource !== "manual_crm_trigger" && lastCustomerMsg.type === "text" && isClosingCourtesyOrNonCommercialAck(incomingText, Boolean(lastCustomerMsg.quotedMessage?.text))) {
+    if (incomingId) {
+      markMessageIdProcessed(incomingId, keys);
+    }
+    const reason = `Mensaje corto o confirmaci\xF3n ("${incomingText.slice(0, 35)}") que no requiere respuesta autom\xE1tica.`;
+    recordBotAuditLog({
+      customerName,
+      customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: incomingId,
+      incomingText,
+      decision: "blocked_already_answered",
+      reason,
+      durationMs: 0
+    });
+    return { skip: true, reason };
+  }
+  for (const k of keys) {
+    const prev = lastBotReplyByContactKey.get(k);
+    if (!prev) continue;
+    if (incomingId && (prev.customerMsgId === incomingId || prev.customerMsgId === `evo-${incomingId}` || `evo-${prev.customerMsgId}` === incomingId)) {
+      const reason = `Mensaje ID "${incomingId}" ya fue atendido con \xE9xito anteriormente. Previniendo duplicado.`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: "blocked_duplicate_id",
+        reason,
+        durationMs: 0
+      });
+      return { skip: true, reason };
+    }
+    if (incomingText && prev.customerText && prev.customerText.toLowerCase() === incomingText.toLowerCase() && now - prev.timestamp < 2e4) {
+      const reason = `Texto repetido "${incomingText.slice(0, 30)}" recibido hace menos de 20s. Ya existe respuesta en pantalla.`;
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: "blocked_duplicate_text",
+        reason,
+        durationMs: 0
+      });
+      return { skip: true, reason };
+    }
+    if (triggerSource !== "manual_crm_trigger") {
+      const elapsedMs = now - prev.timestamp;
+      if (elapsedMs < 6e3) {
+        const reason = `Cooldown de seguridad activo: se envi\xF3 una respuesta hace ${(elapsedMs / 1e3).toFixed(1)}s (m\xEDnimo 6s entre mensajes autom\xE1ticos).`;
+        recordBotAuditLog({
+          customerName,
+          customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: incomingId,
+          incomingText,
+          decision: "blocked_cooldown",
+          reason,
+          durationMs: 0
+        });
+        return { skip: true, reason };
+      }
+    }
+  }
+  return { skip: false };
+}
+async function hasEvolutionAlreadyAnsweredSince(conv, customerMsg) {
+  const customerTimeMs = new Date(customerMsg.timestamp).getTime();
+  const customerEvoId = customerMsg.evolutionMessageId || customerMsg.id.replace(/^evo-/, "");
+  if (conv.messages && conv.messages.length > 0) {
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const m = conv.messages[i];
+      if (m.sender !== "customer") {
+        const mTime = new Date(m.timestamp).getTime();
+        if (mTime >= customerTimeMs - 3e3) {
+          return { answered: true, latestOutgoing: m };
+        }
+      }
+    }
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  const now = Date.now();
+  for (const k of contactKeys) {
+    const prevReply = lastBotReplyByContactKey.get(k);
+    if (prevReply && now - prevReply.timestamp < 6e4) {
+      if (prevReply.customerMsgId === customerEvoId || prevReply.customerMsgId === customerMsg.id) {
+        return { answered: true };
+      }
+    }
+  }
+  if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
+    return { answered: false };
+  }
+  try {
+    const url = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/chat/findMessages/${appConfig.evolution.instance}`;
+    const jids = /* @__PURE__ */ new Set([conv.sessionId]);
+    const cleanPhone = (conv.customerPhone || "").replace(/\D/g, "");
+    if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      jids.add(`${std}@s.whatsapp.net`);
+    }
+    const responses = await Promise.all(
+      Array.from(jids).slice(0, 2).map(
+        (jid) => fetch(url, {
+          method: "POST",
+          headers: {
+            apikey: appConfig.evolution.apiKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            where: { key: { remoteJid: jid } },
+            limit: 10
+          }),
+          signal: AbortSignal.timeout(7e3)
+        }).then((r) => r.ok ? r.json() : null).catch(() => null)
+      )
+    );
+    const records = [];
+    for (const data of responses) {
+      if (!data) continue;
+      const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
+      records.push(...recs);
+    }
+    if (records.length === 0) return { answered: false };
+    const parsed = [];
+    for (const rec of records) {
+      const m = parseSingleEvolutionMessage(rec, conv.customerName || "Cliente");
+      if (m) parsed.push(m);
+    }
+    if (parsed.length === 0) return { answered: false };
+    const unique = [];
+    const seenIds = /* @__PURE__ */ new Set();
+    for (const m of parsed) {
+      const k = m.evolutionMessageId || m.id;
+      if (!seenIds.has(k)) {
+        seenIds.add(k);
+        unique.push(m);
+      }
+    }
+    unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    let addedAny = false;
+    for (const m of unique) {
+      if (!conv.messages.some(
+        (existing) => m.evolutionMessageId && existing.evolutionMessageId === m.evolutionMessageId || existing.id === m.id
+      )) {
+        conv.messages.push(m);
+        addedAny = true;
+      }
+    }
+    if (addedAny) {
+      conv.messages = mergeWithLocalMessages(conv.sessionId, unique, conv.messages, conv.customerPhone);
+      const newest = conv.messages[conv.messages.length - 1];
+      if (newest) {
+        conv.lastTimestamp = newest.timestamp;
+        conv.lastMessagePreview = newest.content;
+        conv.lastMessageType = newest.type;
+      }
+      broadcastEvent("conversations_update", { count: conversations.length });
+    }
+    const customerTimeMs2 = new Date(customerMsg.timestamp).getTime();
+    const customerEvoId2 = customerMsg.evolutionMessageId || customerMsg.id.replace(/^evo-/, "");
+    const customerIdx = unique.findIndex(
+      (m) => m.evolutionMessageId === customerEvoId2 || m.id === customerMsg.id
+    );
+    if (customerIdx >= 0) {
+      const outgoingAfter = unique.slice(customerIdx + 1).find((m) => m.sender !== "customer");
+      if (outgoingAfter) {
+        return { answered: true, latestOutgoing: outgoingAfter };
+      }
+    }
+    const outgoingRecent = unique.filter(
+      (m) => m.sender !== "customer" && m.evolutionMessageId !== customerEvoId2 && new Date(m.timestamp).getTime() >= customerTimeMs2 - 1500
+    ).pop();
+    if (outgoingRecent) {
+      return { answered: true, latestOutgoing: outgoingRecent };
+    }
+    return { answered: false };
+  } catch {
+    const contactKeys2 = getConversationContactKeys(conv);
+    const now2 = Date.now();
+    for (const k of contactKeys2) {
+      const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "") || k;
+      for (const [key, ts] of recentOutboundDispatches.entries()) {
+        if (key.startsWith(`${cleanK}::`) && now2 - ts < 6e4) {
+          return { answered: true };
+        }
+      }
+    }
+    return { answered: false };
+  }
+  return { answered: false };
+}
+var recentOutboundDispatches = /* @__PURE__ */ new Map();
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function isWhatsAppGroup(targetOrJid) {
   if (!targetOrJid) return false;
@@ -4528,113 +5174,106 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 500) 
   if (!target || isWhatsAppGroup(target)) {
     return { ok: false, socketClosed: false };
   }
-  const url = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/message/sendText/${appConfig.evolution.instance}`;
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: appConfig.evolution.apiKey
-        },
-        body: JSON.stringify({
-          number: target,
-          text,
-          delay: delayMs
-        })
-      });
-      if (res.ok) {
-        appConfig.evolution.connected = true;
-        return { ok: true, socketClosed: false };
-      }
-      const errBody = await res.text().catch(() => "");
-      const isSocketClosed = /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) || res.status >= 500;
-      if (isSocketClosed) {
-        if (attempt < maxAttempts) {
-          await ensureEvolutionInstanceConnected(true);
-          continue;
-        }
-        return { ok: false, socketClosed: true };
-      }
-      return { ok: false, socketClosed: false };
-    } catch {
-      if (attempt < maxAttempts) {
-        await sleepMs(1200);
-        continue;
-      }
-      return { ok: false, socketClosed: true };
-    }
+  const cleanTargetKey = target.replace(/@.*$/, "").replace(/\D/g, "") || target;
+  const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
+  const lastSentAt = recentOutboundDispatches.get(dispatchKey);
+  const now = Date.now();
+  if (lastSentAt && now - lastSentAt < 9e4) {
+    console.log(
+      `\u{1F6E1}\uFE0F [Outbound Anti-Duplicate]: Mensaje id\xE9ntico ya entregado a ${target} hace ${Math.round(
+        (now - lastSentAt) / 1e3
+      )}s. Omitiendo duplicado.`
+    );
+    recordBotAuditLog({
+      customerName: `Destino ${target}`,
+      customerPhone: cleanTargetKey,
+      sessionId: target,
+      triggerSource: "outbound_dispatch_guard",
+      incomingMessageId: "",
+      incomingText: "",
+      decision: "blocked_duplicate_text",
+      reason: `Texto de respuesta id\xE9ntico ya entregado hace ${Math.round((now - lastSentAt) / 1e3)}s a este n\xFAmero. Duplicado bloqueado en despacho.`,
+      replyText: text,
+      durationMs: 0
+    });
+    return { ok: true, socketClosed: false };
   }
-  return { ok: false, socketClosed: false };
+  recentOutboundDispatches.set(dispatchKey, now);
+  const url = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/message/sendText/${appConfig.evolution.instance}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: appConfig.evolution.apiKey
+      },
+      body: JSON.stringify({
+        number: target,
+        text,
+        delay: delayMs
+      }),
+      signal: AbortSignal.timeout(15e3)
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const messageId = data?.key?.id || data?.id || "";
+      recentOutboundDispatches.set(dispatchKey, Date.now());
+      appConfig.evolution.connected = true;
+      return { ok: true, socketClosed: false, messageId };
+    }
+    const errBody = await res.text().catch(() => "");
+    const isSocketClosed = /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) || res.status >= 500;
+    return { ok: false, socketClosed: isSocketClosed };
+  } catch {
+    return { ok: false, socketClosed: true };
+  }
 }
 async function sendEvolutionMessage(numberOrJid, text, delayMs = 500) {
   const res = await sendEvolutionMessageWithStatus(numberOrJid, text, delayMs);
   return res.ok;
 }
-async function sendEvolutionMessageToConversation(conv, text, delayMs = 600, isRetryFromQueue = false) {
+async function sendEvolutionMessageToConversation(conv, text, delayMs = 600) {
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
     console.log(`\u{1F6E1}\uFE0F [Grupo bloqueado]: Env\xEDo a grupo cancelado para sesi\xF3n ${conv.sessionId}`);
-    pendingOutboundQueue.delete(conv.sessionId);
-    return false;
+    return { ok: false };
   }
-  const candidates = [];
   const cleanPhone = (conv.customerPhone || "").replace(/\D/g, "");
+  let primaryTarget = "";
   if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
     const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
-    candidates.push(std);
-    if (!candidates.includes(`${std}@s.whatsapp.net`)) {
-      candidates.push(`${std}@s.whatsapp.net`);
+    primaryTarget = `${std}@s.whatsapp.net`;
+  } else if (conv.sessionId && !conv.sessionId.includes("@lid")) {
+    primaryTarget = conv.sessionId;
+  } else if (cleanPhone) {
+    primaryTarget = cleanPhone;
+  } else {
+    primaryTarget = conv.sessionId;
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  const now = Date.now();
+  const trimmedText = text.trim();
+  for (const k of contactKeys) {
+    const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "") || k;
+    const prevSent = recentOutboundDispatches.get(`${cleanK}::${trimmedText}`);
+    if (prevSent && now - prevSent < 9e4) {
+      console.log(`\u{1F6E1}\uFE0F [Outbound Contact Guard]: Texto id\xE9ntico ya despachado a ${conv.customerName} (${k}) hace ${Math.round((now - prevSent) / 1e3)}s.`);
+      return { ok: true };
     }
   }
-  if (conv.sessionId && !candidates.includes(conv.sessionId)) {
-    candidates.push(conv.sessionId);
+  for (const k of contactKeys) {
+    const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "") || k;
+    recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, now);
   }
-  const related = relatedJidsBySession.get(conv.sessionId);
-  if (related) {
-    for (const jid of related) {
-      if (jid && !candidates.includes(jid)) {
-        candidates.push(jid);
-      }
-    }
+  const result = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs);
+  for (const k of contactKeys) {
+    const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "") || k;
+    recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, Date.now());
   }
-  if (cleanPhone.length >= 14 && !candidates.includes(`${cleanPhone}@lid`)) {
-    candidates.push(`${cleanPhone}@lid`);
+  if (result.ok) {
+    console.log(`\u2705 [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${primaryTarget}) [ID: ${result.messageId || "N/A"}]`);
+    return { ok: true, messageId: result.messageId };
   }
-  for (const target of candidates) {
-    const { ok, socketClosed } = await sendEvolutionMessageWithStatus(target, text, delayMs);
-    if (ok) {
-      pendingOutboundQueue.delete(conv.sessionId);
-      console.log(`\u2705 [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${target})`);
-      return true;
-    }
-    if (socketClosed) {
-      break;
-    }
-  }
-  if (!isRetryFromQueue) {
-    pendingOutboundQueue.set(conv.sessionId, { conv, text, attempts: 1 });
-    console.log(
-      `\u23F3 [WhatsApp Queue]: Respuesta para ${conv.customerName} programada para entrega autom\xE1tica al reconectar WhatsApp.`
-    );
-  }
-  return false;
-}
-async function flushPendingOutboundQueue() {
-  if (pendingOutboundQueue.size === 0) return;
-  const isOpen = await ensureEvolutionInstanceConnected(false);
-  if (!isOpen) return;
-  for (const [sessionId, item] of Array.from(pendingOutboundQueue.entries())) {
-    const delivered = await sendEvolutionMessageToConversation(item.conv, item.text, 500, true);
-    if (delivered) {
-      pendingOutboundQueue.delete(sessionId);
-    } else {
-      item.attempts += 1;
-      if (item.attempts >= 12) {
-        pendingOutboundQueue.delete(sessionId);
-      }
-    }
-  }
+  return { ok: false };
 }
 async function sendEvolutionMedia(numberOrJid, mediatype, mimetype, base64Data, caption, fileName) {
   const target = numberOrJid.includes("@") ? numberOrJid : numberOrJid.replace(/\D/g, "");
@@ -4730,109 +5369,6 @@ function formatWhatsAppProductBlock(p, idx) {
 \u{1F517} https://todolapto.com.do${p.website_url}` : "";
   return `*${idx + 1}.* *${p.name}*
 \u{1F4B0} RD$${p.list_price.toLocaleString()} | \u{1F4E6} ${p.virtual_available} unidad(es) | \u{1F3F7}\uFE0F ${condBadge}${specsLine}${useLine}${url}`;
-}
-function getLiveInventoryString() {
-  const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
-  const laptops = [...inStock.filter((p) => p.category === "laptop")].sort(
-    (a, b) => a.list_price - b.list_price
-  );
-  const redes = [...inStock.filter((p) => p.category === "red")].sort(
-    (a, b) => a.list_price - b.list_price
-  );
-  const monitores = [...inStock.filter((p) => p.category === "monitor")].sort(
-    (a, b) => a.list_price - b.list_price
-  );
-  const impresoras = [...inStock.filter((p) => p.category === "impresora")].sort(
-    (a, b) => a.list_price - b.list_price
-  );
-  const allAccesorios = inStock.filter((p) => p.category === "accesorio");
-  const tabletsMoviles = allAccesorios.filter(
-    (p) => /tablet|ipad|iphone|galaxy tab|fire 8|tab 910|alcatel 1t/i.test(
-      `${p.name} ${p.odooCategory || ""}`
-    )
-  );
-  const discosRam = allAccesorios.filter(
-    (p) => !tabletsMoviles.includes(p) && /ssd|disco|memoria ram|ddr3|ddr4|pc3|pc4|m\.2|sata/i.test(
-      `${p.name} ${p.odooCategory || ""}`
-    )
-  );
-  const cargadoresBaterias = allAccesorios.filter(
-    (p) => !tabletsMoviles.includes(p) && !discosRam.includes(p) && /cargador|bateria|batería|ups/i.test(`${p.name} ${p.odooCategory || ""}`)
-  );
-  const otrosAccesorios = allAccesorios.filter(
-    (p) => !tabletsMoviles.includes(p) && !discosRam.includes(p) && !cargadoresBaterias.includes(p)
-  ).slice(0, 80);
-  const formatNumberedList = (arr) => arr.map(
-    (p, idx) => `${idx + 1}. ${p.name} | ID:${p.variantId || p.id} | Marca:${p.brand || "Gen\xE9rico"} | Condici\xF3n:${p.condition || "Usado / Reacondicionado"} (${p.conditionDetail || "Garant\xEDa 6 meses"}) | RD$${p.list_price.toLocaleString()} | Stock:${p.virtual_available} (Vitrina:${p.vitrinaStock || 0}, Almac\xE9n:${p.almacenStock || 0}) | Uso:${(p.useCases || []).join(", ")} | Specs:${p.specsSummary || p.description_sale || "Est\xE1ndar"} | Link: https://todolapto.com.do${p.website_url || ""}`
-  ).join("\n");
-  const MAX_LAPTOP_CHUNK = 15;
-  const displayedLaptops = laptops.slice(0, MAX_LAPTOP_CHUNK);
-  const remainingLaptops = laptops.length - displayedLaptops.length;
-  const readyToSendLaptopCatalog = displayedLaptops.map(
-    (p, idx) => `*${idx + 1}.* *${p.name}*
-\u{1F4B0} RD$${p.list_price.toLocaleString()} | \u{1F4E6} ${p.virtual_available} unidad(es) | \u{1F3F7}\uFE0F ${p.condition === "Nuevo" ? "Nuevo" : "Reacondicionado Clase A"}${p.specsSummary ? `
-\u2699\uFE0F ${p.specsSummary.slice(0, 90)}` : ""}
-\u{1F517} https://todolapto.com.do${p.website_url || ""}`
-  ).join("\n\n") + (remainingLaptops > 0 ? `
-
-\u{1F4CC} *Mostrando las primeras 15 de ${laptops.length} laptops disponibles en stock real (desde RD$${displayedLaptops[0]?.list_price.toLocaleString()} hasta RD$${displayedLaptops[displayedLaptops.length - 1]?.list_price.toLocaleString()}).*
-*Tenemos ${remainingLaptops} modelos m\xE1s en inventario. \xBFCu\xE1l te llama la atenci\xF3n, o prefieres que te filtre por marca (Dell, Lenovo, HP), uso (oficina, estudios, gaming) o presupuesto?* \u{1F6D2}` : `
-
-*\xBFCu\xE1l te interesa? Te ayudo a procesarlo ahora mismo.* \u{1F6D2}`);
-  const brandCounts = {};
-  for (const l of laptops) {
-    const b = l.brand || "Otros";
-    brandCounts[b] = (brandCounts[b] || 0) + 1;
-  }
-  const brandBreakdown = Object.entries(brandCounts).map(([b, c]) => `${b}: ${c}`).join(", ");
-  return `RESUMEN DE CATEGOR\xCDAS EN STOCK REAL (ODOO ERP \u2014 ${inStock.length} PRODUCTOS EN STOCK):
-- Laptops y Equipos Port\xE1tiles disponibles: ${laptops.length} modelos (${brandBreakdown})
-  * REGLA DE FILTRADO INTELIGENTE:
-    1) Si piden cat\xE1logo general de una categor\xEDa ("qu\xE9 laptops tienen", "qu\xE9 monitores tienen", etc.) SIN especificar marca, precio ni uso -> Si son m\xE1s de 15 productos, env\xEDa el bloque interactivo de las primeras 15 opciones del *1.* al *15.* indicando cu\xE1ntas opciones adicionales quedan. Si son 15 o menos, env\xEDa todas completas.
-    2) Si piden una MARCA espec\xEDfica (ej. Dell, Lenovo, HP, Asus, Acer, ThinkPad, Latitude, Chromebook) -> Env\xEDa \xDANICAMENTE los modelos de esa marca.
-    3) Si piden un PRECIO o PRESUPUESTO espec\xEDfico (ej. 10,000 pesos, menos de 8 mil, entre 10 y 15 mil) -> Env\xEDa \xDANICAMENTE los modelos dentro de ese rango de precio.
-    4) Si piden para un USO espec\xEDfico (ej. Oficina/Trabajo/Contabilidad, Gaming/Juegos, Estudios/Escuela, Programaci\xF3n/Dise\xF1o) -> Env\xEDa \xDANICAMENTE los modelos recomendados para ese uso.
-    5) Si preguntan si son NUEVOS o USADOS/REACONDICIONADOS -> Indica con total transparencia la condici\xF3n exacta marcada en Odoo de cada equipo (las laptops corporativas son Reacondicionadas Importadas Clase A probadas en 25 puntos con 6 meses de garant\xEDa; los equipos o accesorios marcados como Nuevos tienen 1 a\xF1o de garant\xEDa).
-- Tablets, iPads y Celulares en stock: ${tabletsMoviles.length}
-- Repetidores y Redes: ${redes.length}
-- Monitores y Pantallas: ${monitores.length}
-- Impresoras y Tintas: ${impresoras.length}
-- Discos SSD, Discos Duros y Memorias RAM: ${discosRam.length}
-- Cargadores y Bater\xEDas de Laptop: ${cargadoresBaterias.length}
-- Total Accesorios y Repuestos en stock: ${allAccesorios.length}
-
-=== LAPTOPS Y EQUIPOS PORT\xC1TILES (${laptops.length} MODELOS DISPONIBLES CON MARCA, CONDICI\xD3N, SPECS Y USO) ===
-${formatNumberedList(laptops)}
-
-=== FORMATO LISTO PARA ENVIAR CUANDO PIDAN EL CAT\xC1LOGO GENERAL COMPLETO DE LAPTOPS (SOLO CUANDO NO HAYA FILTRO DE MARCA, PRECIO NI USO) ===
-\u{1F5A5}\uFE0F *Cat\xE1logo completo de laptops \u2014 Todo Lapto*
-
-*(${laptops.length} modelos disponibles en stock real)*
-
-${readyToSendLaptopCatalog}
-
-*\xBFCu\xE1l te interesa? Te ayudo a procesarlo ahora mismo.* \u{1F6D2}
-
-=== TABLETS, IPADS Y CELULARES (${tabletsMoviles.length} disponibles) ===
-${formatNumberedList(tabletsMoviles)}
-
-=== MONITORES Y PANTALLAS (${monitores.length} disponibles) ===
-${formatNumberedList(monitores)}
-
-=== IMPRESORAS Y TINTAS (${impresoras.length} disponibles) ===
-${formatNumberedList(impresoras)}
-
-=== REPETIDORES, ROUTERS Y REDES (${redes.length} disponibles) ===
-${formatNumberedList(redes)}
-
-=== DISCOS SSD, DISCOS DUROS Y MEMORIAS RAM (${discosRam.length} disponibles) ===
-${formatNumberedList(discosRam)}
-
-=== CARGADORES, BATER\xCDAS Y UPS (${cargadoresBaterias.length} disponibles) ===
-${formatNumberedList(cargadoresBaterias)}
-
-=== MOCHILAS, SOPORTES, TECLADOS, MOUSE Y ACCESORIOS (${otrosAccesorios.length} destacados de ${allAccesorios.length}) ===
-${formatNumberedList(otrosAccesorios)}`;
 }
 function extractBudgetQuery(text) {
   if (!text) return null;
@@ -5050,18 +5586,18 @@ function detectGenericProductFamily(query) {
       }
     };
   }
+  if (/\b(cartucho|cartuchos|tinta|tintas|toner|t[oó]ner|botella\s*de\s*tinta)\b/i.test(s)) {
+    return {
+      id: "tinta_cartucho",
+      label: "Cartuchos, Tintas y T\xF3ner para Impresora",
+      matcher: (p) => isPrinterSupplyOrConsumable(p.name, p.odooCategory)
+    };
+  }
   if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
     return {
       id: "impresora",
       label: "Impresoras y Equipos de Impresi\xF3n",
-      matcher: (p) => {
-        const combined = `${p.name} ${p.odooCategory || ""}`.toLowerCase();
-        const isPrinter = p.category === "impresora" || /\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|ecotank|smart\s*tank|laserjet)\b/i.test(
-          combined
-        );
-        const isSupplyOnly = /\b(botella|tinta|cartucho|t[oó]ner|toner|cinta)\b/i.test(p.name) && !/\b(impresora|multifuncional)\b/i.test(p.name);
-        return isPrinter && !isSupplyOnly;
-      }
+      matcher: (p) => isActualPrinterMachine(p.name, p.odooCategory)
     };
   }
   if (/\b(teclado|teclados|keyboard|keyboards)\b/i.test(s)) {
@@ -5355,24 +5891,83 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       "pesos",
       "mil",
       "tengo",
-      "presupuesto"
+      "presupuesto",
+      "esta",
+      "este",
+      "esto",
+      "bien",
+      "listo",
+      "dale",
+      "claro",
+      "bueno",
+      "saber",
+      "hacer",
+      "donde",
+      "cuando",
+      "quien",
+      "porque",
+      "pero",
+      "solo",
+      "aqui",
+      "alla",
+      "algo",
+      "nada",
+      "mucho",
+      "poco",
+      "otro",
+      "otra",
+      "esos",
+      "esas"
     ]);
-    const searchSource = `${userOnlyLatest} ${fullContextText}`.toLowerCase();
-    const tokens = searchSource.replace(/[^\wáéíóúñ0-9\s]/g, " ").split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w));
+    const validShortTechTokens = /* @__PURE__ */ new Set([
+      "hp",
+      "pc",
+      "i3",
+      "i5",
+      "i7",
+      "i9",
+      "m1",
+      "m2",
+      "m3",
+      "g3",
+      "g4",
+      "g5",
+      "g6",
+      "g7",
+      "g8",
+      "ram",
+      "ssd",
+      "hdd",
+      "usb",
+      "vga",
+      "ups",
+      "led",
+      "ips",
+      "rgb",
+      "jbl",
+      "msi",
+      "mac"
+    ]);
+    const searchSource = `${userOnlyLatest} ${fullContextText}`.toLowerCase().replace(/https?:\/\/\S+/gi, " ");
+    const tokens = searchSource.replace(/[^\wáéíóúñ0-9\s]/g, " ").split(/\s+/).filter((w) => (w.length >= 4 || validShortTechTokens.has(w)) && !stopWords.has(w));
     if (tokens.length > 0) {
       const scored = [];
       for (const p of inStock) {
         const hay = `${p.name} ${p.brand || ""} ${p.condition || ""} ${p.specsSummary || ""} ${p.description_sale || ""} ${(p.useCases || []).join(" ")} ${p.category} ${p.odooCategory || ""}`.toLowerCase();
         let score = 0;
         for (const tk of tokens) {
-          if (hay.includes(tk)) {
-            score += tk.length >= 4 ? 3 : 1;
+          const escapedTk = tk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const wordBoundaryRegex = new RegExp(`\\b${escapedTk}\\b`, "i");
+          if (wordBoundaryRegex.test(hay)) {
+            score += tk.length >= 4 ? 4 : 2;
+          } else if (tk.length >= 5 && hay.includes(tk)) {
+            score += 2;
           }
           if ((tk === "lapto" || tk === "laptop" || tk === "laptops" || tk === "computadora") && p.category === "laptop") {
             score += 5;
           }
         }
-        if (score > 0) {
+        if (score >= 3) {
           scored.push({ product: p, score });
         }
       }
@@ -5514,6 +6109,7 @@ app.post("/api/config", async (req, res) => {
     appConfig.aiProvider = nextAi;
     rejectedOpenAiKeys.clear();
     rejectedDeepseekKeys.clear();
+    exhaustedGeminiModelsUntil.clear();
   }
   if (odoo) appConfig.odoo = { ...appConfig.odoo, ...odoo };
   if (evolution) appConfig.evolution = { ...appConfig.evolution, ...evolution };
@@ -5561,6 +6157,7 @@ app.post("/api/ai/save-credentials", async (req, res) => {
   };
   rejectedOpenAiKeys.clear();
   rejectedDeepseekKeys.clear();
+  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
   try {
     await autoSyncConfigToSupabase(appConfig);
@@ -5839,6 +6436,7 @@ app.post("/api/ai/test-provider", async (req, res) => {
   };
   rejectedOpenAiKeys.clear();
   rejectedDeepseekKeys.clear();
+  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
   const requested = appConfig.aiProvider.provider;
   if (requested === "openai" && !appConfig.aiProvider.openaiApiKey && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "MY_OPENAI_API_KEY")) {
@@ -6094,10 +6692,14 @@ function findConversationByAnyId(sessionId) {
   );
 }
 app.get("/api/conversations", async (req, res) => {
+  recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
-  if (conversations.length === 0 || forceRefresh || now - lastEvolutionChatsSync > 3500) {
+  if (conversations.length === 0) {
     await syncEvolutionChats();
+  } else if (forceRefresh && now - lastEvolutionChatsSync > 15e3) {
+    syncEvolutionChats().catch(() => {
+    });
   }
   for (const conv of conversations) {
     if (conv.customerPhone) {
@@ -6111,15 +6713,26 @@ app.get("/api/conversations", async (req, res) => {
   res.json({ success: true, conversations });
 });
 app.get("/api/conversations/:sessionId/messages", async (req, res) => {
+  recordFrontendHeartbeat();
   try {
     const rawSessionId = req.params.sessionId || req.query.sessionId || "";
     const sessionId = decodeURIComponent(rawSessionId).trim();
     if (!sessionId || sessionId === "undefined" || sessionId === "null") {
       return res.json({ success: true, sessionId: "", messages: [] });
     }
-    const messages = await loadEvolutionMessagesForChat(sessionId);
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
+    const forceRefresh = req.query.refresh === "true";
+    if (conv && conv.messages && conv.messages.length > 0 && conv.messagesLoaded && !forceRefresh) {
+      return res.json({
+        success: true,
+        sessionId: conv.sessionId,
+        customerName: conv.customerName,
+        customerPhone: conv.customerPhone,
+        messages: conv.messages
+      });
+    }
+    const messages = await loadEvolutionMessagesForChat(sessionId);
     res.json({
       success: true,
       sessionId: conv?.sessionId || sessionId,
@@ -6138,6 +6751,7 @@ app.get("/api/conversations/:sessionId/messages", async (req, res) => {
   }
 });
 app.get("/api/messages", async (req, res) => {
+  recordFrontendHeartbeat();
   try {
     const sessionId = (req.query.sessionId || "").trim();
     if (!sessionId || sessionId === "undefined" || sessionId === "null") {
@@ -6200,7 +6814,14 @@ app.post("/api/conversations/:sessionId/send", async (req, res) => {
   conv.lastMessageType = "text";
   broadcastEvent("new_message", { sessionId: conv.sessionId, message: newMsg });
   res.json({ success: true, message: newMsg });
-  sendEvolutionMessageToConversation(conv, content, 400).catch(() => {
+  sendEvolutionMessageToConversation(conv, content, 400).then((r) => {
+    if (r.messageId) {
+      newMsg.evolutionMessageId = r.messageId;
+      newMsg.id = `evo-${r.messageId}`;
+      const contactKeys = getConversationContactKeys(conv);
+      markMessageIdProcessed(r.messageId, contactKeys);
+    }
+  }).catch(() => {
   });
 });
 app.post("/api/conversations/:sessionId/send-product", async (req, res) => {
@@ -6319,7 +6940,8 @@ app.post("/api/ai/transcribe-audio", async (req, res) => {
     if (!media) {
       return res.status(404).json({ success: false, message: "No se pudo descargar el audio desde Evolution API" });
     }
-    const response = await ai.models.generateContent({
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
       model: "gemini-3.5-transcribe",
       contents: {
         parts: [
@@ -6345,8 +6967,8 @@ app.post("/api/ai/transcribe-audio", async (req, res) => {
     }
     res.json({ success: true, transcription: transcript });
   } catch (err) {
-    console.error("[Transcribe Audio Error]:", err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 app.post("/api/ai/analyze-media", async (req, res) => {
@@ -6359,8 +6981,9 @@ app.post("/api/ai/analyze-media", async (req, res) => {
     if (!media) {
       return res.status(404).json({ success: false, message: "No se pudo descargar la imagen desde Evolution API" });
     }
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
+      model: "gemini-3.1-flash-lite",
       contents: {
         parts: [
           {
@@ -6389,8 +7012,8 @@ Indica en espa\xF1ol de forma concisa (m\xE1ximo 3 l\xEDneas):
     }
     res.json({ success: true, analysis });
   } catch (err) {
-    console.error("[Analyze Media Error]:", err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 app.get("/api/odoo/customers", async (req, res) => {
@@ -6715,6 +7338,40 @@ app.get("/api/odoo/customer-check", (req, res) => {
 app.get("/api/ai/insights", (req, res) => {
   res.json({ success: true, insights: learnedInsights });
 });
+app.get("/api/admin/bot-audit-log", (_req, res) => {
+  const total = botAuditLogs.length;
+  const sent = botAuditLogs.filter((l) => l.decision === "sent").length;
+  const blocked = botAuditLogs.filter((l) => l.decision.startsWith("blocked_")).length;
+  const errors = botAuditLogs.filter((l) => l.decision === "error").length;
+  const avgDuration = sent > 0 ? Math.round(
+    botAuditLogs.filter((l) => l.decision === "sent").reduce((acc, l) => acc + (l.durationMs || 0), 0) / sent
+  ) : 0;
+  res.json({
+    success: true,
+    logs: botAuditLogs,
+    stats: {
+      total,
+      sent,
+      blocked,
+      errors,
+      avgDurationMs: avgDuration,
+      inFlightCount: inFlightBotKeys.size,
+      activeCooldowns: lastBotReplyByContactKey.size
+    }
+  });
+});
+app.post("/api/admin/bot-audit-log/clear", (_req, res) => {
+  botAuditLogs.length = 0;
+  lastAuditLogKeyByPhone.clear();
+  try {
+    if (fs.existsSync(BOT_AUDIT_LOG_FILE)) {
+      fs.unlinkSync(BOT_AUDIT_LOG_FILE);
+    }
+  } catch {
+  }
+  broadcastEvent("bot_audit_update", { type: "clear" });
+  res.json({ success: true, message: "Registro de auditor\xEDa limpiado exitosamente" });
+});
 app.post("/api/ai/insights", (req, res) => {
   const { category, triggerPhrase, winningPitch, counterObjection, tags } = req.body;
   const newInsight = {
@@ -6806,6 +7463,7 @@ function buildInstantConversationalReply(conv, rawText = "") {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
   const namePart = customerName ? `, ${customerName}` : "";
   const cleaned = (rawText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
+  const hasPriorMessages = (conv?.messages || []).filter((m) => m.sender === "assistant" || m.sender === "customer").length > 1;
   if (/\b(gracias|muchas gracias|mil gracias|bendiciones|amen|un placer|igualmente|igual)\b/i.test(cleaned)) {
     return `\xA1Siempre a tu orden en *Todo Lapto*${namePart}! \u{1F60A} Cualquier otra consulta aqu\xED estamos para servirte.`;
   }
@@ -6813,7 +7471,10 @@ function buildInstantConversationalReply(conv, rawText = "") {
     return `\xA1Perfecto${namePart}! \u{1F44D} Quedamos atentos por aqu\xED para ayudarte con lo que necesites en *Todo Lapto*.`;
   }
   if (/\b(disculpa|disculpe|una pregunta|tengo una pregunta|una consulta)\b/i.test(cleaned)) {
-    return `\xA1Claro que s\xED${namePart}! \u{1F60A} Cu\xE9ntanos, \xBFen qu\xE9 te podemos ayudar hoy en *Todo Lapto*?`;
+    return `\xA1Claro que s\xED${namePart}! \u{1F60A} Cu\xE9ntanos, \xBFen qu\xE9 te podemos colaborar hoy?`;
+  }
+  if (hasPriorMessages) {
+    return `\xA1Saludos de nuevo${namePart}! \u{1F60A} Cu\xE9ntanos, \xBFen qu\xE9 m\xE1s te podemos ayudar?`;
   }
   let greetingWord = "\xA1Hola";
   if (/\bsaludos?\b/i.test(cleaned)) {
@@ -6827,12 +7488,104 @@ function buildInstantConversationalReply(conv, rawText = "") {
   } else if (/\bbuenas\b/i.test(cleaned)) {
     greetingWord = "\xA1Buenas";
   }
-  return `${greetingWord}${namePart}! \u{1F60A} Bienvenido a *Todo Lapto* \u{1F4BB}. \xBFEn qu\xE9 te podemos ayudar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?`;
+  return `${greetingWord}${namePart}! \u{1F60A} Bienvenido a *Todo Lapto* \u{1F4BB}. \xBFEn qu\xE9 te podemos colaborar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?`;
+}
+function resolveDirectStoreQuestion(rawText, conv) {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const cleaned = (rawText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned || cleaned.length > 80) return null;
+  if (/\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy)\b/i.test(
+    cleaned
+  ) || /^(abierto|abiertos|horario)\??$/i.test(cleaned)) {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    if (rdNow.isOpen) {
+      return `\xA1Claro que s\xED${namePart}! Estamos abiertos ahora mismo en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el env\xEDo directo a tu direcci\xF3n. \u{1F6D2}`;
+    } else {
+      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido por aqu\xED para despacharlo a primera hora. \u{1F6D2}`;
+    }
+  }
+  if (/\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(
+    cleaned
+  ) || /^(ubicacion|direccion)\??$/i.test(cleaned)) {
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la estaci\xF3n del telef\xE9rico). \xBFTienes pensado pasar por la tienda hoy o prefieres que coordinemos el env\xEDo a domicilio? \u{1F4CD}`;
+  }
+  if (/\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(
+    cleaned
+  ) || /^(envio|envios|delivery)\??$/i.test(cleaned)) {
+    return `S\xED, realizamos env\xEDos a todo el pa\xEDs${namePart}. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. \xBFEn qu\xE9 sector o provincia te encuentras? \u{1F69A}`;
+  }
+  if (/\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(
+    cleaned
+  ) || /^(garantia)\??$/i.test(cleaned)) {
+    return `Todos nuestros equipos cuentan con **garant\xEDa certificada de 6 meses por escrito** y soporte t\xE9cnico directo en Todo Lapto. \xBFBuscas alguna laptop o equipo en espec\xEDfico? \u{1F6E1}\uFE0F`;
+  }
+  if (/\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(
+    cleaned
+  )) {
+    return `Aceptamos pago contra entrega (efectivo o transferencia al recibir tu equipo en Santo Domingo) y transferencias bancarias a nuestras cuentas de **Banreservas, Banco Popular y BHD**. \xBFQu\xE9 m\xE9todo te resulta m\xE1s c\xF3modo? \u{1F4B3}`;
+  }
+  return null;
+}
+function resolveDirectCatalogReply(rawText, conv, hasQuote = false) {
+  if (hasQuote) return null;
+  const cleaned = (rawText || "").trim();
+  if (!cleaned || cleaned.length > 160) return null;
+  if (/\b(apartar|ap[aá]rtame|lo\s*quiero|la\s*quiero|me\s*llevo|comprar|hacer\s*pedido|mi\s*direcci[oó]n|env[ií]amelo|m[aá]ndamelo|calle|sector|avenida|residencial|urbanizaci[oó]n|contra\s*entrega|ya\s*transfer[ií]|comprobante)\b/i.test(
+    cleaned
+  )) {
+    return null;
+  }
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const highlight = getRelevantProductsHighlight(cleaned, "");
+  if (!highlight) return null;
+  const markerIdx = highlight.indexOf("):\n\n");
+  if (markerIdx !== -1) {
+    const listPart = highlight.slice(markerIdx + 4).trim();
+    if (listPart) {
+      return `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes las opciones disponibles en stock real en *Todo Lapto*:
+
+${listPart}`;
+    }
+  }
+  const directMatchMarker = "encontrados) ===\n";
+  const directIdx = highlight.indexOf(directMatchMarker);
+  if (directIdx !== -1) {
+    const listPart = highlight.slice(directIdx + directMatchMarker.length).trim();
+    if (listPart) {
+      return `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes las opciones disponibles en stock real en *Todo Lapto*:
+
+${listPart}
+
+*\xBFCu\xE1l de estas opciones te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* \u{1F6D2}`;
+    }
+  }
+  if (highlight.includes("=== \u26A0\uFE0F SIN STOCK ACTUAL PARA")) {
+    const genericFamily = detectGenericProductFamily(cleaned.toLowerCase());
+    const famLabel = genericFamily?.label || "ese producto";
+    return `Por el momento no tenemos unidades disponibles de *${famLabel}* en stock f\xEDsico${namePart}. \xBFBuscas alg\xFAn otro equipo, laptop o accesorio en el que te podamos colaborar hoy? \u{1F60A}`;
+  }
+  return null;
 }
 function buildSmartCatalogFallbackReply(conv, queryText = "") {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
   const namePart = customerName ? `, ${customerName}` : "";
-  const highlight = getRelevantProductsHighlight(queryText, "");
+  const lastMsg = conv?.messages[conv.messages.length - 1];
+  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
+  const cleanUserQuery = queryText.replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:/gi, "").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  const storeAnswer = resolveDirectStoreQuestion(cleanUserQuery, conv);
+  if (storeAnswer) {
+    return storeAnswer;
+  }
+  if (hasQuote) {
+    return `\xA1Claro que s\xED${namePart}! \u{1F60A} Recuerdo perfectamente lo que conversamos y las opciones siguen disponibles en nuestra tienda de la **Av. Charles de Gaulle No. 133**. \xBFTienes pensado pasar hoy por la tienda para apartarte el equipo, o prefieres que coordinemos el env\xEDo directo a tu direcci\xF3n? \u{1F6D2}`;
+  }
+  const directCatalog = resolveDirectCatalogReply(cleanUserQuery, conv, false);
+  if (directCatalog) {
+    return directCatalog;
+  }
+  const highlight = getRelevantProductsHighlight(cleanUserQuery, "");
   if (highlight) {
     const markerIdx = highlight.indexOf("):\n\n");
     if (markerIdx !== -1) {
@@ -6843,6 +7596,22 @@ function buildSmartCatalogFallbackReply(conv, queryText = "") {
 ${listPart}`;
       }
     }
+    const directMatchMarker = "encontrados) ===\n";
+    const directIdx = highlight.indexOf(directMatchMarker);
+    if (directIdx !== -1) {
+      const listPart = highlight.slice(directIdx + directMatchMarker.length).trim();
+      if (listPart) {
+        return `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes las opciones disponibles en stock real en *Todo Lapto*:
+
+${listPart}
+
+*\xBFCu\xE1l de estas opciones te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* \u{1F6D2}`;
+      }
+    }
+  }
+  const hasPrior = (conv?.messages || []).filter((m) => m.sender === "assistant" || m.sender === "customer").length > 1;
+  if (hasPrior) {
+    return `\xA1Con gusto${namePart}! Cu\xE9ntanos qu\xE9 equipo o modelo espec\xEDfico est\xE1s buscando para ayudarte con los detalles y precios.`;
   }
   return `\xA1Hola${namePart}! \u{1F60A} Bienvenido a *Todo Lapto* \u{1F4BB}. \xBFEn qu\xE9 te podemos ayudar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?`;
 }
@@ -6875,9 +7644,19 @@ function buildMasterSalesSystemInstruction(conv, latestQuery = "") {
   const detectedPhone = cleanPhone.length >= 10 && cleanPhone.length <= 13 ? cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone : "NO DISPONIBLE";
   const quotedContext = lastMsg?.quotedMessage?.text || "";
   const relevantHighlight = getRelevantProductsHighlight(latestQuery, quotedContext);
-  const inStockCount = products.filter((p) => p.virtual_available > 0 && p.list_price > 1).length;
+  const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
+  const inStockCount = inStock.length;
+  const laptopCount = inStock.filter((p) => p.category === "laptop").length;
+  const monitorCount = inStock.filter((p) => p.category === "monitor").length;
+  const printerCount = inStock.filter((p) => p.category === "impresora").length;
+  const compactOverview = `RESUMEN EJECUTIVO DE INVENTARIO ODOO EN TIEMPO REAL (${inStockCount} productos activos en stock f\xEDsico en Av. Charles de Gaulle #133):
+- Laptops y Port\xE1tiles en stock: ${laptopCount} modelos (Dell, Lenovo ThinkPad, HP, Asus, Acer, Chromebooks desde RD$4,000 hasta ejecutivas y gaming).
+- Monitores: ${monitorCount} modelos disponibles.
+- Impresoras: ${printerCount} modelos disponibles.
+- Accesorios y Repuestos: Discos SSD, memorias RAM, cargadores originales, bater\xEDas, mochilas, teclados y mouse en stock.
+\u{1F449} NOTA: El mensaje actual del cliente no especific\xF3 un modelo o categor\xEDa concreta. Responde de forma breve (1 a 2 l\xEDneas), c\xE1lida y natural preguntando qu\xE9 equipo o modelo espec\xEDfico est\xE1 buscando.`;
   const inventoryContext = relevantHighlight ? `RESUMEN DE INVENTARIO ODOO EN TIEMPO REAL (${inStockCount} productos activos en stock vendible):
-${relevantHighlight}` : getLiveInventoryString();
+${relevantHighlight}` : compactOverview;
   const learnedContext = getLearnedInsightsPromptContext();
   const odooPartner = cleanPhone ? findOdooPartnerByPhone(cleanPhone) : null;
   const isOdooRegistered = Boolean(odooPartner || conv?.isOdooClient || conv?.odooPartnerId && conv.odooPartnerId > 0);
@@ -7090,34 +7869,76 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource) {
     console.log(`\u{1F6E1}\uFE0F [Bot bloqueado]: Se ignor\xF3 generaci\xF3n autom\xE1tica para grupo (${conv.sessionId})`);
     return { success: false, error: "Los grupos de WhatsApp est\xE1n expresamente excluidos de las respuestas del bot" };
   }
-  if (inFlightBotSessions.has(conv.sessionId)) {
+  const initialLastMsg = conv.messages[conv.messages.length - 1];
+  const initialSkip = shouldSkipBotReply(conv, initialLastMsg, triggerSource);
+  if (initialSkip.skip) {
+    return { success: false, error: initialSkip.reason };
+  }
+  if (!acquireBotLock(conv, triggerSource)) {
     return { success: false, error: "Ya se est\xE1 generando una respuesta para este chat" };
   }
-  inFlightBotSessions.add(conv.sessionId);
+  const startTime = Date.now();
+  const initialMsgId = normalizeMsgIdKey(initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "");
+  if (initialMsgId && triggerSource !== "manual_crm_trigger") {
+    const contactKeys = getConversationContactKeys(conv);
+    markMessageIdProcessed(initialMsgId, contactKeys);
+  }
   try {
-    const initialLastMsg = conv.messages[conv.messages.length - 1];
+    if (triggerSource === "live_evolution_poll" && initialLastMsg) {
+      await sleepMs(1100 + Math.floor(Math.random() * 600));
+      const preCheck = await hasEvolutionAlreadyAnsweredSince(conv, initialLastMsg);
+      if (preCheck.answered) {
+        const externalReply = preCheck.latestOutgoing?.content || "";
+        recordBotReplyForConversation(
+          conv,
+          initialMsgId,
+          initialLastMsg.transcription || initialLastMsg.content || "",
+          externalReply
+        );
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: initialMsgId,
+          incomingText: initialLastMsg.transcription || initialLastMsg.content || "",
+          decision: "blocked_already_answered",
+          reason: `Bloqueado en pre-vuelo: Otra instancia activa (ej. Hostinger) ya respondi\xF3 en WhatsApp ("${externalReply.slice(0, 45)}...")`,
+          replyText: externalReply,
+          durationMs: Date.now() - startTime
+        });
+        return {
+          success: false,
+          error: "Ya respondido por otra instancia conectada a Evolution API"
+        };
+      }
+    }
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || "";
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting = initialLastMsg?.type === "text" && !initialLastMsg?.quotedMessage && isSimpleConversationalMessage(initialText, initialHasQuote);
     if (products.length === 0 && !isInitialSimpleGreeting) {
       await syncOdooInventory();
     }
-    const needsHistoryHydration = !conv.messages || conv.messages.length === 0 || initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text || !conv.messagesLoaded && !isInitialSimpleGreeting;
+    const needsHistoryHydration = !conv.messages || conv.messages.length === 0 || Boolean(initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text);
     if (needsHistoryHydration) {
       await loadEvolutionMessagesForChat(conv.sessionId);
+    } else if (!conv.messagesLoaded && !isInitialSimpleGreeting) {
+      loadEvolutionMessagesForChat(conv.sessionId).catch(() => {
+      });
     }
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (!lastMsg) {
       return { success: false, error: "Sin mensajes en la conversaci\xF3n" };
     }
-    if (triggerSource === "live_evolution_poll" && lastMsg.sender !== "customer") {
+    if (lastMsg.sender !== "customer" && triggerSource !== "manual_crm_trigger") {
       return { success: false, error: "El \xFAltimo mensaje ya fue respondido por el equipo o el bot" };
     }
     if (lastMsg.type === "audio" && lastMsg.evolutionMessageId && !lastMsg.transcription) {
       try {
         const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
         if (media) {
-          const trRes = await ai.models.generateContent({
+          const geminiClient = getActiveGeminiClient();
+          const trRes = await geminiClient.models.generateContent({
             model: "gemini-3.5-transcribe",
             contents: {
               parts: [
@@ -7134,15 +7955,17 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource) {
           }
         }
       } catch (e) {
-        console.warn("[Auto-Transcribe Audio Warning]:", e.message);
+        const cleanErr = formatCleanAiError(e);
+        console.log("[Auto-Transcribe Audio Info]:", cleanErr.summary);
       }
     }
     if (lastMsg.type === "image" && lastMsg.evolutionMessageId && !lastMsg.aiAnalysis) {
       try {
         const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
         if (media) {
-          const imgRes = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
+          const geminiClient = getActiveGeminiClient();
+          const imgRes = await geminiClient.models.generateContent({
+            model: "gemini-3.1-flash-lite",
             contents: {
               parts: [
                 { inlineData: { mimeType: media.mimetype.split(";")[0] || "image/jpeg", data: media.base64 } },
@@ -7159,7 +7982,8 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource) {
           }
         }
       } catch (e) {
-        console.warn("[Auto-Analyze Image Warning]:", e.message);
+        const cleanErr = formatCleanAiError(e);
+        console.log("[Auto-Analyze Image Info]:", cleanErr.summary);
       }
     }
     const baseCustomerText = lastMsg.transcription || (lastMsg.aiAnalysis ? `${lastMsg.content || "\u{1F4F7} [Imagen enviada]"}
@@ -7206,20 +8030,37 @@ Consulta del cliente: "${baseCustomerText}"` : baseCustomerText;
 - Pr\xF3xima apertura comercial: ${rdNow.nextOpeningStr}
 ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice}
 ` : ""}${rdNow.isOpen ? "\u{1F449} INSTRUCCI\xD3N DE HORARIO: La tienda f\xEDsica (Av. Charles de Gaulle #133) y el servicio de entregas est\xE1n ABIERTOS ahora mismo." : `\u{1F449} INSTRUCCI\xD3N DE HORARIO: Si el cliente SOLO est\xE1 saludando o preguntando por productos/precios, NO menciones que estamos cerrados; responde directo al grano. \xDANICAMENTE menciona que estamos cerrados (y que despachamos ${rdNow.nextOpeningStr}) si el cliente pregunta por el horario, si puede pasar por la tienda ahora mismo, o al momento de confirmar el despacho de un pedido.`}`;
+    const hasPriorMessages = (conv.messages || []).filter((m) => m.id !== lastMsg.id).length > 0;
+    const conversationStateNotice = hasPriorMessages ? `
+\u26A0\uFE0F REGLA ESTRICTA DE CONVERSACI\xD3N EN CURSO: El cliente ya est\xE1 en medio de una conversaci\xF3n previa contigo en este chat. EST\xC1 TERMINANTEMENTE PROHIBIDO volver a saludarlo ("\xA1Hola [Nombre]!", "Bienvenido a Todo Lapto...", "\xBFEn qu\xE9 te podemos ayudar hoy?"). Responde DIRECTO y \xFAnicamente a lo que acaba de consultar en 1 a 2 l\xEDneas concisas, sin mensajes de m\xE1s ni p\xE1rrafos innecesarios.` : "";
     const promptToSend = isSimpleMsg ? `Mensaje actual del cliente (${conv.customerName}): "${baseCustomerText}"
 
-\u26A0\uFE0F El cliente envi\xF3 un mensaje sencillo de saludo o cortes\xEDa. Responde directo al grano en 1 a 2 l\xEDneas cortas m\xE1ximo (sin enviar listas de productos y sin decir que estamos cerrados):` : `${liveTimePromptNotice}
+\u26A0\uFE0F El cliente envi\xF3 un mensaje sencillo de saludo o cortes\xEDa. Responde directo al grano en 1 a 2 l\xEDneas cortas m\xE1ximo (sin enviar listas de productos y sin decir que estamos cerrados):` : `${liveTimePromptNotice}${conversationStateNotice}
 
 Mensaje actual del cliente (${conv.customerName}):
 ${customerMessageText}
 
 Responde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+    const directStoreReply = resolveDirectStoreQuestion(baseCustomerText, conv);
+    const directCatalogReply = !directStoreReply ? resolveDirectCatalogReply(baseCustomerText, conv, hasQuote) : null;
     let aiResult;
-    if (isSimpleMsg) {
+    if (directStoreReply) {
+      aiResult = {
+        text: directStoreReply,
+        providerUsed: "direct-operational-engine",
+        modelUsed: "instant-store-faq"
+      };
+    } else if (isSimpleMsg) {
       aiResult = {
         text: buildInstantConversationalReply(conv, baseCustomerText),
         providerUsed: appConfig.aiProvider?.provider || "gemini",
         modelUsed: "instant-fast-path"
+      };
+    } else if (directCatalogReply) {
+      aiResult = {
+        text: directCatalogReply,
+        providerUsed: "odoo-catalog-engine",
+        modelUsed: "instant-catalog-match"
       };
     } else {
       try {
@@ -7230,7 +8071,8 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, pr
           allowFallback: true
         });
       } catch (aiErr) {
-        console.warn(`[Sales Bot Resilient Fallback]: ${aiErr.message}`);
+        const cleanErr = formatCleanAiError(aiErr);
+        console.log(`[Sales Bot]: Utilizando motor de cat\xE1logo en tiempo real (${cleanErr.summary})`);
         aiResult = {
           text: buildSmartCatalogFallbackReply(conv, customerMessageText),
           providerUsed: appConfig.aiProvider?.provider || "gemini",
@@ -7240,6 +8082,34 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, pr
     }
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(aiResult.text || "", conv);
     const aiReply = cleanText || "\xA1Hola! Bienvenido a *Todo Lapto* \u{1F4BB}. \xBFEn qu\xE9 te podemos ayudar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?";
+    if (triggerSource !== "manual_crm_trigger" && lastMsg) {
+      const finalCheck = await hasEvolutionAlreadyAnsweredSince(conv, lastMsg);
+      if (finalCheck.answered) {
+        const externalReply = finalCheck.latestOutgoing?.content || aiReply;
+        recordBotReplyForConversation(
+          conv,
+          initialMsgId,
+          baseCustomerText,
+          externalReply
+        );
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: initialMsgId,
+          incomingText: baseCustomerText,
+          decision: "blocked_already_answered",
+          reason: `Bloqueado justo antes de enviar: Otra instancia activa ya entreg\xF3 respuesta en WhatsApp ("${externalReply.slice(0, 45)}...")`,
+          replyText: externalReply,
+          durationMs: Date.now() - startTime
+        });
+        return {
+          success: false,
+          error: "Ya respondido por otra instancia antes del despacho"
+        };
+      }
+    }
     const assistantMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       sender: "assistant",
@@ -7255,7 +8125,39 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, pr
     conv.lastMessageType = "text";
     broadcastEvent("new_message", { sessionId: conv.sessionId, message: assistantMessage });
     broadcastEvent("conversations_update", { count: conversations.length });
-    const sentOk = await sendEvolutionMessageToConversation(conv, aiReply, 150);
+    const sendRes = await sendEvolutionMessageToConversation(conv, aiReply, 150);
+    const sentOk = sendRes.ok;
+    const durationMs = Date.now() - startTime;
+    if (sendRes.messageId) {
+      assistantMessage.evolutionMessageId = sendRes.messageId;
+      assistantMessage.id = `evo-${sendRes.messageId}`;
+      const contactKeys = getConversationContactKeys(conv);
+      markMessageIdProcessed(sendRes.messageId, contactKeys);
+    }
+    setTimeout(() => {
+      loadEvolutionMessagesForChat(conv.sessionId).then(() => {
+        broadcastEvent("conversations_update", { count: conversations.length });
+      }).catch(() => {
+      });
+    }, 1800);
+    recordBotReplyForConversation(
+      conv,
+      initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "",
+      baseCustomerText,
+      aiReply
+    );
+    recordBotAuditLog({
+      customerName: conv.customerName,
+      customerPhone: conv.customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "",
+      incomingText: baseCustomerText,
+      decision: "sent",
+      reason: `Respuesta entregada con \xE9xito a WhatsApp en ${durationMs}ms v\xEDa Evolution API (${aiResult.providerUsed} / ${aiResult.modelUsed})`,
+      replyText: aiReply,
+      durationMs
+    });
     return {
       success: true,
       reply: aiReply,
@@ -7265,10 +8167,22 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, pr
       sentToWhatsApp: sentOk
     };
   } catch (err) {
+    const durationMs = Date.now() - startTime;
+    recordBotAuditLog({
+      customerName: conv.customerName,
+      customerPhone: conv.customerPhone,
+      sessionId: conv.sessionId,
+      triggerSource,
+      incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "",
+      incomingText: initialLastMsg?.transcription || initialLastMsg?.content || "",
+      decision: "error",
+      reason: `Error al procesar/enviar respuesta: ${err.message}`,
+      durationMs
+    });
     console.log(`[Sales Bot Info for ${conv.customerName}]:`, err.message);
     return { success: false, error: err.message };
   } finally {
-    inFlightBotSessions.delete(conv.sessionId);
+    releaseBotLock(conv);
   }
 }
 app.post("/api/ai/generate-reply", async (req, res) => {
@@ -7332,21 +8246,38 @@ Mensaje actual del cliente:
 ${queryText}
 
 Responde siguiendo las reglas del Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+    const directStoreReply = resolveDirectStoreQuestion(baseText, conv);
+    const directCatalogReply = !directStoreReply ? resolveDirectCatalogReply(baseText, conv, hasQuote) : null;
     let result;
-    try {
-      result = await generateTextWithConfiguredAI({
-        prompt: promptToSend,
-        systemInstruction,
-        chatMessages: historyTurns,
-        allowFallback: true
-      });
-    } catch (aiErr) {
-      console.warn(`[Generate Reply Resilient Fallback]: ${aiErr.message}`);
+    if (directStoreReply) {
       result = {
-        text: buildSmartCatalogFallbackReply(conv, queryText),
-        providerUsed: appConfig.aiProvider?.provider || "gemini",
-        modelUsed: "catalog-smart-engine"
+        text: directStoreReply,
+        providerUsed: "direct-operational-engine",
+        modelUsed: "instant-store-faq"
       };
+    } else if (directCatalogReply) {
+      result = {
+        text: directCatalogReply,
+        providerUsed: "odoo-catalog-engine",
+        modelUsed: "instant-catalog-match"
+      };
+    } else {
+      try {
+        result = await generateTextWithConfiguredAI({
+          prompt: promptToSend,
+          systemInstruction,
+          chatMessages: historyTurns,
+          allowFallback: true
+        });
+      } catch (aiErr) {
+        const cleanErr = formatCleanAiError(aiErr);
+        console.log(`[Generate Reply]: Utilizando motor de cat\xE1logo en tiempo real (${cleanErr.summary})`);
+        result = {
+          text: buildSmartCatalogFallbackReply(conv, queryText),
+          providerUsed: appConfig.aiProvider?.provider || "gemini",
+          modelUsed: "catalog-smart-engine"
+        };
+      }
     }
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(result.text, conv);
     res.json({
@@ -7357,8 +8288,8 @@ Responde siguiendo las reglas del Agente Oficial de Ventas de Todo Lapto de form
       modelUsed: result.modelUsed
     });
   } catch (err) {
-    console.error("AI generate reply error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
 app.post("/api/conversations/:sessionId/auto-reply", async (req, res) => {
@@ -7393,8 +8324,9 @@ Extrae los siguientes datos en formato JSON:
   "summary": "resumen en una frase del comprobante"
 }
 Responde \xDANICAMENTE con el objeto JSON.`;
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+    const geminiClient = getActiveGeminiClient();
+    const response = await geminiClient.models.generateContent({
+      model: "gemini-3.1-flash-lite",
       contents: {
         parts: [
           {
@@ -7413,25 +8345,26 @@ Responde \xDANICAMENTE con el objeto JSON.`;
     const parsed = JSON.parse(response.text || "{}");
     res.json({ success: true, verification: parsed });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    const cleanErr = formatCleanAiError(err);
+    res.status(500).json({ success: false, message: cleanErr.summary });
   }
 });
-app.post("/api/webhook/evolution", async (req, res) => {
+var handleEvolutionWebhook = async (req, res) => {
   res.status(200).json({ received: true });
-  const body = req.body;
-  const event = body?.event;
-  const messageData = body?.data;
+  const body = req.body || {};
+  const rawEvent = (body?.event || body?.type || "").toString().trim().toLowerCase().replace(/[-_]/g, ".");
+  const isMessageUpsert = rawEvent === "messages.upsert" || rawEvent === "messages_upsert" || rawEvent === "message" || rawEvent.endsWith(".upsert") && !rawEvent.includes("update");
+  const messageData = Array.isArray(body?.data) ? body.data[0] : Array.isArray(body?.data?.messages) ? body.data.messages[0] : body?.data || body?.message || body;
   const key = messageData?.key;
-  if (event !== "messages.upsert" || !key || key.fromMe) {
+  if (!isMessageUpsert || !key || key.fromMe) {
     return;
   }
-  const messageId = key.id;
+  const messageId = normalizeMsgIdKey(key.id);
   const now = Date.now();
-  if (processedMessageIds.has(messageId)) {
-    const prevTime = processedMessageIds.get(messageId);
-    if (now - prevTime < 6e4) return;
+  if (isMessageIdAlreadyProcessed(messageId)) {
+    return;
   }
-  processedMessageIds.set(messageId, now);
+  markMessageIdProcessed(messageId);
   const remoteJid = key.remoteJid || "";
   const rawAlt = key.remoteJidAlt || "";
   const participant = key.participant || "";
@@ -7467,19 +8400,138 @@ app.post("/api/webhook/evolution", async (req, res) => {
     conv.lastTimestamp = parsedIncoming.timestamp;
     conv.lastMessagePreview = parsedIncoming.content;
     conv.lastMessageType = parsedIncoming.type;
-    if (!conv.messages.some((m) => m.evolutionMessageId === parsedIncoming.evolutionMessageId)) {
+    if (!conv.messages.some(
+      (m) => parsedIncoming.evolutionMessageId && m.evolutionMessageId === parsedIncoming.evolutionMessageId || parsedIncoming.id && m.id === parsedIncoming.id
+    )) {
       conv.messages.push(parsedIncoming);
     }
   }
   broadcastEvent("new_message", { sessionId: conv.sessionId, message: parsedIncoming });
+  broadcastEvent("conversations_update", { count: conversations.length });
   if (appConfig.supabase?.autoSync !== false) {
     autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {
     });
   }
   if (appConfig.globalAiActive && conv.aiEnabled) {
-    await triggerSalesBotReplyForConversation(conv, "evolution_webhook");
+    const skipCheck = shouldSkipBotReply(conv, parsedIncoming, "evolution_webhook");
+    if (skipCheck.skip) {
+      console.log(`\u{1F6E1}\uFE0F [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
+      return;
+    }
+    const contactKeys = getConversationContactKeys(conv);
+    if (contactKeys.some((k) => isBotLockActive(k))) {
+      console.log(`\u{1F6E1}\uFE0F [Webhook Skip]: Respuesta ya en proceso para ${conv.customerName}`);
+      return;
+    }
+    triggerSalesBotReplyForConversation(conv, "evolution_webhook").catch((err) => {
+      console.log(`[Sales Bot Webhook Trigger Info for ${conv.customerName}]:`, err?.message || err);
+    });
+  }
+};
+app.post("/api/webhook/evolution", handleEvolutionWebhook);
+app.post("/api/webhook", handleEvolutionWebhook);
+app.post("/webhook/evolution", handleEvolutionWebhook);
+app.post("/webhook", handleEvolutionWebhook);
+app.get(["/api/webhook/evolution", "/api/webhook", "/webhook/evolution", "/webhook"], (_req, res) => {
+  res.json({
+    status: "online",
+    service: "Todo Lapto WhatsApp Evolution Webhook",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+});
+app.post("/api/evolution/register-webhook", async (req, res) => {
+  try {
+    const rawUrl = (req.body?.webhookUrl || "").trim();
+    if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
+      return res.status(400).json({ success: false, message: "Faltan credenciales de Evolution API" });
+    }
+    const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, "");
+    const instance = appConfig.evolution.instance;
+    const hostHeader = req.get("x-forwarded-host") || req.get("host") || "todolapto.com";
+    const proto = req.get("x-forwarded-proto") || req.protocol || "https";
+    const defaultUrl = `${proto}://${hostHeader}/api/webhook/evolution`;
+    const targetWebhookUrl = rawUrl || defaultUrl;
+    const setRes = await fetch(`${baseUrl}/webhook/set/${instance}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: appConfig.evolution.apiKey
+      },
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: targetWebhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            "MESSAGES_UPSERT"
+          ]
+        }
+      }),
+      signal: AbortSignal.timeout(6e3)
+    });
+    if (!setRes.ok) {
+      const errText = await setRes.text().catch(() => "");
+      return res.status(setRes.status).json({
+        success: false,
+        message: `Evolution API devolvi\xF3 estado ${setRes.status}: ${errText.slice(0, 200)}`
+      });
+    }
+    const data = await setRes.json().catch(() => ({}));
+    return res.json({
+      success: true,
+      message: `Webhook registrado exitosamente en Evolution API apuntando a ${targetWebhookUrl}`,
+      data
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
+async function ensureEvolutionWebhookRegistered(preferredUrl) {
+  try {
+    if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) return;
+    const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, "");
+    const instance = appConfig.evolution.instance;
+    const findRes = await fetch(`${baseUrl}/webhook/find/${instance}`, {
+      headers: { apikey: appConfig.evolution.apiKey },
+      signal: AbortSignal.timeout(5e3)
+    }).catch(() => null);
+    let isEnabled = false;
+    let registeredUrl = "";
+    if (findRes && findRes.ok) {
+      const data = await findRes.json().catch(() => null);
+      isEnabled = Boolean(data?.enabled);
+      registeredUrl = data?.url || "";
+    }
+    const targetUrl = (preferredUrl || appConfig.evolution.webhookUrl || "https://todolapto.com/api/webhook/evolution").trim();
+    if (isEnabled && registeredUrl === targetUrl) {
+      console.log(`[Webhook]: Webhook ya registrado y activo en Evolution API (${targetUrl})`);
+      return;
+    }
+    const setRes = await fetch(`${baseUrl}/webhook/set/${instance}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: appConfig.evolution.apiKey
+      },
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: targetUrl,
+          byEvents: false,
+          base64: false,
+          events: ["MESSAGES_UPSERT"]
+        }
+      }),
+      signal: AbortSignal.timeout(6e3)
+    });
+    if (setRes.ok) {
+      console.log(`\u2705 [Webhook]: Webhook registrado exitosamente en Evolution API apuntando a ${targetUrl}`);
+    }
+  } catch (err) {
+    console.log("[Webhook]: Auto-registro de webhook diferido:", err.message);
+  }
+}
 app.get("/api/proxy-image", async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl || !targetUrl.startsWith("http")) {
@@ -7642,12 +8694,12 @@ async function startServer() {
       `\u{1F680} Vendem\xE1 CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || "default(3000)"} (PID: ${process.pid})`
     );
     setTimeout(() => {
-      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).catch((e) => console.log("Initial background sync info:", e?.message || e));
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(() => syncOdooInventory()).then(() => syncOdooCustomers()).then(() => syncEvolutionChats()).then(() => ensureEvolutionWebhookRegistered()).catch((e) => console.log("Initial background sync info:", e?.message || e));
     }, 3500);
     setInterval(() => {
       syncEvolutionChats().catch(() => {
       });
-    }, 4e3);
+    }, 2e4);
     setInterval(() => {
       syncOdooInventory().catch(() => {
       });
