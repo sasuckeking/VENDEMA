@@ -19,7 +19,8 @@ import {
   Copy,
   Check,
   RefreshCw,
-  X
+  X,
+  Zap,
 } from 'lucide-react';
 import type { AppConfig, HolidayOverride } from '../types';
 import {
@@ -43,18 +44,28 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
   onUpdateConfig,
   compact = false,
 }) => {
+  const [localOverrides, setLocalOverrides] = useState<HolidayOverride[]>(() => config.holidayOverrides || []);
+
+  useEffect(() => {
+    if (config.holidayOverrides) {
+      setLocalOverrides(config.holidayOverrides);
+    }
+  }, [config.holidayOverrides]);
+
+  const overrides = localOverrides;
+
   const [currentRd, setCurrentRd] = useState(() =>
-    getDominicanTimeContext(new Date(), config.holidayOverrides || [])
+    getDominicanTimeContext(new Date(), localOverrides)
   );
 
   useEffect(() => {
     const update = () => {
-      setCurrentRd(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
+      setCurrentRd(getDominicanTimeContext(new Date(), localOverrides));
     };
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, [config.holidayOverrides]);
+  }, [localOverrides]);
 
   const [selectedYear, setSelectedYear] = useState<number>(currentRd.year);
   const [customMaxYear, setCustomMaxYear] = useState<number>(0);
@@ -71,8 +82,6 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
   const [customDate, setCustomDate] = useState('');
   const [customNote, setCustomNote] = useState('');
 
-  const overrides = config.holidayOverrides || [];
-
   const availableYears = useMemo(
     () =>
       getAvailableHolidayYears(
@@ -88,6 +97,17 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
     () => getHolidaysWithOverridesForYear(selectedYear, overrides),
     [selectedYear, overrides]
   );
+
+  // Detect if today has an official calendar holiday or an effective holiday
+  const todayCalendarHoliday = useMemo(() => {
+    const all = getHolidaysWithOverridesForYear(currentRd.year, overrides);
+    return all.find(h => h.originalDate === currentRd.ymd) || null;
+  }, [currentRd.year, currentRd.ymd, overrides]);
+
+  const todayEffectiveHoliday = useMemo(() => {
+    const all = getHolidaysWithOverridesForYear(currentRd.year, overrides);
+    return all.find(h => h.effectiveDate === currentRd.ymd && h.originalDate !== currentRd.ymd) || null;
+  }, [currentRd.year, currentRd.ymd, overrides]);
 
   const activeChangesCount = overrides.filter(o => o.status !== 'normal').length;
 
@@ -132,8 +152,9 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
 
   const persistOverrides = async (nextOverrides: HolidayOverride[], toast: string, targetId?: string) => {
     if (targetId) setSavingId(targetId);
+    setLocalOverrides(nextOverrides);
+    setGlobalHolidayOverrides(nextOverrides);
     try {
-      setGlobalHolidayOverrides(nextOverrides);
       let syncedInDb = false;
       let dedicatedTable = false;
       try {
@@ -381,6 +402,192 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
           </div>
         )}
 
+        {/* PROMINENT QUICK ACTION PANEL FOR TODAY */}
+        {todayCalendarHoliday && (
+          <div
+            className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+              todayCalendarHoliday.status === 'moved'
+                ? 'bg-gradient-to-r from-emerald-950/50 via-[#0F141C] to-emerald-950/30 border-emerald-500/50 shadow-xl shadow-emerald-950/30'
+                : todayCalendarHoliday.status === 'workday'
+                ? 'bg-gradient-to-r from-cyan-950/50 via-[#0F141C] to-cyan-950/30 border-cyan-500/50 shadow-xl shadow-cyan-950/30'
+                : 'bg-gradient-to-r from-amber-950/60 via-[#141210] to-rose-950/50 border-amber-500/50 shadow-xl shadow-amber-950/30 animate-pulse-subtle'
+            }`}
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`px-2.5 py-0.5 rounded-md text-[11px] font-black tracking-wider uppercase flex items-center gap-1.5 ${
+                      todayCalendarHoliday.status === 'moved'
+                        ? 'bg-emerald-500 text-slate-950'
+                        : todayCalendarHoliday.status === 'workday'
+                        ? 'bg-cyan-500 text-slate-950'
+                        : 'bg-amber-400 text-slate-950 animate-pulse'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    FERIADO EN CALENDARIO OFICIAL HOY
+                  </span>
+                  <h3 className="text-base font-black text-white">
+                    {todayCalendarHoliday.name} ({todayCalendarHoliday.originalHumanDate})
+                  </h3>
+                </div>
+
+                <p className="text-xs text-slate-200 leading-relaxed max-w-2xl">
+                  {todayCalendarHoliday.status === 'moved' ? (
+                    <span>
+                      🎉 <strong className="text-emerald-300 font-bold">¡Hoy se labora normal!</strong> El feriado oficial fue trasladado para el{' '}
+                      <strong className="text-amber-300 font-bold">{todayCalendarHoliday.effectiveHumanDate}</strong> conforme a la Ley 139-97. El Bot de WhatsApp informa a los clientes que la tienda en Av. Charles de Gaulle #133 está{' '}
+                      <strong className="text-emerald-300 font-bold">ABIERTA (8:30 AM a 6:00 PM)</strong> y despachando pedidos.
+                    </span>
+                  ) : todayCalendarHoliday.status === 'workday' ? (
+                    <span>
+                      💼 <strong className="text-cyan-300 font-bold">¡Hoy se labora normal!</strong> Marcado como día laborable ordinario. El Bot de WhatsApp sabe que la tienda física y entregas están abiertas.
+                    </span>
+                  ) : (
+                    <span>
+                      ⚠️ Por defecto según calendario oficial, hoy figura como <strong className="text-rose-300 font-bold">CERRADO (Feriado)</strong>. Si el Ministerio de Trabajo trasladó este feriado para el lunes o si la tienda labora hoy, haz clic en el botón verde abajo para que el Bot y el sistema sepan de inmediato que <strong className="text-emerald-300 font-bold">hoy estamos abiertos</strong>.
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Status Badge */}
+              <div className="shrink-0">
+                <span
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold font-mono border ${
+                    todayCalendarHoliday.status === 'moved' || todayCalendarHoliday.status === 'workday'
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  }`}
+                >
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      todayCalendarHoliday.status === 'moved' || todayCalendarHoliday.status === 'workday'
+                        ? 'bg-emerald-400 animate-pulse'
+                        : 'bg-rose-400'
+                    }`}
+                  />
+                  <span>
+                    {todayCalendarHoliday.status === 'moved' || todayCalendarHoliday.status === 'workday'
+                      ? 'HOY ABIERTO (LABORABLE)'
+                      : 'HOY CERRADO (FERIADO)'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {/* Direct 1-Click Action Buttons for Today */}
+            <div className="mt-4 pt-3.5 border-t border-white/[0.08] flex flex-wrap items-center gap-2.5">
+              <span className="text-[11px] font-bold text-slate-300 mr-1 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-lime-400" />
+                Cambiar Estado de Hoy:
+              </span>
+
+              <button
+                type="button"
+                disabled={savingId === todayCalendarHoliday.id}
+                onClick={() =>
+                  handleMoveHoliday(
+                    todayCalendarHoliday.originalDate,
+                    todayCalendarHoliday.name,
+                    todayCalendarHoliday.nextMondayDate
+                  )
+                }
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md ${
+                  todayCalendarHoliday.status === 'moved' &&
+                  todayCalendarHoliday.movedToDate === todayCalendarHoliday.nextMondayDate
+                    ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-300 shadow-emerald-500/30'
+                    : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border border-emerald-500/40'
+                }`}
+                title={`Mover feriado al ${todayCalendarHoliday.nextMondayLabel} para que hoy sea día laborable`}
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>
+                  {todayCalendarHoliday.status === 'moved' &&
+                  todayCalendarHoliday.movedToDate === todayCalendarHoliday.nextMondayDate
+                    ? '✓ Trasladado al Lunes (Hoy Abierto)'
+                    : `Mover al Lunes ${todayCalendarHoliday.nextMondayLabel} (Hoy se labora normal)`}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={savingId === todayCalendarHoliday.id}
+                onClick={() =>
+                  handleMarkAsWorkday(
+                    todayCalendarHoliday.originalDate,
+                    todayCalendarHoliday.name
+                  )
+                }
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  todayCalendarHoliday.status === 'workday'
+                    ? 'bg-cyan-500 text-slate-950 ring-2 ring-cyan-300 shadow-cyan-500/30'
+                    : 'bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1]'
+                }`}
+                title="Marcar hoy como día laborable sin moverlo a otra fecha"
+              >
+                <Briefcase className="w-3.5 h-3.5" />
+                <span>
+                  {todayCalendarHoliday.status === 'workday'
+                    ? '✓ Marcado Laborable Normal'
+                    : 'Marcar Hoy como Laborable'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={savingId === todayCalendarHoliday.id}
+                onClick={() =>
+                  handleSetOriginalDay(
+                    todayCalendarHoliday.originalDate,
+                    todayCalendarHoliday.name
+                  )
+                }
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  todayCalendarHoliday.status === 'normal'
+                    ? 'bg-rose-500 text-white ring-2 ring-rose-300 shadow-rose-500/30'
+                    : 'bg-rose-950/40 hover:bg-rose-950/80 text-rose-300 border border-rose-500/30'
+                }`}
+                title="Restaurar a fecha original (cerrado hoy por feriado)"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>
+                  {todayCalendarHoliday.status === 'normal'
+                    ? '✓ Feriado en Fecha Original (Cerrado)'
+                    : 'Dejar Feriado Hoy (Cerrado)'}
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Special Notice if TODAY is the target of a moved holiday */}
+        {todayEffectiveHoliday && (
+          <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/50 text-xs text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block text-amber-300 font-bold text-sm">
+                  Hoy es el día efectivo de feriado: {todayEffectiveHoliday.name}
+                </strong>
+                <span>
+                  Este feriado fue trasladado desde su fecha original ({todayEffectiveHoliday.originalHumanDate}) para hoy ({todayEffectiveHoliday.effectiveHumanDate}). La tienda física y entregas están cerradas hoy por feriado.
+                </span>
+              </div>
+            </div>
+            <div className="shrink-0 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleMarkAsWorkday(todayEffectiveHoliday.originalDate, todayEffectiveHoliday.name)}
+                className="px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-200 font-bold text-xs cursor-pointer"
+              >
+                Marcar hoy como laborable
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Live AI Context Preview */}
         <div className="p-3.5 rounded-xl bg-[#090D12] border border-white/[0.06] space-y-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -606,12 +813,15 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
                         onClick={() => handleMoveHoliday(item.originalDate, item.name, item.nextMondayDate)}
                         className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border text-left transition-all cursor-pointer flex flex-col ${
                           isMoved && item.movedToDate === item.nextMondayDate
-                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
-                            : 'bg-white/[0.04] hover:bg-amber-500/15 text-slate-200 border-white/[0.08] hover:border-amber-500/40'
+                            ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md ring-1 ring-emerald-300'
+                            : 'bg-white/[0.04] hover:bg-emerald-500/15 text-slate-200 border-white/[0.08] hover:border-emerald-500/40'
                         }`}
                       >
-                        <span>👉 Mover al Lunes sig.</span>
-                        <span className={`text-[10px] font-mono ${isMoved && item.movedToDate === item.nextMondayDate ? 'text-slate-900' : 'text-amber-400'}`}>
+                        <span className="flex items-center gap-1">
+                          {isMoved && item.movedToDate === item.nextMondayDate && <span>✓</span>}
+                          <span>👉 Mover al Lunes sig.</span>
+                        </span>
+                        <span className={`text-[10px] font-mono ${isMoved && item.movedToDate === item.nextMondayDate ? 'text-slate-950 font-bold' : 'text-emerald-400'}`}>
                           {item.nextMondayLabel}
                         </span>
                       </button>
@@ -622,12 +832,15 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
                         onClick={() => handleMoveHoliday(item.originalDate, item.name, item.prevMondayDate)}
                         className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border text-left transition-all cursor-pointer flex flex-col ${
                           isMoved && item.movedToDate === item.prevMondayDate
-                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md ring-1 ring-amber-300'
                             : 'bg-white/[0.04] hover:bg-amber-500/15 text-slate-200 border-white/[0.08] hover:border-amber-500/40'
                         }`}
                       >
-                        <span>👈 Mover al Lunes ant.</span>
-                        <span className={`text-[10px] font-mono ${isMoved && item.movedToDate === item.prevMondayDate ? 'text-slate-900' : 'text-amber-400'}`}>
+                        <span className="flex items-center gap-1">
+                          {isMoved && item.movedToDate === item.prevMondayDate && <span>✓</span>}
+                          <span>👈 Mover al Lunes ant.</span>
+                        </span>
+                        <span className={`text-[10px] font-mono ${isMoved && item.movedToDate === item.prevMondayDate ? 'text-slate-950 font-bold' : 'text-amber-400'}`}>
                           {item.prevMondayLabel}
                         </span>
                       </button>

@@ -1092,23 +1092,43 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                   >
                     {/* Quoted message if any */}
                     {msg.quotedMessage && (
-                      <div className="mb-2.5 p-2.5 rounded-xl bg-black/45 border-l-4 border-lime-400 text-[11px] text-slate-200 flex items-start gap-2.5">
-                        {msg.quotedMessage.mediaUrl && msg.quotedMessage.type === 'image' && (
+                      <div
+                        className={`mb-2.5 p-2.5 rounded-xl bg-black/45 border-l-4 text-[11px] text-slate-200 flex items-start gap-2.5 ${
+                          msg.quotedMessage.isStatusReply ? 'border-emerald-400 bg-emerald-950/30' : 'border-lime-400'
+                        }`}
+                      >
+                        {(msg.quotedMessage.mediaUrl || msg.quotedMessage.mediaBase64) && (
                           <img
-                            src={msg.quotedMessage.mediaUrl}
-                            alt="Cita"
+                            src={
+                              msg.quotedMessage.mediaUrl ||
+                              `data:${msg.quotedMessage.mediaMimeType || 'image/jpeg'};base64,${msg.quotedMessage.mediaBase64}`
+                            }
+                            alt="Cita / Estado"
                             referrerPolicy="no-referrer"
-                            className="w-10 h-10 rounded-lg object-cover shrink-0 border border-white/10"
+                            className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/10"
                           />
                         )}
                         <div className="min-w-0 flex-1">
-                          <span className="text-lime-400 font-bold flex items-center gap-1 text-[10px] mb-0.5">
+                          <span
+                            className={`font-bold flex items-center gap-1 text-[10px] mb-0.5 ${
+                              msg.quotedMessage.isStatusReply ? 'text-emerald-300' : 'text-lime-400'
+                            }`}
+                          >
                             <Reply className="w-3 h-3" />
-                            <span>{msg.quotedMessage.author || 'Mensaje citado'}</span>
+                            <span>
+                              {msg.quotedMessage.isStatusReply
+                                ? '📱 Respuesta desde Estado de WhatsApp (Story)'
+                                : msg.quotedMessage.author || 'Mensaje citado'}
+                            </span>
                           </span>
                           <p className="line-clamp-3 text-slate-300 whitespace-pre-wrap">
                             {msg.quotedMessage.text}
                           </p>
+                          {msg.quotedMessage.aiAnalysis && (
+                            <p className="mt-1 text-[10px] text-emerald-300/90 bg-black/30 p-1.5 rounded border border-emerald-500/20">
+                              🔍 <strong>IA Vision (Estado):</strong> {msg.quotedMessage.aiAnalysis}
+                            </p>
+                          )}
                         </div>
                       </div>
                     )}

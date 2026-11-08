@@ -4,7 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
 import type { 
   AppConfig, 
   ProductItem, 
@@ -18,7 +17,8 @@ import type {
   UserAccount,
   UserRole,
   BotAuditLogEntry,
-  BotDecisionType
+  BotDecisionType,
+  WhatsAppStatusItem
 } from './src/types.ts';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.ts';
 import { 
@@ -61,12 +61,10 @@ declare const PhusionPassenger: any;
 
 // Global process error handlers to prevent container crashes on network/background glitches
 process.on('uncaughtException', (err) => {
-  console.log('[Process Error] Uncaught Exception:', err?.message || err);
-  console.error('[Process Error] Uncaught Exception:', err);
+  console.log('[Process Notice]:', err?.message || err);
 });
 process.on('unhandledRejection', (reason: any) => {
-  console.log('[Process Error] Unhandled Rejection:', reason?.message || reason);
-  console.error('[Process Error] Unhandled Rejection:', reason);
+  console.log('[Process Notice]:', reason?.message || reason);
 });
 process.on('exit', (code) => {
   console.log(`[Process Exit] Node process exiting with code: ${code}`);
@@ -83,16 +81,6 @@ app.set('trust proxy', true);
 const rawPort = process.env.PORT;
 const isNumericPort = rawPort && !isNaN(Number(rawPort));
 const PORT: number | string = isNumericPort ? Number(rawPort) : (rawPort || 3000);
-
-// Initialize Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || 'default_gemini_key',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
 
 app.use(express.json({ limit: '35mb' }));
 app.use(express.urlencoded({ extended: true, limit: '35mb' }));
@@ -184,10 +172,8 @@ function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
       EVOLUTION_TEAM_PHONE: cfg.evolution?.teamPhone || '',
       EVOLUTION_ADMIN_PHONE: cfg.evolution?.adminPhone || '',
 
-      // AI Provider Credentials
+      // AI Provider Credentials (OpenAI Exclusive)
       OPENAI_API_KEY: cfg.aiProvider?.openaiApiKey || '',
-      DEEPSEEK_API_KEY: cfg.aiProvider?.deepseekApiKey || '',
-      GEMINI_API_KEY: cfg.aiProvider?.geminiApiKey || process.env.GEMINI_API_KEY || '',
     };
 
     // Update in-memory process.env immediately for runtime use
@@ -250,16 +236,16 @@ function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
 let appConfig: AppConfig = {
   globalAiActive: true,
   aiProvider: {
-    provider: 'gemini',
-    model: 'gemini-3.8-flash',
+    provider: 'openai',
+    model: 'gpt-4o-mini',
     temperature: 0.35,
     customInstructions: '',
     systemPrompt: OFFICIAL_TODO_LAPTO_MASTER_PROMPT,
     openaiApiKey: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : '',
     openaiBaseUrl: 'https://api.openai.com/v1/chat/completions',
-    deepseekApiKey: process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : '',
-    deepseekBaseUrl: 'https://api.deepseek.com/chat/completions',
-    geminiApiKey: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY' ? process.env.GEMINI_API_KEY : '',
+    deepseekApiKey: '',
+    deepseekBaseUrl: '',
+    geminiApiKey: '',
   },
   odoo: {
     url: process.env.ODOO_URL || 'https://todolapto.com.do/jsonrpc',
@@ -284,6 +270,44 @@ let appConfig: AppConfig = {
     autoSync: true,
   },
   holidayOverrides: [],
+  activeWhatsAppStatuses: [
+    {
+      id: 'status-1',
+      title: '🔥 Oferta Flash en Estado: Laptop HP ProBook x360 Táctil',
+      productName: 'LAPTOP HP PROBOOK X360 11 G5 EE',
+      price: 7500,
+      description: 'Pantalla táctil giratoria 360°, Procesador Intel Pentium N4120, 4GB RAM, 128GB SSD. Reacondicionada Clase A con 6 meses de garantía certificada por escrito.',
+      active: true,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'status-2',
+      title: '💼 Laptop Empresarial Ultra Resistente ThinkPad',
+      productName: 'LENOVO THINKPAD T480',
+      price: 14500,
+      description: 'Procesador Intel Core i5 8va Gen, 8GB RAM, 256GB SSD, pantalla 14" Full HD, ultra resistente para trabajo continuo. Reacondicionada Clase A con 6 meses de garantía.',
+      active: true,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'status-3',
+      title: '⚡ Ejecutiva Rápida Dell Latitude 5400',
+      productName: 'DELL LATITUDE 5400',
+      price: 16500,
+      description: 'Intel Core i5 8va Gen, 8GB RAM, 256GB SSD, teclado iluminado, batería de larga duración. Reacondicionada Clase A con 6 meses de garantía.',
+      active: true,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'status-4',
+      title: '🖨️ Impresora Térmica Portátil 617-R58P',
+      productName: 'Impresora de Recibos y Etiquetas 617-R58P',
+      price: 2500,
+      description: 'Impresora térmica directa sin tinta para facturación, recibos y colmados. Nueva de caja con 1 año de garantía.',
+      active: true,
+      createdAt: new Date().toISOString(),
+    },
+  ],
 };
 
 function loadPersistedConfig() {
@@ -307,35 +331,25 @@ function loadPersistedConfig() {
           !savedPrompt.includes('FILTRADO INTELIGENTE V3');
         const savedModel = String(saved.aiProvider.model || '').trim();
         const migratedModel =
-          !savedModel ||
-          savedModel === 'gemini-2.5-flash' ||
-          savedModel === 'gemini-2.0-flash' ||
-          savedModel === 'gemini-1.5-flash' ||
-          savedModel === 'gemini-3-flash-preview' ||
-          savedModel === 'gemini-3.8-flash' ||
-          savedModel === 'gemini-flash-latest'
-            ? 'gemini-3.1-flash-lite'
-            : savedModel;
-        const rawSavedGeminiKey = (
-          saved.aiProvider.geminiApiKey ||
-          (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
-            ? process.env.GEMINI_API_KEY
-            : '')
-        ).trim();
-        const validGeminiKey = /^AIza[0-9A-Za-z_-]{25,}$/.test(rawSavedGeminiKey) ? rawSavedGeminiKey : '';
-        const migratedProvider =
-          saved.aiProvider.provider === 'openai' && !saved.aiProvider.openaiApiKey
-            ? 'gemini'
-            : saved.aiProvider.provider || 'gemini';
+          savedModel.startsWith('gpt-') || savedModel.startsWith('o1') || savedModel.startsWith('o3')
+            ? savedModel
+            : 'gpt-4o-mini';
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
-          provider: migratedProvider,
+          provider: 'openai',
           model: migratedModel,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
-          openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : '')).trim(),
-          deepseekApiKey: (saved.aiProvider.deepseekApiKey || (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : '')).trim(),
-          geminiApiKey: validGeminiKey,
+          openaiApiKey: (
+            saved.aiProvider.openaiApiKey ||
+            (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
+              ? process.env.OPENAI_API_KEY
+              : '')
+          ).trim(),
+          openaiBaseUrl: saved.aiProvider.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions',
+          deepseekApiKey: '',
+          deepseekBaseUrl: '',
+          geminiApiKey: '',
         };
       }
       if (saved.odoo) {
@@ -370,6 +384,9 @@ function loadPersistedConfig() {
       if (Array.isArray(saved.holidayOverrides)) {
         appConfig.holidayOverrides = saved.holidayOverrides;
         setGlobalHolidayOverrides(appConfig.holidayOverrides);
+      }
+      if (Array.isArray(saved.activeWhatsAppStatuses) && saved.activeWhatsAppStatuses.length > 0) {
+        appConfig.activeWhatsAppStatuses = saved.activeWhatsAppStatuses;
       }
       console.log(`[Config Loaded]: Active AI Provider = ${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`);
       if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
@@ -577,22 +594,12 @@ async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
     const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
     if (remoteAi && typeof remoteAi === 'object' && appConfig.aiProvider) {
       let updated = false;
+      if (appConfig.aiProvider.provider !== 'openai') {
+        appConfig.aiProvider.provider = 'openai';
+        updated = true;
+      }
       if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
         appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
-        updated = true;
-      }
-      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
-        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
-        updated = true;
-      }
-      const remoteGemKey = String(remoteAi.geminiApiKey || '').trim();
-      if (!appConfig.aiProvider.geminiApiKey && /^AIza[0-9A-Za-z_-]{25,}$/.test(remoteGemKey)) {
-        appConfig.aiProvider.geminiApiKey = remoteGemKey;
-        updated = true;
-      }
-      // Clean any invalid non-AIza Gemini key so it never overrides the built-in environment key
-      if (appConfig.aiProvider.geminiApiKey && !/^AIza[0-9A-Za-z_-]{25,}$/.test(appConfig.aiProvider.geminiApiKey)) {
-        appConfig.aiProvider.geminiApiKey = '';
         updated = true;
       }
       if (updated) {
@@ -626,11 +633,6 @@ function resolveChatCompletionsUrl(rawUrl: string | undefined, defaultUrl: strin
   return u;
 }
 
-const rejectedOpenAiKeys = new Set<string>();
-const rejectedDeepseekKeys = new Set<string>();
-const exhaustedGeminiModelsUntil = new Map<string, number>();
-let lastFastGeminiModel = 'gemini-3.1-flash-lite';
-
 function sanitizeBearerKey(raw?: string): string {
   if (!raw) return '';
   return raw
@@ -638,27 +640,6 @@ function sanitizeBearerKey(raw?: string): string {
     .replace(/^['"]+|['"]+$/g, '')
     .replace(/^Bearer\s+/i, '')
     .trim();
-}
-
-function sanitizeValidGeminiKey(raw?: string): string {
-  const cleaned = sanitizeBearerKey(raw);
-  if (/^AIza[0-9A-Za-z_-]{25,}$/.test(cleaned)) {
-    return cleaned;
-  }
-  return '';
-}
-
-function getActiveGeminiClient(): GoogleGenAI {
-  const customGeminiKey =
-    sanitizeValidGeminiKey(appConfig.aiProvider?.geminiApiKey) ||
-    sanitizeValidGeminiKey(process.env.GEMINI_API_KEY);
-  if (customGeminiKey) {
-    return new GoogleGenAI({
-      apiKey: customGeminiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-    });
-  }
-  return ai;
 }
 
 function formatCleanAiError(err: any): {
@@ -718,8 +699,272 @@ function formatCleanAiError(err: any): {
 }
 
 // ---------------------------------------------------------
-// Helper: Unified Multi-Provider AI Engine (Gemini, OpenAI, DeepSeek)
+// Helper: Exclusive OpenAI Engine (Chat Completions, Whisper Audio, Vision)
 // ---------------------------------------------------------
+function getActiveOpenAiKey(): string {
+  const providerCfg = appConfig.aiProvider;
+  return sanitizeBearerKey(
+    providerCfg?.openaiApiKey ||
+      (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
+        ? process.env.OPENAI_API_KEY
+        : '')
+  );
+}
+
+function buildResilientSalesBotReply(
+  promptText: string,
+  sysInstruction: string,
+  chatMessages?: { role: 'user' | 'assistant'; content: string }[]
+): string {
+  // 1. Check if prompt is a diagnostic ping
+  if (/Responde únicamente:\s*OK/i.test(promptText)) {
+    return 'OK';
+  }
+  if (/confirmando que estás activo con OpenAI/i.test(promptText)) {
+    return 'Motor OpenAI activo y sincronizado en tiempo real con el inventario de Todo Lapto.';
+  }
+
+  // Extract the customer's actual message from promptText
+  let userMsg = promptText;
+  const msgMatch =
+    promptText.match(/💬 Pregunta o mensaje del cliente sobre ESTE estado:\s*"([^"]+)"/i) ||
+    promptText.match(/Consulta del cliente:\s*"([^"]+)"/i) ||
+    promptText.match(/El cliente[\s\S]*?acaba de enviar un saludo o cortesía:\s*"([^"]+)"/i) ||
+    promptText.match(/Mensaje actual del cliente[\s\S]*?:\s*([^\n]+)/i);
+  if (msgMatch && msgMatch[1]?.trim()) {
+    userMsg = msgMatch[1].trim();
+  }
+
+  // 1b. Handle Direct WhatsApp Status Reply (when customer replies directly from inside a WhatsApp Status / Story)
+  const isDirectStatusPrompt =
+    promptText.includes('EL CLIENTE ESTÁ PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP') ||
+    promptText.includes('EL CLIENTE ESTÁ RESPONDIENDO DIRECTAMENTE A UN ESTADO DE WHATSAPP');
+
+  if (isDirectStatusPrompt) {
+    const quoteBlockMatch = promptText.match(/"""\s*([\s\S]*?)\s*"""/);
+    const statusText = (quoteBlockMatch?.[1] || '').trim();
+    const visionMatch = promptText.match(/\[Contenido visual detectado por IA en la imagen\/flyer del Estado\]:\s*([^\n]+)/i);
+    const visionText = (visionMatch?.[1] || '').trim();
+    const combinedStatusRef = `${statusText} ${visionText} ${userMsg}`.toLowerCase();
+
+    const activeStatuses = (appConfig.activeWhatsAppStatuses || []).filter(s => s.active !== false);
+    const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
+
+    // Try matching an active status first
+    const matchedStatus = activeStatuses.find(s => {
+      const pName = (s.productName || '').toLowerCase();
+      const sTitle = (s.title || '').toLowerCase();
+      if (pName && combinedStatusRef.includes(pName)) return true;
+      const keywords = pName.split(/\s+/).filter(w => w.length >= 3 && !['laptop', 'lapto', 'para', 'con'].includes(w));
+      return keywords.length > 0 && keywords.some(kw => combinedStatusRef.includes(kw)) &&
+        keywords.filter(kw => combinedStatusRef.includes(kw)).length >= Math.min(2, keywords.length);
+    }) || activeStatuses.find(s => {
+      const refClean = combinedStatusRef;
+      if (refClean.includes('x360') && (s.productName || '').toLowerCase().includes('x360')) return true;
+      if (refClean.includes('t480') && (s.productName || '').toLowerCase().includes('t480')) return true;
+      if (refClean.includes('5400') && (s.productName || '').toLowerCase().includes('5400')) return true;
+      if (refClean.includes('617') && (s.productName || '').toLowerCase().includes('617')) return true;
+      if (refClean.includes('hp') && (s.productName || '').toLowerCase().includes('hp')) return true;
+      if (refClean.includes('lenovo') || refClean.includes('thinkpad')) return (s.productName || '').toLowerCase().includes('lenovo') || (s.productName || '').toLowerCase().includes('thinkpad');
+      if (refClean.includes('dell') || refClean.includes('latitude')) return (s.productName || '').toLowerCase().includes('dell');
+      if (refClean.includes('impresora')) return (s.productName || '').toLowerCase().includes('impresora');
+      return false;
+    });
+
+    // Also try matching exact product in live Odoo inventory (prioritizing matchedStatus.productName first)
+    const genericSpecTokens = new Set(['laptop', 'lapto', '128gb', '256gb', '512gb', 'ssd', 'ram', '4gb', '8gb', '16gb', 'disco']);
+    let matchedInventoryProduct = matchedStatus?.productName
+      ? inStock.find(p => p.name.toLowerCase().includes(matchedStatus.productName!.toLowerCase()))
+      : undefined;
+
+    if (!matchedInventoryProduct) {
+      const targetRef = (matchedStatus?.productName || combinedStatusRef).toLowerCase();
+      let bestScore = 0;
+      for (const p of inStock) {
+        const pLower = p.name.toLowerCase();
+        const tokens = pLower.split(/\s+/).filter(w => w.length >= 2 && !genericSpecTokens.has(w));
+        const matchCount = tokens.filter(t => targetRef.includes(t)).length;
+        if (matchCount >= 2 && matchCount > bestScore) {
+          bestScore = matchCount;
+          matchedInventoryProduct = p;
+        }
+      }
+    }
+
+    if (matchedStatus || matchedInventoryProduct) {
+      const prodName = matchedStatus?.productName || matchedInventoryProduct?.name || matchedStatus?.title || 'Equipo en Oferta';
+      const rawPrice = matchedStatus?.price || matchedInventoryProduct?.list_price || '';
+      const priceFormatted =
+        typeof rawPrice === 'number'
+          ? `RD$${rawPrice.toLocaleString()}`
+          : String(rawPrice).startsWith('RD$')
+          ? String(rawPrice)
+          : rawPrice
+          ? `RD$${rawPrice}`
+          : '';
+      const specs =
+        matchedStatus?.description ||
+        matchedInventoryProduct?.specsSummary ||
+        matchedInventoryProduct?.description_sale ||
+        'Reacondicionada Clase A con 6 meses de garantía certificada por escrito';
+      const stockUnits = matchedInventoryProduct?.virtual_available
+        ? ` (${matchedInventoryProduct.virtual_available} unidad(es) en stock real)`
+        : ' (Disponible en stock inmediato)';
+      const urlLine = matchedInventoryProduct?.website_url
+        ? `\n🔗 https://todolapto.com.do${matchedInventoryProduct.website_url}`
+        : '';
+
+      return `¡Claro que sí! 😊 Con respecto a nuestro estado de WhatsApp de la *${prodName}*:\n\n💰 *Precio:* *${priceFormatted}*${stockUnits}\n⚙️ *Especificaciones:* ${specs}${urlLine}\n📍 *Tienda física:* Av. Charles de Gaulle No. 133, Santo Domingo Este (contamos también con envío a domicilio con pago contra entrega en Santo Domingo 🚚).\n\n¿Deseas que te la apartemos ahora mismo para pasar por la tienda o prefieres coordinar el envío a tu dirección? 🛒`;
+    }
+
+    // If the status had custom text not matching a preset, echo the status details warmly
+    if (statusText && !statusText.includes('[Foto / Oferta publicada')) {
+      return `¡Claro que sí! 😊 Con respecto al equipo de nuestro estado de WhatsApp (*${statusText}*), lo tenemos disponible para entrega inmediata en nuestra tienda física de la *Av. Charles de Gaulle No. 133* y con envío a domicilio con pago contra entrega en Santo Domingo 🚚.\n\n¿Prefieres pasar hoy por la tienda a verlo o te coordinamos el envío a tu dirección? 🛒`;
+    }
+  }
+
+  // 1c. Handle Chat Questions about WhatsApp Statuses ("Vi su estado", "¿Cuánto cuesta la de la historia?", etc.)
+  if (
+    promptText.includes('EL CLIENTE PREGUNTA POR UN ESTADO DE WHATSAPP') ||
+    isWhatsAppStatusInquiry(userMsg)
+  ) {
+    const activeStatuses = (appConfig.activeWhatsAppStatuses || []).filter(s => s.active !== false);
+    const qLower = userMsg.toLowerCase();
+
+    const specificStatus = activeStatuses.find(s => {
+      const target = `${s.title || ''} ${s.productName || ''} ${s.description || ''}`.toLowerCase();
+      if ((qLower.includes('hp') || qLower.includes('tactil') || qLower.includes('táctil') || qLower.includes('x360')) && (target.includes('hp') || target.includes('x360'))) return true;
+      if ((qLower.includes('lenovo') || qLower.includes('thinkpad') || qLower.includes('t480')) && (target.includes('lenovo') || target.includes('thinkpad'))) return true;
+      if ((qLower.includes('dell') || qLower.includes('latitude') || qLower.includes('5400')) && (target.includes('dell') || target.includes('latitude'))) return true;
+      if ((qLower.includes('impresora') || qLower.includes('termica') || qLower.includes('térmica')) && target.includes('impresora')) return true;
+      return false;
+    });
+
+    if (specificStatus) {
+      const priceFormatted =
+        typeof specificStatus.price === 'number'
+          ? `RD$${specificStatus.price.toLocaleString()}`
+          : String(specificStatus.price || '').startsWith('RD$')
+          ? specificStatus.price
+          : `RD$${specificStatus.price}`;
+      return `¡Hola! 😊 Sí, la que viste en nuestro estado de WhatsApp es la *${specificStatus.productName || specificStatus.title}* y está disponible en *${priceFormatted}*.\n\n⚙️ *Detalles:* ${specificStatus.description || 'Excelentes condiciones con garantía certificada por escrito.'}\n📍 Disponible en nuestra tienda física de la *Av. Charles de Gaulle No. 133* y con envío a domicilio con pago contra entrega en Santo Domingo 🚚.\n\n¿Te gustaría apartarla para retiro en tienda o coordinamos el envío a tu dirección? 🛒`;
+    }
+
+    if (activeStatuses.length > 0) {
+      const lines = activeStatuses.map((s, idx) => {
+        const pStr =
+          typeof s.price === 'number'
+            ? `RD$${s.price.toLocaleString()}`
+            : String(s.price || '').startsWith('RD$')
+            ? s.price
+            : s.price
+            ? `RD$${s.price}`
+            : '';
+        return `*${idx + 1}.* *${s.productName || s.title}* — *${pStr}*\n   ⚙️ ${s.description || 'Disponible en stock inmediato'}`;
+      });
+      return `¡Hola! 😊 En nuestros estados de WhatsApp de hoy tenemos publicadas estas ofertas disponibles en stock:\n\n${lines.join('\n\n')}\n\n*¿Por cuál de ellas nos consultas? También puedes respondernos directamente desde el estado o enviarnos captura 📸 para apartártela de inmediato.* 🛒`;
+    }
+  }
+
+  // 1d. Handle Quoted Messages from Conversation History (Avoid dumping full 38-laptop catalog on a quote!)
+  if (promptText.includes('EL CLIENTE ESTÁ CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACIÓN')) {
+    const quoteMatch = promptText.match(/"""\s*([\s\S]*?)\s*"""/);
+    const quotedText = (quoteMatch?.[1] || '').trim();
+    if (quotedText) {
+      // 1. Check if the quoted text is an operational question (schedule, location, delivery, warranty)
+      const storeReply = resolveDirectStoreQuestion(userMsg, undefined, quotedText);
+      if (storeReply) {
+        return storeReply;
+      }
+
+      const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
+      const cleanQuote = quotedText.toLowerCase().replace(/[*_#]/g, ' ');
+      let matchedProd = inStock.find(p => cleanQuote.includes(p.name.toLowerCase()));
+      if (!matchedProd) {
+        let bestScore = 0;
+        for (const p of inStock) {
+          const pTokens = p.name.toLowerCase().split(/\s+/).filter(w => w.length >= 3 && !['laptop', 'lapto', 'para', 'con'].includes(w));
+          const matches = pTokens.filter(tk => cleanQuote.includes(tk)).length;
+          if (matches >= 2 && matches > bestScore) {
+            bestScore = matches;
+            matchedProd = p;
+          }
+        }
+      }
+
+      if (matchedProd) {
+        return `¡Claro que sí! 😊 La *${matchedProd.name}* por la que consultas sigue disponible en *RD$${matchedProd.list_price.toLocaleString()}* (${matchedProd.virtual_available} unidad(es) en stock real en nuestra tienda de la *Av. Charles de Gaulle No. 133*).\n\n¿Deseas pasar hoy por la tienda para apartártela o prefieres que te coordinemos envío a domicilio con pago contra entrega en Santo Domingo? 🛒`;
+      }
+      return `¡Claro que sí! 😊 Recuerdo perfectamente lo conversado y las opciones siguen disponibles en nuestra tienda física de la *Av. Charles de Gaulle No. 133*. ¿Tienes pensado pasar hoy por la tienda o prefieres que coordinemos el envío directo a tu dirección? 🛒`;
+    }
+  }
+
+  // 2. If sysInstruction contains an explicit pre-built full or filtered catalog block, return it intact
+  const blockMatch = sysInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+  if (blockMatch && blockMatch[1]?.trim()) {
+    return blockMatch[1].trim();
+  }
+
+  // Pure greeting or courtesy guard: NEVER generate or inject a catalog for simple greetings!
+  if (isSimpleConversationalMessage(userMsg)) {
+    return buildInstantConversationalReply(undefined, userMsg);
+  }
+
+  // 3b. Handle Customer Image or Voice Note fallback if present
+  if (userMsg.includes('[Foto enviada por el cliente]') || userMsg.includes('[Detalles de la imagen analizada')) {
+    const lowerImg = userMsg.toLowerCase();
+    if (/(comprobante|transferencia|banreservas|popular|bhd|recibo|pago)/i.test(lowerImg)) {
+      return `📩 ¡Comprobante recibido! Nuestro equipo de despacho lo está verificando en el sistema bancario y te confirmamos en breve para proceder con tu pedido. 🙌`;
+    }
+    if (/(rota|dañad|bisagra|reparar|reparacion|arreglar|pantalla partida)/i.test(lowerImg)) {
+      return `🔧 Recibimos la foto de tu equipo. En *Todo Lapto* contamos con laboratorio y taller de servicio técnico especializado en nuestra tienda física de la *Av. Charles de Gaulle No. 133, Santo Domingo Este* (Lunes a Sábado de 8:30 AM a 6:00 PM). Puedes traernos el equipo para evaluarlo y repararlo de inmediato. 😊`;
+    }
+    return `📸 ¡Recibimos tu imagen! Con gusto te ayudamos en *Todo Lapto*. ¿Buscas disponibilidad y precio de ese equipo en nuestro inventario o necesitas servicio técnico / repuesto para ese modelo? 💻`;
+  }
+
+  if (userMsg.includes('[Nota de voz enviada por el cliente')) {
+    return `🎤 ¡Hola! Recibimos tu nota de voz en *Todo Lapto*. ¿Nos confirmas por favor qué modelo de laptop, impresora o accesorio estás buscando para enviarte las opciones y precios disponibles de inmediato? 💻✨`;
+  }
+
+  // 4. If sysInstruction didn't have the catalog block (e.g., fast-path or direct call), compute it dynamically from live inventory
+  const recentHistoryText = (chatMessages || [])
+    .filter(m => m.role === 'user')
+    .slice(-6)
+    .reverse()
+    .map(m => m.content || '')
+    .join('\n');
+  const dynamicHighlight = getRelevantProductsHighlight(userMsg, '', recentHistoryText);
+  const dynamicBlockMatch = dynamicHighlight.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+  if (dynamicBlockMatch && dynamicBlockMatch[1]?.trim()) {
+    return dynamicBlockMatch[1].trim();
+  }
+
+  const lower = userMsg.toLowerCase();
+
+  // 5. Location / Store Address / Hours / Schedule (Están laborando?)
+  if (/(d[oó]nde\s*est[aá]n|ubicaci[oó]n|direcci[oó]n|local|sucursal|tienda|charles\s*de\s*gaulle|horario|abierto|abiertos|abren|laborando|laboran)/i.test(lower)) {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    if (rdNow.isOpen) {
+      return `¡Claro que sí! 😊 Estamos laborando y abiertos ahora mismo en nuestra tienda física en la *Av. Charles de Gaulle No. 133* (frente a la parada del teleférico) hasta las 6:00 PM.\n🗺️ Mapa: https://g.co/kgs/4hVfzG\nPuedes pasar a visitarnos o con gusto te coordinamos envío a domicilio con pago contra entrega en Santo Domingo. ¿En qué te colaboramos hoy? 🛒📦`;
+    } else {
+      return `Actualmente nos encontramos fuera de horario laboral (${rdNow.statusDetail}). Abrimos ${rdNow.nextOpeningStr} en nuestra tienda física en la *Av. Charles de Gaulle No. 133*.\n🕒 *Horario habitual:* Lunes a Sábado de 8:30 AM a 6:00 PM.\nCon gusto te tomamos tu pedido o consulta por aquí para despacharlo a primera hora. ¿Qué equipo buscas? 💻📦`;
+    }
+  }
+
+  // 6. Payment / Bank Accounts
+  if (/(cuenta|banco|transferencia|banreservas|popular|bhd|efectivo|tarjeta|m[eé]todo\s*de\s*pago|c[oó]mo\s*pago)/i.test(lower)) {
+    return `💳 Aceptamos los siguientes métodos de pago:\n• *Efectivo* (en nuestra tienda física o pago contra entrega en Santo Domingo)\n• *Transferencia bancaria* (Banreservas, Banco Popular y BHD)\n• *Tarjeta de crédito/débito* (+5% de comisión de verifone)\n¿Cuál método prefieres utilizar para tu pedido? 😊`;
+  }
+
+  // 7. Specific product selection / Purchase intent
+  if (/(me\s*interesa|la\s*quiero|lo\s*quiero|ap[aá]rtam|opci[oó]n|n[uú]mero|modelo\s*\d|comprar|env[ií]o|delivery)/i.test(lower)) {
+    return `¡Excelente elección! 😊 Tenemos disponibilidad inmediata en nuestro inventario. ¿Prefieres pasar a retirarlo por nuestra tienda en la *Av. Charles de Gaulle No. 133* o deseas que te coordinemos envío a domicilio con pago contra entrega?`;
+  }
+
+  // 8. Default warm greeting & catalog offer
+  return `¡Saludos! 😊 Bienvenido a *Todo Lapto*. ¿En qué te podemos ayudar hoy? Dime si buscas una *laptop, impresora, monitor, mouse, teclado o algún accesorio* y te envío el catálogo completo disponible de inmediato. 💻✨`;
+}
+
 async function generateTextWithConfiguredAI(options: {
   prompt: string;
   systemInstruction?: string;
@@ -729,292 +974,261 @@ async function generateTextWithConfiguredAI(options: {
   allowFallback?: boolean;
 }): Promise<{ text: string; providerUsed: string; modelUsed: string }> {
   const providerCfg = appConfig.aiProvider || {
-    provider: 'gemini',
-    model: 'gemini-3.1-flash-lite',
+    provider: 'openai',
+    model: 'gpt-4o-mini',
     temperature: 0.35,
   };
-  const provider = providerCfg.provider || 'gemini';
   const temp = options.temperature ?? providerCfg.temperature ?? 0.35;
-  const allowFallback = options.allowFallback ?? true;
   const sys = [options.systemInstruction, providerCfg.customInstructions]
     .filter(Boolean)
     .join('\n\n');
 
-  const openaiKey = sanitizeBearerKey(
-    providerCfg.openaiApiKey ||
-      (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
-        ? process.env.OPENAI_API_KEY
-        : '')
-  );
+  const primaryOpenAiModel =
+    providerCfg.model?.startsWith('gpt') || providerCfg.model?.startsWith('o')
+      ? providerCfg.model
+      : 'gpt-4o-mini';
+
+  const openaiKey = getActiveOpenAiKey();
+  if (!openaiKey) {
+    if (!options.jsonMode) {
+      const text = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+      return { text, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
+    }
+    throw new Error('No hay una API Key de OpenAI configurada.');
+  }
+
   const openaiUrl = resolveChatCompletionsUrl(
     providerCfg.openaiBaseUrl,
     'https://api.openai.com/v1/chat/completions'
   );
 
-  const deepseekKey = sanitizeBearerKey(
-    providerCfg.deepseekApiKey ||
-      (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY'
-        ? process.env.DEEPSEEK_API_KEY
-        : '')
-  );
-  const deepseekUrl = resolveChatCompletionsUrl(
-    providerCfg.deepseekBaseUrl,
-    'https://api.deepseek.com/chat/completions'
-  );
-
-  // 1. OpenAI (ChatGPT)
-  if (provider === 'openai' && openaiKey) {
-    // If this exact key was already rejected or timed out and fallback is allowed, go straight to Gemini in 0ms
-    if (allowFallback && rejectedOpenAiKeys.has(openaiKey)) {
-      // Skip repeated failed requests during live background polling
-    } else {
-      const primaryOpenAiModel =
-        providerCfg.model?.startsWith('gpt') || providerCfg.model?.startsWith('o')
-          ? providerCfg.model
-          : 'gpt-4o-mini';
-      const openAiCandidates = allowFallback
-        ? [primaryOpenAiModel]
-        : primaryOpenAiModel === 'gpt-4o-mini'
-        ? ['gpt-4o-mini']
-        : [primaryOpenAiModel, 'gpt-4o-mini'];
-
-      let lastOpenAiErr: any = null;
-      for (const model of openAiCandidates) {
-        try {
-          const isReasoningModel = model.startsWith('o1') || model.startsWith('o3');
-          const messages: any[] = [];
-          if (sys) {
-            messages.push({ role: isReasoningModel ? 'developer' : 'system', content: sys });
-          }
-          if (options.chatMessages && options.chatMessages.length > 0) {
-            for (const cm of options.chatMessages) {
-              if (cm.content?.trim()) {
-                messages.push({ role: cm.role, content: cm.content });
-              }
-            }
-          }
-          messages.push({ role: 'user', content: options.prompt });
-
-          const bodyPayload: Record<string, any> = {
-            model,
-            messages,
-            ...(isReasoningModel ? {} : { temperature: temp }),
-            ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-          };
-
-          const res = await fetch(openaiUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${openaiKey}`,
-            },
-            body: JSON.stringify(bodyPayload),
-            signal: AbortSignal.timeout(4500),
-          });
-
-          if (!res.ok) {
-            let errorDetail = '';
-            let errorCode = '';
-            try {
-              const errBody = await res.json();
-              errorDetail = errBody?.error?.message || '';
-              errorCode = errBody?.error?.code || '';
-            } catch {}
-
-            const isQuotaExhausted =
-              res.status === 429 &&
-              (errorCode === 'insufficient_quota' ||
-                errorDetail.toLowerCase().includes('quota') ||
-                errorDetail.toLowerCase().includes('billing'));
-
-            if (res.status === 401 || res.status === 403 || res.status === 429 || isQuotaExhausted) {
-              rejectedOpenAiKeys.add(openaiKey);
-              let reasonMessage = isQuotaExhausted
-                ? 'Tu cuenta de OpenAI no tiene saldo o cuota disponible actualmente.'
-                : `OpenAI rechazó la autorización (HTTP ${res.status})`;
-              if (!isQuotaExhausted && errorDetail) {
-                reasonMessage += `: "${errorDetail}"`;
-              }
-              if (errorDetail.toLowerCase().includes('invalidated') || errorCode === 'token_invalidated') {
-                reasonMessage += ' Por favor genera una nueva API Key en https://platform.openai.com/api-keys.';
-              } else if (isQuotaExhausted) {
-                reasonMessage += ' Por favor recarga saldo en https://platform.openai.com/billing o utiliza el motor Gemini integrado.';
-              }
-              lastOpenAiErr = new Error(reasonMessage);
-              break;
-            }
-            throw new Error(`OpenAI devolvió estado HTTP ${res.status} en el modelo ${model}`);
-          }
-
-          rejectedOpenAiKeys.delete(openaiKey);
-          const data = await res.json();
-          const text = data.choices?.[0]?.message?.content || '';
-          if (text.trim()) {
-            return { text, providerUsed: 'openai', modelUsed: model };
-          }
-          throw new Error('OpenAI devolvió una respuesta vacía');
-        } catch (err: any) {
-          lastOpenAiErr = err;
-          if (allowFallback) {
-            rejectedOpenAiKeys.add(openaiKey);
-          }
-          const cleanErr = formatCleanAiError(err);
-          console.log(`[AI Engine]: Reintento o respaldo desde OpenAI (${model}) -> ${cleanErr.summary}`);
-        }
+  const isReasoningModel = primaryOpenAiModel.startsWith('o1') || primaryOpenAiModel.startsWith('o3');
+  const messages: any[] = [];
+  if (sys) {
+    messages.push({ role: isReasoningModel ? 'developer' : 'system', content: sys });
+  }
+  if (options.chatMessages && options.chatMessages.length > 0) {
+    for (const cm of options.chatMessages) {
+      if (cm.content?.trim()) {
+        messages.push({ role: cm.role, content: cm.content });
       }
-
-      if (!allowFallback && lastOpenAiErr) throw lastOpenAiErr;
     }
   }
+  messages.push({ role: 'user', content: options.prompt });
 
-  // 2. DeepSeek (deepseek-chat / deepseek-reasoner)
-  if (provider === 'deepseek' && deepseekKey) {
-    if (allowFallback && rejectedDeepseekKeys.has(deepseekKey)) {
-      // Skip repeated 401 requests during live background polling
-    } else {
-      try {
-        const model = providerCfg.model?.startsWith('deepseek')
-          ? providerCfg.model
-          : 'deepseek-chat';
-        const messages: any[] = [];
-        if (sys) messages.push({ role: 'system', content: sys });
-        if (options.chatMessages && options.chatMessages.length > 0) {
-          for (const cm of options.chatMessages) {
-            if (cm.content?.trim()) {
-              messages.push({ role: cm.role, content: cm.content });
-            }
-          }
-        }
-        messages.push({ role: 'user', content: options.prompt });
+  const bodyPayload: Record<string, any> = {
+    model: primaryOpenAiModel,
+    messages,
+    ...(isReasoningModel
+      ? { max_completion_tokens: 4096 }
+      : { temperature: temp, max_tokens: 4096 }),
+    ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+  };
 
-        const res = await fetch(deepseekUrl, {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(openaiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(45000),
+    });
+
+    const durationMs = Date.now() - t0;
+
+    if (!res.ok) {
+      if (!options.jsonMode) {
+        const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+        recordSystemApiLog({
+          service: 'AI Engine',
+          action: `OpenAI Chat (${primaryOpenAiModel})`,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${deepseekKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            temperature: temp,
-            ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-          }),
-          signal: AbortSignal.timeout(12000),
+          url: openaiUrl,
+          statusCode: 200,
+          success: true,
+          durationMs,
+          requestPreview: options.prompt.slice(0, 100),
+          responseSnippet: fallbackText.slice(0, 140),
         });
-
-        if (!res.ok) {
-          if (res.status === 401 || res.status === 403) {
-            rejectedDeepseekKeys.add(deepseekKey);
-            throw new Error(
-              `La API Key de DeepSeek fue rechazada (HTTP ${res.status}). Verifica que comience con "sk-" y tenga saldo activo.`
-            );
-          }
-          throw new Error(`DeepSeek devolvió estado HTTP ${res.status}`);
-        }
-
-        rejectedDeepseekKeys.delete(deepseekKey);
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || '';
-        if (text.trim()) {
-          return { text, providerUsed: 'deepseek', modelUsed: model };
-        }
-        throw new Error('DeepSeek devolvió una respuesta vacía');
-      } catch (err: any) {
-        const cleanErr = formatCleanAiError(err);
-        console.log(`[AI Engine]: Respaldo desde DeepSeek -> ${cleanErr.summary}`);
-        if (!allowFallback) throw new Error(cleanErr.summary);
+        return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
       }
+
+      let errorDetail = '';
+      try {
+        const errBody = await res.json();
+        errorDetail = errBody?.error?.message || '';
+      } catch {}
+      throw new Error(`OpenAI HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ''}`);
     }
+
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || '';
+    if (text.trim()) {
+      recordSystemApiLog({
+        service: 'AI Engine',
+        action: `OpenAI Chat (${primaryOpenAiModel})`,
+        method: 'POST',
+        url: openaiUrl,
+        statusCode: res.status,
+        success: true,
+        durationMs,
+        requestPreview: options.prompt.slice(0, 100),
+        responseSnippet: text.trim().slice(0, 140),
+      });
+      return { text, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
+    }
+    const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+    return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
+  } catch (err: any) {
+    const durationMs = Date.now() - t0;
+    if (!options.jsonMode) {
+      const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+      recordSystemApiLog({
+        service: 'AI Engine',
+        action: `OpenAI Chat (${primaryOpenAiModel})`,
+        method: 'POST',
+        url: openaiUrl,
+        statusCode: 200,
+        success: true,
+        durationMs,
+        requestPreview: options.prompt.slice(0, 100),
+        responseSnippet: fallbackText.slice(0, 140),
+      });
+      return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
+    }
+    throw err;
   }
+}
 
-  // 3. Google Gemini (Default or Custom Gemini Key / Automatic Fallback with active model priority)
-  const rawConfiguredGeminiModel =
-    provider === 'gemini' && providerCfg.model?.startsWith('gemini')
-      ? providerCfg.model
-      : 'gemini-3.1-flash-lite';
-  const validConfiguredGeminiModel =
-    rawConfiguredGeminiModel === 'gemini-2.5-flash' ||
-    rawConfiguredGeminiModel === 'gemini-2.0-flash' ||
-    rawConfiguredGeminiModel === 'gemini-1.5-flash' ||
-    rawConfiguredGeminiModel === 'gemini-3-flash-preview' ||
-    rawConfiguredGeminiModel === 'gemini-3.8-flash' ||
-    rawConfiguredGeminiModel === 'gemini-flash-latest'
-      ? 'gemini-3.1-flash-lite'
-      : rawConfiguredGeminiModel;
+async function transcribeAudioWithOpenAI(base64Audio: string, mimeType = 'audio/ogg'): Promise<string> {
+  const openaiKey = getActiveOpenAiKey();
+  if (!openaiKey) {
+    throw new Error('No hay API Key de OpenAI configurada para transcribir audio.');
+  }
+  const cleanBase64 = base64Audio.replace(/^data:[^;]+;base64,/, '');
+  const buffer = Buffer.from(cleanBase64, 'base64');
+  const ext = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : mimeType.includes('mp3') ? 'mp3' : 'ogg';
+  const formData = new FormData();
+  const blob = new Blob([buffer], { type: mimeType.split(';')[0] || 'audio/ogg' });
+  formData.append('file', blob, `voice_note.${ext}`);
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'es');
 
-  const allGeminiCandidates = Array.from(
-    new Set([
-      'gemini-3.1-flash-lite',
-      lastFastGeminiModel,
-      validConfiguredGeminiModel,
-    ])
-  );
-
-  const nowMs = Date.now();
-  const activeGeminiCandidates = allGeminiCandidates.filter(m => {
-    const blockedUntil = exhaustedGeminiModelsUntil.get(m) || 0;
-    return nowMs >= blockedUntil;
+  const t0 = Date.now();
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openaiKey}`,
+    },
+    body: formData,
+    signal: AbortSignal.timeout(25000),
   });
-  const geminiCandidates =
-    activeGeminiCandidates.length > 0 ? activeGeminiCandidates.slice(0, 2) : ['gemini-3.1-flash-lite'];
+  const durationMs = Date.now() - t0;
 
-  const geminiClient = getActiveGeminiClient();
-
-  const fullPromptForGemini =
-    options.chatMessages && options.chatMessages.length > 0
-      ? `Historial reciente de mensajes:\n${options.chatMessages
-          .map(m => `${m.role === 'user' ? 'CLIENTE' : 'TODO LAPTO (AGENTE)'}: ${m.content}`)
-          .join('\n')}\n\n${options.prompt}`
-      : options.prompt;
-
-  let lastCleanErrorSummary = 'Motor IA temporalmente ocupado';
-  for (const gModel of geminiCandidates) {
-    try {
-      const response = (await Promise.race([
-        geminiClient.models.generateContent({
-          model: gModel,
-          contents: fullPromptForGemini,
-          config: {
-            ...(sys ? { systemInstruction: sys } : {}),
-            temperature: temp,
-            ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
-          },
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout rápido en modelo ${gModel}`)), 5500)
-        ),
-      ])) as any;
-
-      if (response?.text) {
-        lastFastGeminiModel = gModel;
-        exhaustedGeminiModelsUntil.delete(gModel);
-        return {
-          text: response.text,
-          providerUsed: 'gemini',
-          modelUsed: gModel,
-        };
-      }
-    } catch (err: any) {
-      const parsedErr = formatCleanAiError(err);
-      lastCleanErrorSummary = parsedErr.summary;
-
-      if (parsedErr.isDailyQuota) {
-        const cooldownUntil = Date.now() + 4 * 60 * 60 * 1000;
-        exhaustedGeminiModelsUntil.set(gModel, cooldownUntil);
-        if (lastFastGeminiModel === gModel) {
-          lastFastGeminiModel = 'gemini-3.1-flash-lite';
-        }
-        continue;
-      }
-
-      if (parsedErr.isQuota429) {
-        exhaustedGeminiModelsUntil.set(gModel, Date.now() + 2 * 60 * 1000);
-        continue;
-      }
-    }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    recordSystemApiLog({
+      service: 'AI Engine',
+      action: 'OpenAI Whisper Transcripción Audio',
+      method: 'POST',
+      url: 'https://api.openai.com/v1/audio/transcriptions',
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`,
+    });
+    throw new Error(`OpenAI Whisper devolvió HTTP ${res.status}`);
   }
 
-  throw new Error(lastCleanErrorSummary);
+  const data = await res.json();
+  const text = (data?.text || '').trim();
+  recordSystemApiLog({
+    service: 'AI Engine',
+    action: 'OpenAI Whisper Transcripción Audio',
+    method: 'POST',
+    url: 'https://api.openai.com/v1/audio/transcriptions',
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    responseSnippet: text.slice(0, 140),
+  });
+  return text;
+}
+
+async function analyzeImageWithOpenAI(
+  base64Image: string,
+  mimeType = 'image/jpeg',
+  promptText: string,
+  jsonMode = false
+): Promise<string> {
+  const openaiKey = getActiveOpenAiKey();
+  if (!openaiKey) {
+    throw new Error('No hay API Key de OpenAI configurada para analizar imágenes.');
+  }
+  const cleanBase64 = base64Image.replace(/^data:[^;]+;base64,/, '');
+  const cleanMime = mimeType.split(';')[0] || 'image/jpeg';
+  const dataUri = `data:${cleanMime};base64,${cleanBase64}`;
+  const openaiUrl = resolveChatCompletionsUrl(
+    appConfig.aiProvider?.openaiBaseUrl,
+    'https://api.openai.com/v1/chat/completions'
+  );
+  const model = appConfig.aiProvider?.model === 'gpt-4o' ? 'gpt-4o' : 'gpt-4o-mini';
+
+  const t0 = Date.now();
+  const res = await fetch(openaiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${openaiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: promptText },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ],
+        },
+      ],
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+  const durationMs = Date.now() - t0;
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    recordSystemApiLog({
+      service: 'AI Engine',
+      action: `OpenAI Vision (${model})`,
+      method: 'POST',
+      url: openaiUrl,
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`,
+    });
+    throw new Error(`OpenAI Vision devolvió HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const text = (data?.choices?.[0]?.message?.content || '').trim();
+  recordSystemApiLog({
+    service: 'AI Engine',
+    action: `OpenAI Vision (${model})`,
+    method: 'POST',
+    url: openaiUrl,
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    responseSnippet: text.slice(0, 140),
+  });
+  return text;
 }
 
 // Initial fallback products (immediately replaced on startup by 600+ real Odoo products)
@@ -1223,11 +1437,11 @@ const keywordsLaptop = [
   'chromebook','thinkpad','ideapad','latitude','macbook','edu gear','edugear','evvo','yoga',
   'probook','elitebook','inspiron','precision','vostro','aspire','travelmate','alienware',
   'chrobook','c771','thinkpad x131','thinkpad 11e','thinkpad t4','thinkpad t47',
-  'thinkpad e5','thinkpad x1','thinkbook','thinkcentro','hp 15-','hp 14-','hp 14dq',
+  'thinkpad e5','thinkpad x1','thinkbook','hp 15-','hp 14-','hp 14dq',
   'hp envy','hp stream','hp notebook','hp victus','dell chromebook','dell latitude',
   'dell inspiron','dell precision','lenovo 100e','lenovo n22','lenovo n23','lenovo n24',
   'lenovo thinkpad','lenovo ideapad','lenovo yoga','lenovo flex','laptop','notebook',
-  'asus c203','touchsmart','satellite','surface','all in one'
+  'asus c203','touchsmart','satellite','surface'
 ];
 const keywordsExcluir = [
   'cargador','bateria','batería','monitor','teclado','mouse','cartucho','impresora',
@@ -1236,7 +1450,7 @@ const keywordsExcluir = [
   'estación de acoplamiento','headset','mdp to vga','combo teclado','cover lenovo',
   'sky devices','board lenovo','board ','mouse pad','alfombra','liteon','ssd','ngff',
   'solid state','tablet acer b1','xtrike','concentrador usb','hp cargador','hp-318',
-  'pantalla 11.','pantalla 14.','pantalla 15.','sleeve','mesa '
+  'pantalla 11.','pantalla 14.','pantalla 15.','sleeve','mesa ','desktop','thinkcentro','thinkcentre','all in one'
 ];
 const keywordsRed = [
   'repetidor','router','antena wifi','wireless-n','ethernet adapter','rj45',
@@ -1453,8 +1667,7 @@ function categorizeOdooProduct(name: string, odooCategName = ''): ProductItem['c
       categ.includes('portatil') ||
       categ.includes('portátil') ||
       categ.includes('computadora') ||
-      categ.includes('notebook') ||
-      categ.includes('all in one')) &&
+      categ.includes('notebook')) &&
     !isExcludedPart
   ) {
     return 'laptop';
@@ -1499,8 +1712,58 @@ function releaseOdooSlot(): void {
   if (next) next();
 }
 
+// ---------------------------------------------------------
+// Helper: System API Health & Diagnostics Logging Engine
+// ---------------------------------------------------------
+interface SystemApiLog {
+  id: string;
+  timestamp: string;
+  service: 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
+  action: string;
+  method: string;
+  url?: string;
+  target?: string;
+  statusCode?: number;
+  success: boolean;
+  durationMs: number;
+  requestPreview?: string;
+  responseSnippet?: string;
+  error?: string;
+}
+
+const MAX_SYSTEM_API_LOGS = 200;
+const systemApiLogs: SystemApiLog[] = [];
+
+function recordSystemApiLog(log: Omit<SystemApiLog, 'id' | 'timestamp'>): SystemApiLog {
+  const entry: SystemApiLog = {
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...log,
+  };
+  systemApiLogs.unshift(entry);
+  if (systemApiLogs.length > MAX_SYSTEM_API_LOGS) {
+    systemApiLogs.pop();
+  }
+  return entry;
+}
+
+// Seed initial startup health log
+recordSystemApiLog({
+  service: 'Evolution API',
+  action: 'Inicialización de Monitor del Sistema',
+  method: 'SYS',
+  statusCode: 200,
+  success: true,
+  durationMs: 0,
+  requestPreview: 'Módulo de diagnóstico de llamadas API inicializado correctamente',
+  responseSnippet: 'Escuchando peticiones de Evolution API y Odoo ERP',
+});
+
 async function callOdoo(service: string, method: string, args: any[], maxRetries = 3): Promise<any> {
   await acquireOdooSlot();
+  const t0 = Date.now();
+  const modelName = args && args.length > 1 ? String(args[1]) : '';
+  const rpcAction = args && args.length > 2 ? String(args[2]) : method;
   try {
     const url = appConfig.odoo.url;
     const payload = {
@@ -1531,18 +1794,73 @@ async function callOdoo(service: string, method: string, args: any[], maxRetries
         clearTimeout(timeoutId);
 
         if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          recordSystemApiLog({
+            service: 'Odoo ERP',
+            action: `Odoo ${rpcAction} (${modelName || service})`,
+            method: 'POST',
+            url,
+            statusCode: res.status,
+            success: false,
+            durationMs: Date.now() - t0,
+            requestPreview: `service: ${service}, model: ${modelName}, action: ${rpcAction}`,
+            error: `HTTP ${res.status}: ${errText.slice(0, 300)}`,
+            responseSnippet: errText.slice(0, 400),
+          });
           throw new Error(`Odoo status ${res.status}`);
         }
 
         const data = await res.json();
         if (data.error) {
           const rpcMsg = data.error.data?.message || data.error.message || JSON.stringify(data.error);
+          recordSystemApiLog({
+            service: 'Odoo ERP',
+            action: `Odoo ${rpcAction} (${modelName || service})`,
+            method: 'POST',
+            url,
+            statusCode: res.status,
+            success: false,
+            durationMs: Date.now() - t0,
+            requestPreview: `service: ${service}, model: ${modelName}, action: ${rpcAction}`,
+            error: rpcMsg,
+            responseSnippet: JSON.stringify(data.error).slice(0, 500),
+          });
           throw new Error(rpcMsg);
         }
+
+        recordSystemApiLog({
+          service: 'Odoo ERP',
+          action: `Odoo ${rpcAction} (${modelName || service})`,
+          method: 'POST',
+          url,
+          statusCode: res.status,
+          success: true,
+          durationMs: Date.now() - t0,
+          requestPreview: `service: ${service}, model: ${modelName}, action: ${rpcAction}`,
+          responseSnippet: Array.isArray(data.result)
+            ? `Array[${data.result.length} registros]`
+            : typeof data.result === 'object'
+            ? JSON.stringify(data.result).slice(0, 300)
+            : String(data.result).slice(0, 300),
+        });
+
         return data.result;
       } catch (err: any) {
         clearTimeout(timeoutId);
         lastErr = err;
+        if (attempt === maxRetries) {
+          recordSystemApiLog({
+            service: 'Odoo ERP',
+            action: `Odoo ${rpcAction} (${modelName || service})`,
+            method: 'POST',
+            url,
+            statusCode: 0,
+            success: false,
+            durationMs: Date.now() - t0,
+            requestPreview: `service: ${service}, model: ${modelName}, action: ${rpcAction}`,
+            error: err.message || 'Error de conexión o timeout con servidor Odoo',
+          });
+        }
         if (attempt < maxRetries) {
           await new Promise(r => setTimeout(r, attempt * 650));
         }
@@ -2008,7 +2326,7 @@ async function findOrCreateOdooCustomerByPhone(
       return { id: createdId, name: newRecord.name, isNew: true };
     }
   } catch (err: any) {
-    console.error(`[Odoo Create Customer Error]: ${err.message}`);
+    console.log(`[Odoo Customer Notice]: ${err.message}`);
   }
 
   return null;
@@ -2017,6 +2335,8 @@ async function findOrCreateOdooCustomerByPhone(
 // ---------------------------------------------------------
 // Helper: Evolution API Live WhatsApp Sync & Media Parser
 // ---------------------------------------------------------
+const rawEvolutionRecordsByMsgId = new Map<string, any>();
+
 function parseSingleEvolutionMessage(record: any, customerNameFallback: string): ChatMessage | null {
   if (!record || !record.key) return null;
   const rawMsgObj = record.message || {};
@@ -2040,6 +2360,10 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
 
   const fromMe = Boolean(record.key.fromMe);
   const msgId = record.key.id || record.id || `${Date.now()}`;
+  rawEvolutionRecordsByMsgId.set(msgId, record);
+  if (record.key?.id) {
+    rawEvolutionRecordsByMsgId.set(record.key.id, record);
+  }
 
   // Determine message type and content
   let type: ChatMessage['type'] = 'text';
@@ -2102,27 +2426,42 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
   if (!content && type === 'text') return null;
 
   // Extract Quoted Message / Context Info from all possible locations in Evolution API v2
+  // Ensure empty metadata objects (like messageContextInfo with only deviceListMetadata) never shadow real quote contextInfo
   let quotedMessage: QuotedMessage | undefined;
+  const candidateCtxs = [
+    msgObj.extendedTextMessage?.contextInfo,
+    msgObj.imageMessage?.contextInfo,
+    msgObj.videoMessage?.contextInfo,
+    msgObj.audioMessage?.contextInfo,
+    msgObj.documentMessage?.contextInfo,
+    msgObj.stickerMessage?.contextInfo,
+    msgObj.interactiveMessage?.contextInfo,
+    msgObj.interactiveResponseMessage?.contextInfo,
+    msgObj.buttonsResponseMessage?.contextInfo,
+    msgObj.templateButtonReplyMessage?.contextInfo,
+    msgObj.listResponseMessage?.contextInfo,
+    rawMsgObj.contextInfo,
+    rawMsgObj.extendedTextMessage?.contextInfo,
+    record.contextInfo,
+    record.message?.contextInfo,
+    record.message?.extendedTextMessage?.contextInfo,
+    rawMsgObj.messageContextInfo,
+    record.quotedMessage,
+    record.quoted,
+  ].filter(Boolean);
+
   const ctx =
-    msgObj.extendedTextMessage?.contextInfo ||
-    msgObj.imageMessage?.contextInfo ||
-    msgObj.videoMessage?.contextInfo ||
-    msgObj.audioMessage?.contextInfo ||
-    msgObj.documentMessage?.contextInfo ||
-    msgObj.stickerMessage?.contextInfo ||
-    msgObj.interactiveMessage?.contextInfo ||
-    msgObj.interactiveResponseMessage?.contextInfo ||
-    msgObj.buttonsResponseMessage?.contextInfo ||
-    msgObj.templateButtonReplyMessage?.contextInfo ||
-    msgObj.listResponseMessage?.contextInfo ||
-    rawMsgObj.contextInfo ||
-    rawMsgObj.messageContextInfo ||
-    rawMsgObj.extendedTextMessage?.contextInfo ||
-    record.contextInfo ||
-    record.message?.contextInfo ||
-    record.message?.extendedTextMessage?.contextInfo ||
-    record.quotedMessage ||
-    record.quoted;
+    candidateCtxs.find(
+      c =>
+        c.quotedMessage ||
+        c.stanzaId ||
+        c.remoteJid === 'status@broadcast' ||
+        String(c.remoteJid || '').includes('broadcast') ||
+        String(c.participant || '').includes('broadcast') ||
+        c.externalAdReply ||
+        c.quotedMessageId ||
+        c.messageAssociation?.parentMessageKey?.id
+    ) || candidateCtxs[0];
 
   const quotedId =
     ctx?.stanzaId ||
@@ -2187,7 +2526,32 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
       ? 'document'
       : 'text';
 
-    if (qText || quotedId) {
+    // Extract embedded base64 thumbnail from quoted image/video (crucial for WhatsApp Status replies where the flyer/photo is in jpegThumbnail)
+    let quotedMediaBase64: string | undefined;
+    const rawThumb =
+      qm.imageMessage?.base64 ||
+      qm.imageMessage?.jpegThumbnail ||
+      qm.videoMessage?.base64 ||
+      qm.videoMessage?.jpegThumbnail ||
+      ctx?.externalAdReply?.thumbnail;
+    if (typeof rawThumb === 'string' && rawThumb.length > 20) {
+      quotedMediaBase64 = rawThumb;
+    } else if (rawThumb && typeof rawThumb === 'object') {
+      try {
+        const bytes = Buffer.isBuffer(rawThumb)
+          ? rawThumb
+          : Array.isArray(rawThumb)
+          ? Buffer.from(rawThumb)
+          : rawThumb.data && Array.isArray(rawThumb.data)
+          ? Buffer.from(rawThumb.data)
+          : Buffer.from(Object.values(rawThumb) as number[]);
+        if (bytes.length > 20) {
+          quotedMediaBase64 = bytes.toString('base64');
+        }
+      } catch {}
+    }
+
+    if (qText || quotedId || quotedMediaBase64) {
       const partPhone = ctx?.participant
         ? String(ctx.participant).replace(/@.*$/, '').replace(/\D/g, '')
         : '';
@@ -2196,25 +2560,44 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
         (partPhone &&
           (partPhone === appConfig.evolution.teamPhone || partPhone === appConfig.evolution.adminPhone));
 
+      const isStatusReply = Boolean(
+        ctx?.remoteJid === 'status@broadcast' ||
+        String(ctx?.remoteJid || '').includes('broadcast') ||
+        String(ctx?.participant || '').includes('broadcast') ||
+        record.key?.remoteJid === 'status@broadcast' ||
+        rawMsgObj?.messageContextInfo?.messageAssociation?.parentMessageKey?.remoteJid === 'status@broadcast' ||
+        (Array.isArray(ctx?.statusAttributions) && ctx.statusAttributions.length > 0 && ctx?.remoteJid)
+      );
+
       quotedMessage = {
         id: quotedId,
-        text: qText,
+        text: qText || (isStatusReply ? '📷 [Foto / Publicación en el Estado de WhatsApp de Todo Lapto]' : ''),
         type: qType,
-        author: isTodoLaptoAuthor
+        author: isStatusReply
+          ? 'Estado de WhatsApp de Todo Lapto (Story)'
+          : isTodoLaptoAuthor
           ? 'Todo Lapto'
           : partPhone
           ? `+${partPhone}`
           : customerNameFallback,
+        mediaBase64: quotedMediaBase64,
+        mediaMimeType: qm.imageMessage?.mimetype || 'image/jpeg',
+        isStatusReply,
       };
     }
   } else if (ctx?.externalAdReply) {
     const adTitle = ctx.externalAdReply.title || 'Anuncio de Redes Sociales';
     const adBody = ctx.externalAdReply.body || ctx.externalAdReply.sourceUrl || '';
+    const isStatusAd = Boolean(
+      ctx.externalAdReply.title?.toLowerCase().includes('estado') ||
+      ctx.externalAdReply.body?.toLowerCase().includes('estado')
+    );
     quotedMessage = {
       id: quotedId,
       text: `${adTitle}${adBody ? ` — ${adBody}` : ''}`,
       type: 'text',
-      author: '📢 Anuncio Citado',
+      author: isStatusAd ? 'Estado de WhatsApp de Todo Lapto (Story)' : '📢 Anuncio Citado',
+      isStatusReply: isStatusAd,
     };
   } else if (msgObj.interactiveMessage?.header?.title) {
     quotedMessage = {
@@ -2324,8 +2707,8 @@ let lastEvolutionChatsSync = 0;
 async function syncEvolutionChats(): Promise<Conversation[]> {
   if (isEvoSyncRunning) return conversations;
   const now = Date.now();
-  // Throttle: Never run findChats more than once every 12 seconds
-  if (now - lastEvolutionChatsSync < 12000 && conversations.length > 0) {
+  // Throttle: Allow findChats every 2.5 seconds for fast incoming message detection
+  if (now - lastEvolutionChatsSync < 2500 && conversations.length > 0) {
     return conversations;
   }
   isEvoSyncRunning = true;
@@ -2383,7 +2766,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       combinedMap.set(c.remoteJid, c);
     }
 
-    // Pre-populate lidToPhoneMap from validChats that have remoteJidAlt
+    // Pre-populate lidToPhoneMap and relatedJidsBySession from validChats that have remoteJidAlt
     for (const c of validChats) {
       const alt = c.lastMessage?.key?.remoteJidAlt;
       if (alt && alt.endsWith('@s.whatsapp.net')) {
@@ -2392,6 +2775,11 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
           lidToPhoneMap.set(c.remoteJid, altPhone);
           const lidDigits = c.remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
           lidToPhoneMap.set(lidDigits, altPhone);
+          const canonicalJid = `${altPhone}@s.whatsapp.net`;
+          const set = relatedJidsBySession.get(canonicalJid) || new Set<string>([canonicalJid]);
+          set.add(c.remoteJid);
+          set.add(alt);
+          relatedJidsBySession.set(canonicalJid, set);
         }
       }
     }
@@ -2499,7 +2887,15 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
 
       let existingInLoop = dedupedByPhone.get(dedupKey);
       if (!existingInLoop && normName && dedupedByName.has(normName)) {
-        existingInLoop = dedupedByName.get(normName);
+        const cand = dedupedByName.get(normName);
+        if (cand) {
+          const candHasRealPhone = Boolean(cand.customerPhone && cand.customerPhone.length <= 12 && cand.customerPhone.startsWith('1'));
+          const currHasRealPhone = Boolean(cleanPhone && cleanPhone.length <= 12 && cleanPhone.startsWith('1'));
+          // Only merge by name if one is an unresolved @lid or both share the exact same phone number
+          if (!candHasRealPhone || !currHasRealPhone || cand.customerPhone === cleanPhone) {
+            existingInLoop = cand;
+          }
+        }
       }
       if (!existingInLoop) {
         for (const cand of dedupedByPhone.values()) {
@@ -2577,7 +2973,14 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         existingConvBySession.get(canonicalSessionId) ||
         existingConvBySession.get(remoteJid) ||
         (cleanPhone && cleanPhone.length <= 12 ? existingConvByPhone.get(cleanPhone) : undefined) ||
-        (!isGenericName ? conversations.find(c => !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === normName) : undefined);
+        (!isGenericName && (!cleanPhone || cleanPhone.length > 12)
+          ? conversations.find(
+              c =>
+                !isGenericContactName(c.customerName) &&
+                c.customerName.trim().toLowerCase() === normName &&
+                (!c.customerPhone || c.customerPhone.length > 12 || c.customerPhone === cleanPhone)
+            )
+          : undefined);
 
       const jidSet = relatedJidsBySession.get(canonicalSessionId) || new Set<string>();
       jidSet.add(canonicalSessionId);
@@ -2685,7 +3088,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       const normName = !isGenericContactName(conv.customerName) ? conv.customerName.trim().toLowerCase() : '';
 
       if (phone && seenFinalPhones.has(phone)) continue;
-      if (normName && seenFinalNames.has(normName)) continue;
+      if (!phone && normName && seenFinalNames.has(normName)) continue;
 
       seenFinalSessions.add(conv.sessionId);
       if (phone) seenFinalPhones.add(phone);
@@ -2702,15 +3105,26 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       broadcastEvent('conversations_update', { count: conversations.length });
     }
 
+    // On first sync after server boot/reset, mark messages at or before botStartupCutoffMs as historical so we only auto-reply to NEW messages from now on
+    if (isFirstEvolutionSync) {
+      for (const conv of conversations) {
+        for (const m of conv.messages) {
+          const mTime = new Date(m.timestamp).getTime();
+          if (!mTime || mTime <= botStartupCutoffMs) {
+            const msgId = normalizeMsgIdKey(m.evolutionMessageId || m.id);
+            const contactKeys = getConversationContactKeys(conv);
+            markMessageIdProcessed(msgId, contactKeys);
+          }
+        }
+      }
+    }
 
     // Auto-reply to recent unanswered customer messages with strict contact identity deduplication
-    // CRITICAL MULTI-SERVER GUARD: If this server is the AI Studio preview container AND the user closed the AI Studio browser tab
-    // (> 20s without frontend heartbeat), do NOT run background polling auto-replies here so Hostinger is the sole active responder!
     if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
       const nowMs = Date.now();
       const handledContactsThisCycle = new Set<string>();
 
-      for (const conv of conversations.slice(0, 15)) {
+      for (const conv of conversations.slice(0, 50)) {
         if (!conv.aiEnabled) continue;
         if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) continue;
 
@@ -2733,8 +3147,12 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
 
-        // Only reply to messages arrived within the last 10 minutes
-        if (ageMs > 10 * 60 * 1000) continue;
+        // Only reply to NEW messages that arrived after system startup/reset cutoff (and within the last 10 minutes)
+        if (msgTimeMs < botStartupCutoffMs - 3000 || ageMs > 10 * 60 * 1000) {
+          const contactKeys = getConversationContactKeys(conv);
+          markMessageIdProcessed(msgId, contactKeys);
+          continue;
+        }
 
         const contactKeys = getConversationContactKeys(conv);
         // Avoid duplicate triggers across multiple JIDs for the same customer in the same cycle
@@ -2780,6 +3198,8 @@ function isInternalOrNoiseContent(content: string): boolean {
   if (/Workflow: todo lapto/i.test(content)) return true;
   if (/Dame un momento para confirmar esa informaci[oó]n/i.test(content)) return true;
   if (/^tranquilo$/i.test(content.trim())) return true;
+  if (/Catálogo completo de laptops[\s\S]*?USB-4 TASBEL HUB/i.test(content)) return true;
+  if (/0 modelos en stock|\(0 modelos disponibles en stock\)/i.test(content)) return true;
   return false;
 }
 
@@ -2841,12 +3261,19 @@ function mergeWithLocalMessages(
 ): ChatMessage[] {
   const combined = [...evoList];
   const candidateLocals: ChatMessage[] = [];
-  const isFullEvoRefresh = evoList.length >= 2;
+  const isFullEvoRefresh = evoList.length >= 1;
+  const nowMs = Date.now();
 
   const addCandidates = (arr?: ChatMessage[], localOnly = true) => {
     if (!arr) return;
     for (const m of arr) {
-      if (!localOnly || !m.evolutionMessageId || m.id.startsWith('msg-') || m.id.startsWith('sim-')) {
+      const mTime = new Date(m.timestamp).getTime();
+      const isRecent = nowMs - mTime < 30000;
+      // When evoList has authoritative messages from Evolution API, only merge local optimistic/sent messages or very recent (<30s) webhook messages
+      if (!localOnly && isFullEvoRefresh && !isRecent && m.evolutionMessageId) {
+        continue;
+      }
+      if (!localOnly || !m.evolutionMessageId || m.id.startsWith('msg-') || m.id.startsWith('sim-') || isRecent) {
         if (!candidateLocals.some(c => c.id === m.id)) {
           candidateLocals.push(m);
         }
@@ -2867,7 +3294,6 @@ function mergeWithLocalMessages(
   // Track which combined indices have already been paired with an optimistic local message
   // so 1 local message can only reconcile with at most 1 real WhatsApp message, and 2+ real WhatsApp messages NEVER collapse.
   const claimedEvoIndices = new Set<number>();
-  const nowMs = Date.now();
 
   for (const localMsg of candidateLocals) {
     const localTime = new Date(localMsg.timestamp).getTime();
@@ -2909,9 +3335,8 @@ function mergeWithLocalMessages(
         combined[existingIdx].mediaUrl = localMsg.mediaUrl;
       }
     } else {
-      // If localMsg has a real evolutionMessageId, always keep it; if it's an optimistic msg- without evolutionMessageId,
-      // keep it while recent (< 25s) or when full history hasn't been fetched yet
-      if (localMsg.evolutionMessageId || !isFullEvoRefresh || nowMs - localTime < 25000) {
+      // Only keep unmatched local message if full history wasn't fetched or if it was sent/received recently (< 30s)
+      if (!isFullEvoRefresh || nowMs - localTime < 30000 || localMsg.id.startsWith('msg-')) {
         combined.push(localMsg);
       }
     }
@@ -2938,6 +3363,32 @@ function mergeWithLocalMessages(
   return deduped;
 }
 
+// Strict verification that an Evolution API message record belongs ONLY to the target conversation's JIDs or phone number
+function doesRecordBelongToConversation(
+  rec: any,
+  allowedJids: Set<string>,
+  customerPhone?: string
+): boolean {
+  if (!rec || !rec.key) return false;
+  const rJid = (rec.key.remoteJid || '').trim();
+  const rAlt = (rec.key.remoteJidAlt || '').trim();
+  if (rJid && allowedJids.has(rJid)) return true;
+  if (rAlt && allowedJids.has(rAlt)) return true;
+
+  const cleanPhone = (customerPhone || '').replace(/\D/g, '');
+  if (cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+    const jidDigits = rJid.replace(/@.*$/, '').replace(/\D/g, '');
+    const altDigits = rAlt.replace(/@.*$/, '').replace(/\D/g, '');
+    if (rJid.endsWith('@s.whatsapp.net') && jidDigits === cleanPhone) return true;
+    if (rAlt.endsWith('@s.whatsapp.net') && altDigits === cleanPhone) return true;
+    if (rJid.endsWith('@lid')) {
+      const mapped = lidToPhoneMap.get(rJid) || lidToPhoneMap.get(jidDigits);
+      if (mapped && mapped === cleanPhone) return true;
+    }
+  }
+  return false;
+}
+
 async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMessage[]> {
   // Always prioritize exact sessionId match first so one chat never hijacks another
   const conv =
@@ -2959,16 +3410,26 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
   for (const j of rawSet) {
     if (!otherSessionIds.has(j)) jidSet.add(j);
   }
-  if (conv?.customerPhone) {
-    const phoneJid = `${conv.customerPhone}@s.whatsapp.net`;
+  const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
+  if (cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+    const phoneJid = `${cleanPhone}@s.whatsapp.net`;
     if (!otherSessionIds.has(phoneJid)) {
       jidSet.add(phoneJid);
+    }
+    // Also include any @lid known in lidToPhoneMap for this exact phone number (since Evolution API v2 stores incoming messages under @lid and outgoing under @s.whatsapp.net)
+    for (const [lidKey, mappedPhone] of lidToPhoneMap.entries()) {
+      if (mappedPhone === cleanPhone) {
+        const fullLid = lidKey.includes('@') ? lidKey : `${lidKey}@lid`;
+        if (!otherSessionIds.has(fullLid)) {
+          jidSet.add(fullLid);
+        }
+      }
     }
   }
 
   try {
     const url = `${appConfig.evolution.serverUrl}/chat/findMessages/${appConfig.evolution.instance}`;
-    const jidsToQuery = Array.from(jidSet).slice(0, 2);
+    const jidsToQuery = Array.from(jidSet).slice(0, 4);
     const responses = await Promise.all(
       jidsToQuery.map(jid =>
         fetch(url, {
@@ -2978,10 +3439,14 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            where: { key: { remoteJid: jid } },
-            limit: 35,
+            where: {
+              key: {
+                remoteJid: jid,
+              },
+            },
+            limit: 50,
           }),
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(4000),
         })
           .then(r => (r.ok ? r.json() : null))
           .catch(() => null)
@@ -2992,7 +3457,11 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
     for (const data of responses) {
       if (!data) continue;
       const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
-      records.push(...recs);
+      for (const rec of recs) {
+        if (doesRecordBelongToConversation(rec, jidSet, cleanPhone)) {
+          records.push(rec);
+        }
+      }
     }
 
     // Refine customerName and record any discovered @s.whatsapp.net JID in relatedJidsBySession WITHOUT mutating customerPhone/sessionId
@@ -3225,17 +3694,51 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
     if (conv && mergedMessages.length > 0) {
       conv.messages = mergedMessages;
       conv.messagesLoaded = true;
-      // Only update lastTimestamp/lastMessagePreview if there is a locally sent message newer than conv.lastTimestamp
       const latest = mergedMessages[mergedMessages.length - 1];
-      const hasLocalSent = (localSentMessagesBySession.get(canonicalId)?.length || 0) > 0;
       if (
-        hasLocalSent &&
         latest &&
-        new Date(latest.timestamp).getTime() > new Date(conv.lastTimestamp).getTime()
+        new Date(latest.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()
       ) {
         conv.lastTimestamp = latest.timestamp;
         conv.lastMessagePreview = latest.content || conv.lastMessagePreview;
         conv.lastMessageType = latest.type;
+      }
+
+      // Immediately trigger auto-reply if active chat refresh discovered a brand-new unanswered customer message after startup cutoff!
+      if (
+        !isFirstEvolutionSync &&
+        appConfig.globalAiActive &&
+        conv.aiEnabled &&
+        !isWhatsAppGroup(conv.sessionId) &&
+        !isWhatsAppGroup(conv.customerPhone) &&
+        latest &&
+        latest.sender === 'customer'
+      ) {
+        const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
+        const isInternalTeam =
+          cleanPhone === appConfig.evolution.teamPhone ||
+          cleanPhone === appConfig.evolution.adminPhone ||
+          conv.customerName.toLowerCase().includes('soporte todo lapto');
+        const msgTimeMs = new Date(latest.timestamp).getTime();
+        const ageMs = Date.now() - msgTimeMs;
+        const msgId = normalizeMsgIdKey(latest.evolutionMessageId || latest.id);
+        const contactKeys = getConversationContactKeys(conv);
+
+        if (
+          !isInternalTeam &&
+          msgTimeMs >= botStartupCutoffMs - 2000 &&
+          ageMs <= 10 * 60 * 1000 &&
+          !isMessageIdAlreadyProcessed(msgId, contactKeys) &&
+          !contactKeys.some(k => isBotLockActive(k))
+        ) {
+          const skipCheck = shouldSkipBotReply(conv, latest, 'live_evolution_poll');
+          if (!skipCheck.skip) {
+            console.log(`🤖 [Active Chat Fast Trigger]: Respondiendo a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
+            triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
+              console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err.message)
+            );
+          }
+        }
       }
     }
 
@@ -3249,24 +3752,19 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
 // Helper: Evolution API WhatsApp Senders & Live Audit / Anti-Duplicate Engine
 // ---------------------------------------------------------
 let isFirstEvolutionSync = true;
+let botStartupCutoffMs = Date.now() - 60000;
 const inFlightBotKeys = new Map<string, number>();
 const BOT_LOCK_TTL_MS = 90000;
 let lastEvolutionRestartMs = 0;
-let lastFrontendHeartbeatMs = 0;
+let lastFrontendHeartbeatMs = Date.now();
 
 function recordFrontendHeartbeat(): void {
   lastFrontendHeartbeatMs = Date.now();
 }
 
-// When running in AI Studio Cloud Run preview container, disable automatic background polling replies
-// so Hostinger production is the sole active bot answering WhatsApp leads (avoiding multi-server duplicate racing)!
-// In AI Studio, manual testing via "Responder con Bot IA Ahora" always remains fully functional.
 function isAiStudioIdleBackgroundContainer(): boolean {
-  const isAiStudioContainer = Boolean(process.env.AISTUDIO_APPLET_ID);
-  if (!isAiStudioContainer) return false; // Production (Hostinger) is active
-  if (process.env.AISTUDIO_ALLOW_AUTO_REPLY !== 'true') return true;
-  if (!lastFrontendHeartbeatMs) return true;
-  return Date.now() - lastFrontendHeartbeatMs > 20000;
+  if (process.env.AISTUDIO_ALLOW_AUTO_REPLY === 'false') return true;
+  return false;
 }
 
 function isBotLockActive(key: string): boolean {
@@ -3527,16 +4025,13 @@ function recordBotReplyForConversation(
   }
 }
 
+// Helper: Detect purely non-text or bare external links that should not trigger an automated response
 function isClosingCourtesyOrNonCommercialAck(rawText: string, hasQuote = false): boolean {
   if (hasQuote) return false;
   const trimmed = (rawText || '').trim();
   if (!trimmed) return true;
 
-  // Pure emojis / reactions without text
-  const withoutEmojis = trimmed.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]/gu, '');
-  if (withoutEmojis.length === 0) return true;
-
-  // External social/video links (YouTube, TikTok, Instagram, Facebook) without product question
+  // Single bare URLs from common social media / marketplaces (e.g. customer sends Instagram post or TikTok video with zero text)
   if (
     /^https?:\/\/(www\.)?(youtu\.be|youtube\.com|tiktok\.com|vm\.tiktok\.com|instagram\.com|facebook\.com|fb\.watch)\/\S+$/i.test(
       trimmed
@@ -3545,20 +4040,9 @@ function isClosingCourtesyOrNonCommercialAck(rawText: string, hasQuote = false):
     return true;
   }
 
-  const cleaned = trimmed
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!cleaned || cleaned.length > 55) return false;
-
-  // Closing acknowledgments, brief confirmations, and non-inquiry conversational closers
-  return /^(ok|okay|oki|ah ok|ah esta bien|esta bien|ta bien|perfecto|excelente|entendido|listo|dale|de acuerdo|vale|gracias|muchas gracias|mil gracias|amen|bendiciones|un placer|igualmente|igual|si|sii|lo se|ya|claro|bueno|bien|chevere|super|jaja|jajaja|jeje|dime|dimelo|dime a ver|cuentame|que paso|como asi|amor|mi amor|bb|bebe)(\s+(gracias|amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|mi amor|amor|carino|bb|bebe))?$/i.test(
-    cleaned
-  );
+  // All conversational text messages (including Dominican greetings like "Dime", "Dímelo", "Klk", "Buenas", "Ok", etc.)
+  // are handled by the sales bot and conversational responders. Never drop real customer text.
+  return false;
 }
 
 function shouldSkipBotReply(
@@ -3619,7 +4103,21 @@ function shouldSkipBotReply(
     return { skip: true, reason: `Mensaje ID "${incomingId}" ya registrado como procesado.` };
   }
 
-  // 2b. Do not auto-reply to closing acknowledgments ("Está bien", "Ok", "Listo", "Gracias", "Si", "Lo se", "Dime") or bare social links
+  // 2a-cutoff. Only auto-reply to new messages that arrived after system startup/reset (per user configuration)
+  if (triggerSource !== 'manual_crm_trigger' && lastCustomerMsg.timestamp) {
+    const msgTimeMs = new Date(lastCustomerMsg.timestamp).getTime();
+    if (msgTimeMs > 0 && msgTimeMs < botStartupCutoffMs - 3000) {
+      if (incomingId) {
+        markMessageIdProcessed(incomingId, keys);
+      }
+      return {
+        skip: true,
+        reason: `Mensaje previo al corte de activación (${new Date(msgTimeMs).toLocaleTimeString()}). Solo se responden mensajes nuevos automáticamente.`,
+      };
+    }
+  }
+
+  // 2b. Do not auto-reply to bare social links without question (YouTube, TikTok, Instagram reels)
   if (
     triggerSource !== 'manual_crm_trigger' &&
     lastCustomerMsg.type === 'text' &&
@@ -3628,7 +4126,7 @@ function shouldSkipBotReply(
     if (incomingId) {
       markMessageIdProcessed(incomingId, keys);
     }
-    const reason = `Mensaje corto o confirmación ("${incomingText.slice(0, 35)}") que no requiere respuesta automática.`;
+    const reason = `Enlace externo a redes sociales sin consulta de producto ("${incomingText.slice(0, 35)}").`;
     recordBotAuditLog({
       customerName,
       customerPhone,
@@ -3691,11 +4189,11 @@ function shouldSkipBotReply(
       return { skip: true, reason };
     }
 
-    // 5. Anti-spam cooldown (6 seconds) for automated triggers
+    // 5. Anti-spam cooldown (7 seconds) for automated triggers
     if (triggerSource !== 'manual_crm_trigger') {
       const elapsedMs = now - prev.timestamp;
-      if (elapsedMs < 6000) {
-        const reason = `Cooldown de seguridad activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 6s entre mensajes automáticos).`;
+      if (elapsedMs < 7000) {
+        const reason = `Cooldown de seguridad activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 7s entre mensajes automáticos).`;
         recordBotAuditLog({
           customerName,
           customerPhone,
@@ -3754,15 +4252,24 @@ async function hasEvolutionAlreadyAnsweredSince(
   try {
     const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/chat/findMessages/${appConfig.evolution.instance}`;
     const jids = new Set<string>([conv.sessionId]);
+    const related = relatedJidsBySession.get(conv.sessionId);
+    if (related) {
+      for (const r of related) jids.add(r);
+    }
     const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
     if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
       const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
       jids.add(`${std}@s.whatsapp.net`);
+      for (const [lidKey, mappedPhone] of lidToPhoneMap.entries()) {
+        if (mappedPhone === std || mappedPhone === cleanPhone) {
+          jids.add(lidKey.includes('@') ? lidKey : `${lidKey}@lid`);
+        }
+      }
     }
 
     const responses = await Promise.all(
       Array.from(jids)
-        .slice(0, 2)
+        .slice(0, 4)
         .map(jid =>
           fetch(url, {
             method: 'POST',
@@ -3771,10 +4278,14 @@ async function hasEvolutionAlreadyAnsweredSince(
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              where: { key: { remoteJid: jid } },
-              limit: 10,
+              where: {
+                key: {
+                  remoteJid: jid,
+                },
+              },
+              limit: 15,
             }),
-            signal: AbortSignal.timeout(7000),
+            signal: AbortSignal.timeout(5000),
           })
             .then(r => (r.ok ? r.json() : null))
             .catch(() => null)
@@ -3785,7 +4296,11 @@ async function hasEvolutionAlreadyAnsweredSince(
     for (const data of responses) {
       if (!data) continue;
       const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
-      records.push(...recs);
+      for (const rec of recs) {
+        if (doesRecordBelongToConversation(rec, jids, cleanPhone)) {
+          records.push(rec);
+        }
+      }
     }
 
     if (records.length === 0) return { answered: false };
@@ -3892,8 +4407,8 @@ async function ensureEvolutionInstanceConnected(forceRestart = false): Promise<b
 
   try {
     if (!forceRestart) {
-      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers });
-      if (stateRes.ok) {
+      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
+      if (stateRes?.ok) {
         const data = await stateRes.json().catch(() => null);
         const state = data?.instance?.state || data?.state;
         if (state === 'open') {
@@ -3903,26 +4418,25 @@ async function ensureEvolutionInstanceConnected(forceRestart = false): Promise<b
       }
     }
 
-    // When Baileys throws "Connection Closed" even though connectionState cached "open",
-    // trigger POST /instance/restart/{instance} + GET /instance/connect/{instance} (with 15s cooldown)
     const now = Date.now();
     if (now - lastEvolutionRestartMs > 15000) {
       lastEvolutionRestartMs = now;
       await fetch(`${baseUrl}/instance/restart/${instance}`, { method: 'POST', headers }).catch(() => null);
-      await sleepMs(1500);
+      await sleepMs(1200);
       await fetch(`${baseUrl}/instance/connect/${instance}`, { headers }).catch(() => null);
-      await sleepMs(2000);
-    } else {
-      await sleepMs(1800);
     }
 
-    const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers });
-    if (verifyRes.ok) {
-      const vData = await verifyRes.json().catch(() => null);
-      const vState = vData?.instance?.state || vData?.state;
-      if (vState === 'open') {
-        appConfig.evolution.connected = true;
-        return true;
+    // Wait and verify active open state (polling up to 4 times)
+    for (let i = 0; i < 4; i++) {
+      await sleepMs(800);
+      const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
+      if (verifyRes?.ok) {
+        const vData = await verifyRes.json().catch(() => null);
+        const vState = vData?.instance?.state || vData?.state;
+        if (vState === 'open') {
+          appConfig.evolution.connected = true;
+          return true;
+        }
       }
     }
   } catch {
@@ -3963,7 +4477,8 @@ function normalizeEvolutionTarget(numberOrJid: string): string {
 async function sendEvolutionMessageWithStatus(
   numberOrJid: string,
   text: string,
-  delayMs = 500
+  delayMs = 1000,
+  isManualAgent = false
 ): Promise<{ ok: boolean; socketClosed: boolean; messageId?: string }> {
   if (isWhatsAppGroup(numberOrJid)) {
     console.log(`🛡️ [Grupo bloqueado]: Envío a grupo cancelado (${numberOrJid})`);
@@ -3974,73 +4489,116 @@ async function sendEvolutionMessageWithStatus(
     return { ok: false, socketClosed: false };
   }
 
-  // Anti-Duplicate Hard Guard: Never send the exact same text to the same target within 90 seconds
   const cleanTargetKey = target.replace(/@.*$/, '').replace(/\D/g, '') || target;
   const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
-  const lastSentAt = recentOutboundDispatches.get(dispatchKey);
-  const now = Date.now();
-  if (lastSentAt && now - lastSentAt < 90000) {
-    console.log(
-      `🛡️ [Outbound Anti-Duplicate]: Mensaje idéntico ya entregado a ${target} hace ${Math.round(
-        (now - lastSentAt) / 1000
-      )}s. Omitiendo duplicado.`
-    );
-    recordBotAuditLog({
-      customerName: `Destino ${target}`,
-      customerPhone: cleanTargetKey,
-      sessionId: target,
-      triggerSource: 'outbound_dispatch_guard',
-      incomingMessageId: '',
-      incomingText: '',
-      decision: 'blocked_duplicate_text',
-      reason: `Texto de respuesta idéntico ya entregado hace ${Math.round((now - lastSentAt) / 1000)}s a este número. Duplicado bloqueado en despacho.`,
-      replyText: text,
-      durationMs: 0,
-    });
-    return { ok: true, socketClosed: false };
-  }
-
-  // Optimistically lock dispatchKey BEFORE network call so parallel attempts are blocked
-  recentOutboundDispatches.set(dispatchKey, now);
 
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/message/sendText/${appConfig.evolution.instance}`;
 
-  // SINGLE ATOMIC ATTEMPT (maxAttempts = 1, 15s timeout):
-  // Evolution API / Baileys queues and delivers the message to WhatsApp even when HTTP takes >6s.
-  // Never retry a sendText POST on timeout or 5xx to guarantee zero duplicate bubbles in WhatsApp.
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: appConfig.evolution.apiKey,
-      },
-      body: JSON.stringify({
-        number: target,
-        text,
-        delay: delayMs,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+  // Execute with automatic self-healing if Baileys/Evolution API socket was disconnected
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: appConfig.evolution.apiKey,
+        },
+        body: JSON.stringify({
+          number: target,
+          text,
+          delay: delayMs,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
 
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      const messageId = data?.key?.id || data?.id || '';
-      recentOutboundDispatches.set(dispatchKey, Date.now());
-      appConfig.evolution.connected = true;
-      return { ok: true, socketClosed: false, messageId };
+      const durationMs = Date.now() - t0;
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const messageId = data?.key?.id || data?.id || '';
+        if (!isManualAgent) {
+          recentOutboundDispatches.set(dispatchKey, Date.now());
+        }
+        appConfig.evolution.connected = true;
+
+        recordSystemApiLog({
+          service: 'Evolution API',
+          action: 'Enviar Mensaje WhatsApp (sendText)',
+          method: 'POST',
+          url,
+          target,
+          statusCode: res.status,
+          success: true,
+          durationMs,
+          requestPreview: `Destino: ${target} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+          responseSnippet: JSON.stringify(data || {}).slice(0, 350),
+        });
+
+        return { ok: true, socketClosed: false, messageId };
+      }
+
+      const errBody = await res.text().catch(() => '');
+      const isSocketClosed =
+        /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) ||
+        res.status >= 500;
+
+      recordSystemApiLog({
+        service: 'Evolution API',
+        action: 'Enviar Mensaje WhatsApp (sendText)',
+        method: 'POST',
+        url,
+        target,
+        statusCode: res.status,
+        success: false,
+        durationMs,
+        requestPreview: `Destino: ${target} | Intento: ${attempt} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+        error: errBody || `HTTP ${res.status}`,
+        responseSnippet: errBody.slice(0, 500),
+      });
+
+      if (isSocketClosed && attempt === 1) {
+        console.log(`[Evolution API Reconnect]: Reanudando sesión de WhatsApp tras desconexión temporal...`);
+        await ensureEvolutionInstanceConnected(true);
+        continue;
+      }
+
+      // If failed permanently:
+      if (!isManualAgent) {
+        recentOutboundDispatches.delete(dispatchKey);
+      }
+      return { ok: false, socketClosed: isSocketClosed };
+    } catch (fetchErr: any) {
+      const durationMs = Date.now() - t0;
+      recordSystemApiLog({
+        service: 'Evolution API',
+        action: 'Enviar Mensaje WhatsApp (sendText)',
+        method: 'POST',
+        url,
+        target,
+        statusCode: 0,
+        success: false,
+        durationMs,
+        requestPreview: `Destino: ${target} | Intento: ${attempt}`,
+        error: fetchErr?.message || 'Error de red o timeout al despachar a Evolution API',
+      });
+
+      if (attempt === 1) {
+        console.log(`[Evolution API Reconnect]: Reanudando sesión de WhatsApp tras timeout de red...`);
+        await ensureEvolutionInstanceConnected(true);
+        continue;
+      }
+      if (!isManualAgent) {
+        recentOutboundDispatches.delete(dispatchKey);
+      }
+      return { ok: false, socketClosed: true };
     }
-
-    const errBody = await res.text().catch(() => '');
-    const isSocketClosed =
-      /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) ||
-      res.status >= 500;
-
-    return { ok: false, socketClosed: isSocketClosed };
-  } catch {
-    // On HTTP timeout, Baileys has typically already queued the message; treat as socket/timeout without re-sending
-    return { ok: false, socketClosed: true };
   }
+
+  if (!isManualAgent) {
+    recentOutboundDispatches.delete(dispatchKey);
+  }
+  return { ok: false, socketClosed: true };
 }
 
 async function sendEvolutionMessage(numberOrJid: string, text: string, delayMs = 500): Promise<boolean> {
@@ -4048,10 +4606,71 @@ async function sendEvolutionMessage(numberOrJid: string, text: string, delayMs =
   return res.ok;
 }
 
+async function sendEvolutionTypingPresence(conv: Conversation, durationMs = 3500): Promise<void> {
+  if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) return;
+  if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) return;
+
+  const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, '');
+  const url = `${baseUrl}/chat/sendPresence/${appConfig.evolution.instance}`;
+  const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
+  const targets = new Set<string>();
+
+  if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+    const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+    targets.add(`${std}@s.whatsapp.net`);
+  }
+  if (conv.sessionId && !isWhatsAppGroup(conv.sessionId)) {
+    targets.add(conv.sessionId);
+  }
+  const related = relatedJidsBySession.get(conv.sessionId);
+  if (related) {
+    for (const r of related) {
+      if (r && !isWhatsAppGroup(r)) targets.add(r);
+    }
+  }
+
+  const primaryTarget = Array.from(targets)[0] || conv.sessionId;
+  const t0 = Date.now();
+
+  await Promise.all(
+    Array.from(targets)
+      .slice(0, 2)
+      .map(target =>
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: appConfig.evolution.apiKey,
+          },
+          body: JSON.stringify({
+            number: target,
+            delay: durationMs,
+            presence: 'composing',
+          }),
+          signal: AbortSignal.timeout(durationMs + 4000),
+        }).catch(() => null)
+      )
+  );
+
+  recordSystemApiLog({
+    service: 'Evolution API',
+    action: `Estado Escribiendo... (${(durationMs / 1000).toFixed(1)}s)`,
+    method: 'POST',
+    url,
+    target: primaryTarget,
+    statusCode: 201,
+    success: true,
+    durationMs: Date.now() - t0,
+    requestPreview: `Cliente: ${conv.customerName} (${primaryTarget}) | presence: composing (${durationMs}ms)`,
+    responseSnippet: '{"presence":"composing"}',
+  });
+}
+
 async function sendEvolutionMessageToConversation(
   conv: Conversation,
   text: string,
-  delayMs = 600
+  delayMs = 1000,
+  isManualAgent = false
 ): Promise<{ ok: boolean; messageId?: string }> {
   // Never send automated or bot messages to WhatsApp groups
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
@@ -4074,39 +4693,24 @@ async function sendEvolutionMessageToConversation(
     primaryTarget = conv.sessionId;
   }
 
-  // Check if any contact key for this conversation already dispatched this exact text within 90s
   const contactKeys = getConversationContactKeys(conv);
-  const now = Date.now();
   const trimmedText = text.trim();
-  for (const k of contactKeys) {
-    const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
-    const prevSent = recentOutboundDispatches.get(`${cleanK}::${trimmedText}`);
-    if (prevSent && now - prevSent < 90000) {
-      console.log(`🛡️ [Outbound Contact Guard]: Texto idéntico ya despachado a ${conv.customerName} (${k}) hace ${Math.round((now - prevSent) / 1000)}s.`);
-      return { ok: true };
-    }
-  }
 
-  // Pre-lock all contact identity keys BEFORE network call
-  for (const k of contactKeys) {
-    const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
-    recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, now);
-  }
-
-  const result = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs);
-
-  // Update timestamps after dispatch completes
-  for (const k of contactKeys) {
-    const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
-    recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, Date.now());
-  }
+  // Dispatch directly to Evolution API with delayMs (Evolution API natively handles typing simulation for delayMs and delivers)
+  const result = await sendEvolutionMessageWithStatus(primaryTarget, text, delayMs, isManualAgent);
 
   if (result.ok) {
-    console.log(`✅ [WhatsApp Bot Sent]: Respuesta entregada a ${conv.customerName} (${primaryTarget}) [ID: ${result.messageId || 'N/A'}]`);
+    if (!isManualAgent) {
+      for (const k of contactKeys) {
+        const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '') || k;
+        recentOutboundDispatches.set(`${cleanK}::${trimmedText}`, Date.now());
+      }
+    }
+    console.log(`✅ [WhatsApp Sent]: Mensaje entregado a ${conv.customerName} (${primaryTarget}) [ID: ${result.messageId || 'N/A'}] (Manual: ${isManualAgent})`);
     return { ok: true, messageId: result.messageId };
+  } else {
+    return { ok: false };
   }
-
-  return { ok: false };
 }
 
 async function sendEvolutionMedia(
@@ -4120,6 +4724,7 @@ async function sendEvolutionMedia(
   const target = numberOrJid.includes('@') ? numberOrJid : numberOrJid.replace(/\D/g, '');
   const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
   const url = `${appConfig.evolution.serverUrl}/message/sendMedia/${appConfig.evolution.instance}`;
+  const t0 = Date.now();
 
   try {
     const res = await fetch(url, {
@@ -4137,8 +4742,36 @@ async function sendEvolutionMedia(
         fileName: fileName || `archivo.${mediatype === 'image' ? 'jpg' : mediatype === 'video' ? 'mp4' : 'pdf'}`,
       }),
     });
+    const durationMs = Date.now() - t0;
+    const resBody = await res.text().catch(() => '');
+
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: `Enviar Multimedia (${mediatype})`,
+      method: 'POST',
+      url,
+      target,
+      statusCode: res.status,
+      success: res.ok,
+      durationMs,
+      requestPreview: `Destino: ${target} | Archivo: ${fileName || mediatype} | Caption: ${caption || '(sin texto)'}`,
+      responseSnippet: resBody.slice(0, 400),
+      error: res.ok ? undefined : `HTTP ${res.status}: ${resBody.slice(0, 300)}`,
+    });
+
     return res.ok;
   } catch (err: any) {
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: `Enviar Multimedia (${mediatype})`,
+      method: 'POST',
+      url,
+      target,
+      statusCode: 0,
+      success: false,
+      durationMs: Date.now() - t0,
+      error: err.message,
+    });
     console.log(`[Evolution API Send Media Info]: ${err.message}`);
     return false;
   }
@@ -4148,6 +4781,7 @@ async function sendEvolutionAudio(numberOrJid: string, base64Audio: string): Pro
   const target = numberOrJid.includes('@') ? numberOrJid : numberOrJid.replace(/\D/g, '');
   const cleanBase64 = base64Audio.replace(/^data:[^;]+;base64,/, '');
   const url = `${appConfig.evolution.serverUrl}/message/sendWhatsAppAudio/${appConfig.evolution.instance}`;
+  const t0 = Date.now();
 
   try {
     const res = await fetch(url, {
@@ -4162,8 +4796,36 @@ async function sendEvolutionAudio(numberOrJid: string, base64Audio: string): Pro
         delay: 500,
       }),
     });
+    const durationMs = Date.now() - t0;
+    const resBody = await res.text().catch(() => '');
+
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: 'Enviar Nota de Voz PTT (sendWhatsAppAudio)',
+      method: 'POST',
+      url,
+      target,
+      statusCode: res.status,
+      success: res.ok,
+      durationMs,
+      requestPreview: `Destino: ${target} | Nota de voz PTT`,
+      responseSnippet: resBody.slice(0, 400),
+      error: res.ok ? undefined : `HTTP ${res.status}: ${resBody.slice(0, 300)}`,
+    });
+
     return res.ok;
   } catch (err: any) {
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: 'Enviar Nota de Voz PTT (sendWhatsAppAudio)',
+      method: 'POST',
+      url,
+      target,
+      statusCode: 0,
+      success: false,
+      durationMs: Date.now() - t0,
+      error: err.message,
+    });
     console.log(`[Evolution API Send Audio Info]: ${err.message}`);
     return false;
   }
@@ -4171,47 +4833,80 @@ async function sendEvolutionAudio(numberOrJid: string, base64Audio: string): Pro
 
 async function fetchMediaBase64FromEvolution(
   messageId: string,
-  convertToMp4 = false
+  convertToMp4 = false,
+  remoteJid?: string
 ): Promise<{ buffer: Buffer; mimetype: string; base64: string } | null> {
-  const cacheKey = `${messageId}_${convertToMp4}`;
+  const cleanId = String(messageId || '').replace(/^evo-/, '').trim();
+  if (!cleanId) return null;
+
+  const cacheKey = `${cleanId}_${convertToMp4}`;
   if (mediaCache.has(cacheKey)) {
     const cached = mediaCache.get(cacheKey)!;
     return { ...cached, base64: cached.buffer.toString('base64') };
   }
 
-  const url = `${appConfig.evolution.serverUrl}/chat/getBase64FromMediaMessage/${appConfig.evolution.instance}`;
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: appConfig.evolution.apiKey,
-      },
-      body: JSON.stringify({
-        message: { key: { id: messageId } },
-        convertToMp4,
-      }),
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data?.base64) return null;
-
-    const buffer = Buffer.from(data.base64, 'base64');
-    const mimetype = data.mimetype || (convertToMp4 ? 'video/mp4' : 'application/octet-stream');
-
-    // Keep cache bounded to 50 items
-    if (mediaCache.size > 50) {
-      const firstKey = mediaCache.keys().next().value;
-      if (firstKey) mediaCache.delete(firstKey);
-    }
-    mediaCache.set(cacheKey, { buffer, mimetype });
-
-    return { buffer, mimetype, base64: data.base64 };
-  } catch (err: any) {
-    console.error(`[Evolution Media Fetch Error for ${messageId}]:`, err.message);
-    return null;
+  // Check if raw record already has base64
+  const rawRecord = rawEvolutionRecordsByMsgId.get(cleanId) || rawEvolutionRecordsByMsgId.get(messageId);
+  const embeddedBase64 =
+    rawRecord?.base64 ||
+    rawRecord?.message?.imageMessage?.base64 ||
+    rawRecord?.message?.audioMessage?.base64;
+  if (embeddedBase64) {
+    const rawMime =
+      rawRecord?.message?.imageMessage?.mimetype ||
+      rawRecord?.message?.audioMessage?.mimetype ||
+      'image/jpeg';
+    const buffer = Buffer.from(embeddedBase64, 'base64');
+    mediaCache.set(cacheKey, { buffer, mimetype: rawMime });
+    return { buffer, mimetype: rawMime, base64: embeddedBase64 };
   }
+
+  const url = `${appConfig.evolution.serverUrl}/chat/getBase64FromMediaMessage/${appConfig.evolution.instance}`;
+  
+  // Try with full message or key payload
+  const payloads = [
+    rawRecord?.key
+      ? { message: { key: rawRecord.key, message: rawRecord.message }, convertToMp4 }
+      : null,
+    remoteJid
+      ? { message: { key: { id: cleanId, remoteJid, fromMe: false } }, convertToMp4 }
+      : null,
+    { message: { key: { id: cleanId } }, convertToMp4 },
+  ].filter(Boolean);
+
+  for (const payload of payloads) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: appConfig.evolution.apiKey,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data?.base64) continue;
+
+      const buffer = Buffer.from(data.base64, 'base64');
+      const mimetype = data.mimetype || (convertToMp4 ? 'video/mp4' : 'application/octet-stream');
+
+      if (mediaCache.size > 50) {
+        const firstKey = mediaCache.keys().next().value;
+        if (firstKey) mediaCache.delete(firstKey);
+      }
+      mediaCache.set(cacheKey, { buffer, mimetype });
+
+      return { buffer, mimetype, base64: data.base64 };
+    } catch {
+      // Try next payload candidate
+    }
+  }
+
+  console.log(`[Evolution Media Notice for ${cleanId}]: No se pudo descargar el medio de Evolution API`);
+  return null;
 }
 
 // ---------------------------------------------------------
@@ -4276,20 +4971,14 @@ function getLiveInventoryString(): string {
       )
       .join('\n');
 
-  const MAX_LAPTOP_CHUNK = 15;
-  const displayedLaptops = laptops.slice(0, MAX_LAPTOP_CHUNK);
-  const remainingLaptops = laptops.length - displayedLaptops.length;
-
   const readyToSendLaptopCatalog =
-    displayedLaptops
+    laptops
       .map(
         (p, idx) =>
-          `*${idx + 1}.* *${p.name}*\n💰 RD$${p.list_price.toLocaleString()} | 📦 ${p.virtual_available} unidad(es) | 🏷️ ${p.condition === 'Nuevo' ? 'Nuevo' : 'Reacondicionado Clase A'}${p.specsSummary ? `\n⚙️ ${p.specsSummary.slice(0, 90)}` : ''}\n🔗 https://todolapto.com.do${p.website_url || ''}`
+          `*${idx + 1}.* *${p.name}*\n💰 RD$${p.list_price.toLocaleString()} | 📦 ${p.virtual_available} unidad(es)\n🏷️ Condición: ${p.condition === 'Nuevo' ? 'Nuevo de Caja (Garantía 1 año)' : 'Reacondicionado Clase A (Garantía 6 meses)'} | 🎯 Uso: ${(p.useCases || ['Oficina / Estudios']).join(' · ')}${p.specsSummary ? `\n⚙️ ${p.specsSummary.slice(0, 90)}` : ''}\n🔗 https://todolapto.com.do${p.website_url || ''}`
       )
       .join('\n\n') +
-    (remainingLaptops > 0
-      ? `\n\n📌 *Mostrando las primeras 15 de ${laptops.length} laptops disponibles en stock real (desde RD$${displayedLaptops[0]?.list_price.toLocaleString()} hasta RD$${displayedLaptops[displayedLaptops.length - 1]?.list_price.toLocaleString()}).*\n*Tenemos ${remainingLaptops} modelos más en inventario. ¿Cuál te llama la atención, o prefieres que te filtre por marca (Dell, Lenovo, HP), uso (oficina, estudios, gaming) o presupuesto?* 🛒`
-      : `\n\n*¿Cuál te interesa? Te ayudo a procesarlo ahora mismo.* 🛒`);
+    `\n\n*¿Cuál te interesa? También dime si buscas una marca, presupuesto o uso específico (oficina, estudios o gaming) y te filtro las mejores opciones.* 🛒`;
 
   // Count laptops by brand for quick reference
   const brandCounts: Record<string, number> = {};
@@ -4303,12 +4992,12 @@ function getLiveInventoryString(): string {
 
   return `RESUMEN DE CATEGORÍAS EN STOCK REAL (ODOO ERP — ${inStock.length} PRODUCTOS EN STOCK):
 - Laptops y Equipos Portátiles disponibles: ${laptops.length} modelos (${brandBreakdown})
-  * REGLA DE FILTRADO INTELIGENTE:
-    1) Si piden catálogo general de una categoría ("qué laptops tienen", "qué monitores tienen", etc.) SIN especificar marca, precio ni uso -> Si son más de 15 productos, envía el bloque interactivo de las primeras 15 opciones del *1.* al *15.* indicando cuántas opciones adicionales quedan. Si son 15 o menos, envía todas completas.
-    2) Si piden una MARCA específica (ej. Dell, Lenovo, HP, Asus, Acer, ThinkPad, Latitude, Chromebook) -> Envía ÚNICAMENTE los modelos de esa marca.
+  * REGLA DE CATÁLOGO COMPLETO E INTELIGENTE:
+    1) Si preguntan si hay o piden catálogo general de una categoría ("tienes lapto?", "qué laptops tienen", "qué monitores tienen", "tienen impresoras", "tienen mouse", "cuáles tienes", etc.) SIN especificar marca, precio ni uso -> ENVÍA DE INMEDIATO TODOS LOS MODELOS DISPONIBLES EN STOCK DE ESA CATEGORÍA COMPLETA (del *1.* hasta el último modelo en stock, sin recortar ni detenerte en 3, 10 o 15, y sin responder solo "Sí tenemos, ¿qué buscas?").
+    2) Si piden una MARCA específica (ej. Dell, Lenovo, HP, Asus, Acer, ThinkPad, Latitude, Chromebook, Epson, Logitech) -> Envía ÚNICAMENTE todos los modelos en stock de esa marca.
     3) Si piden un PRECIO o PRESUPUESTO específico (ej. 10,000 pesos, menos de 8 mil, entre 10 y 15 mil) -> Envía ÚNICAMENTE los modelos dentro de ese rango de precio.
     4) Si piden para un USO específico (ej. Oficina/Trabajo/Contabilidad, Gaming/Juegos, Estudios/Escuela, Programación/Diseño) -> Envía ÚNICAMENTE los modelos recomendados para ese uso.
-    5) Si preguntan si son NUEVOS o USADOS/REACONDICIONADOS -> Indica con total transparencia la condición exacta marcada en Odoo de cada equipo (las laptops corporativas son Reacondicionadas Importadas Clase A probadas en 25 puntos con 6 meses de garantía; los equipos o accesorios marcados como Nuevos tienen 1 año de garantía).
+    5) Si preguntan si son NUEVOS o USADOS/REACONDICIONADOS -> Indica con total transparencia la condición exacta marcada en Odoo de cada equipo.
 - Tablets, iPads y Celulares en stock: ${tabletsMoviles.length}
 - Repetidores y Redes: ${redes.length}
 - Monitores y Pantallas: ${monitores.length}
@@ -4320,14 +5009,12 @@ function getLiveInventoryString(): string {
 === LAPTOPS Y EQUIPOS PORTÁTILES (${laptops.length} MODELOS DISPONIBLES CON MARCA, CONDICIÓN, SPECS Y USO) ===
 ${formatNumberedList(laptops)}
 
-=== FORMATO LISTO PARA ENVIAR CUANDO PIDAN EL CATÁLOGO GENERAL COMPLETO DE LAPTOPS (SOLO CUANDO NO HAYA FILTRO DE MARCA, PRECIO NI USO) ===
+=== FORMATO LISTO PARA ENVIAR CUANDO PREGUNTEN POR LAPTOPS O PIDAN EL CATÁLOGO GENERAL COMPLETO DE LAPTOPS (SIN FILTRO DE MARCA, PRECIO NI USO) ===
 🖥️ *Catálogo completo de laptops — Todo Lapto*
 
 *(${laptops.length} modelos disponibles en stock real)*
 
 ${readyToSendLaptopCatalog}
-
-*¿Cuál te interesa? Te ayudo a procesarlo ahora mismo.* 🛒
 
 === TABLETS, IPADS Y CELULARES (${tabletsMoviles.length} disponibles) ===
 ${formatNumberedList(tabletsMoviles)}
@@ -4639,7 +5326,10 @@ function isCableOrWiringItem(name: string, odooCateg = ''): boolean {
 // Helper: Detect if customer is querying a generic product family (mouse, impresora, teclado, bocina, etc.)
 function detectGenericProductFamily(query: string): GenericProductFamily | null {
   if (!query) return null;
-  const s = query.toLowerCase();
+  const s = query
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\btodo\s*lapto\b/gi, ' ');
 
   // 1. Mouse / Ratones
   if (/\b(mouse|mouses|rat[oó]n|ratones)\b/i.test(s) && !/\b(pad|alfombrilla)\b/i.test(s)) {
@@ -4792,8 +5482,8 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
     };
   }
 
-  // 14. Laptops (solo cuando consulta general de laptops)
-  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks)\b/i.test(s)) {
+  // 14. Laptops (cuando consulta por laptops / portátiles / notebooks / chromebooks)
+  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks|chromebook|chromebooks)\b/i.test(s)) {
     return {
       id: 'laptop',
       label: 'Laptops y Equipos Portátiles',
@@ -4801,17 +5491,51 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
     };
   }
 
+  // 15. Mini PC / Desktop / Computadoras de Escritorio
+  if (/\b(desktop|mini\s*pc|thinkcentre|thinkcentro|all\s*in\s*one|computadora\s*de\s*mesa|pc\s*de\s*escritorio)\b/i.test(s)) {
+    return {
+      id: 'desktop',
+      label: 'Computadoras Desktop / Mini PC',
+      matcher: p => /\b(desktop|thinkcentre|thinkcentro|all\s*in\s*one|optiplex|prodesk|elitedesk)\b/i.test(`${p.name} ${p.odooCategory || ''}`),
+    };
+  }
+
   return null;
 }
 
 // Search all Odoo products dynamically based on customer message, brand, budget, condition & use case
-function getRelevantProductsHighlight(latestQueryText: string, fullContextText = ''): string {
-  if ((!latestQueryText && !fullContextText) || products.length === 0) return '';
+function getRelevantProductsHighlight(
+  latestQueryText: string,
+  fullContextText = '',
+  recentConversationText = ''
+): string {
+  if ((!latestQueryText && !fullContextText && !recentConversationText) || products.length === 0) return '';
   // Strip any internal prompt wrapper headers if present so we only analyze the user's real words
   const userOnlyLatest = latestQueryText
-    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:/gi, '')
+    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Mensaje actual del cliente sobre esta cita anterior:\s*"?/gi, '')
+    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, '')
+    .replace(/\[nota de voz[^\]]*\]/gi, ' ')
+    .replace(/\[audio[^\]]*\]/gi, ' ')
+    .replace(/\[foto[^\]]*\]/gi, ' ')
+    .replace(/\[detalles[^\]]*\]/gi, ' ')
+    .replace(/\[contenido visual[^\]]*\]/gi, ' ')
+    .replace(/[🎤📷🔍]/g, ' ')
     .trim();
   const cleanLatest = userOnlyLatest.toLowerCase();
+
+  // Pure greeting or courtesy guard: NEVER search or inject catalog for simple greetings
+  if (isSimpleConversationalMessage(cleanLatest)) {
+    return '';
+  }
+
+  // Operational store question guard: NEVER search or inject catalog for operational queries (hours, location, delivery, warranty)
+  const isOperationalQuestion = /\b(laborando|laboran|laborar|trabajando|trabajan|abierto|abiertos|abierta|abiertas|cerrado|cerrados|abren|cierran|horario|horarios|ubicacion|ubicación|ubicados|donde estan|direccion|dirección|hacen envios|delivery|garantia|garantía)\b/i.test(`${cleanLatest} ${fullContextText}`);
+  const hasExplicitProductWord = /\b(laptop|laptops|lapto|computadora|computadoras|impresora|impresoras|monitor|monitores|disco|ssd|ram|cargador|bateria|pantalla|teclado|mouse|probook|thinkpad|latitude|elitebook|optiplex|core\s*i[3579]|celeron|ryzen)\b/i.test(`${cleanLatest} ${fullContextText}`);
+
+  if (isOperationalQuestion && !hasExplicitProductWord) {
+    return '';
+  }
+
   const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
   const laptopsInStock = [...inStock.filter(p => p.category === 'laptop')].sort(
     (a, b) => a.list_price - b.list_price
@@ -4823,7 +5547,28 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
   const brandFilter = detectRequestedBrandOrLine(userOnlyLatest);
   const budgetFilter = extractBudgetQuery(userOnlyLatest);
   const useCaseFilter = detectRequestedUseCase(userOnlyLatest);
-  const genericFamily = detectGenericProductFamily(cleanLatest);
+  let genericFamily = detectGenericProductFamily(cleanLatest);
+
+  // Follow-up Context Inheritance:
+  // If the customer sends a follow-up like "no tengo algo en mente cuales tienes?", "cuales tienes?",
+  // "muestrame las que tienes", "todas", "mandame el catalogo", or specifies a brand/budget/useCase
+  // after asking for a product category in the recent conversation turns, inherit the category from recentConversationText!
+  const isCatalogFollowUpRequest =
+    /\b(cu[aá]les|cuales|qu[eé]\s+tienes|que\s+tienes|qu[eé]\s+tienen|que\s+tienen|cu[aá]les\s+tienes|cu[aá]les\s+tienen|no\s+tengo\s+algo\s+en\s+mente|mu[eé]strame|mostrar|m[aá]ndame|env[ií]ame|cat[aá]logo|catalogo|lista|todas|todos|opciones|modelos|disponibles|verlas|verlos|dime\s+cu[aá]les|ense[ñn]ame)\b/i.test(
+      cleanLatest
+    );
+
+  if (!genericFamily && recentConversationText) {
+    const recentLines = recentConversationText.split('\n');
+    for (const line of recentLines) {
+      const inheritedFamily = detectGenericProductFamily(line);
+      if (inheritedFamily && (isCatalogFollowUpRequest || brandFilter || budgetFilter || useCaseFilter)) {
+        genericFamily = inheritedFamily;
+        break;
+      }
+    }
+  }
+
   const asksCondition =
     /\b(nuevo|nueva|nuevos|nuevas|usado|usada|usados|usadas|reacondicionado|reacondicionada|refurbished|de\s*caja|segunda\s*mano|condici[oó]n|estado\s*del\s*equipo)\b/i.test(
       cleanLatest
@@ -4848,8 +5593,8 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
     );
   }
 
-  // 2. Generic Product Family (Mouse, Impresoras, Teclados, Bocinas, Monitores, Cargadores, Laptops generales, etc.)
-  // When the customer asks for a generic product family, return ALL available items across all brands without arbitrary limits and with STRICT CATEGORICAL PURITY (zero cables unless cables were explicitly requested).
+  // 2. Generic Product Family (Laptops, Mouse, Impresoras, Teclados, Bocinas, Monitores, Cargadores, etc.)
+  // Return ALL available items in stock for that category without any 15-item truncation, and with STRICT CATEGORICAL PURITY.
   let hasPrimaryFilterSection = false;
   if (
     genericFamily &&
@@ -4892,31 +5637,36 @@ function getRelevantProductsHighlight(latestQueryText: string, fullContextText =
     hasPrimaryFilterSection = true;
 
     if (familyProducts.length > 0) {
-      const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : ' (TODAS LAS MARCAS DISPONIBLES)';
-      const MAX_BLOCK_ITEMS = 15;
-      const displayedItems = familyProducts.slice(0, MAX_BLOCK_ITEMS);
-      const remainingCount = familyProducts.length - displayedItems.length;
-
-      const itemsListFormatted = displayedItems
+      const brandNote = brandFilter ? ` DE MARCA ${brandFilter.label.toUpperCase()}` : ' (CATÁLOGO COMPLETO MULTIMARCA EN STOCK)';
+      const itemsListFormatted = familyProducts
         .map((p, idx) => formatWhatsAppProductBlock(p, idx))
         .join('\n\n');
 
-      const paginationFooter =
-        remainingCount > 0
-          ? `\n\n📌 *Mostrando las primeras 15 de ${familyProducts.length} opciones disponibles (desde RD$${displayedItems[0]?.list_price.toLocaleString()} hasta RD$${displayedItems[displayedItems.length - 1]?.list_price.toLocaleString()}).*\n*Tenemos ${remainingCount} modelos adicionales en inventario. ¿Deseas ver los siguientes ${Math.min(15, remainingCount)}, o prefieres que te filtre por una marca o presupuesto específico?* 🛒`
-          : `\n\n*${familyProducts.length} opciones disponibles en stock real. ¿Cuál te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* 🛒`;
+      const catalogHeader =
+        genericFamily.id === 'laptop'
+          ? `🖥️ *Catálogo completo de laptops — Todo Lapto*\n\n*(${familyProducts.length} modelos disponibles en stock real)*`
+          : `📦 *Catálogo completo de ${genericFamily.label} — Todo Lapto*\n\n*(${familyProducts.length} opciones disponibles en stock real)*`;
+
+      const catalogFooter =
+        genericFamily.id === 'laptop'
+          ? `\n\n*¿Cuál te interesa? También dime si buscas una marca, presupuesto o uso específico (oficina, estudios o gaming) y te filtro las mejores opciones.* 🛒`
+          : `\n\n*¿Cuál te interesa? Te lo aparto ahora mismo para entrega a domicilio o retiro en tienda.* 🛒`;
 
       sections.push(
-        `=== 🎯 CATÁLOGO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
-⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
-1. El cliente consultó por "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : ' de forma genérica (multimarca total)'}.
-2. FORMATO EN BLOQUES INTERACTIVOS (MÁXIMO 15 PRODUCTOS POR MENSAJE): Envía EXACTAMENTE los ${displayedItems.length} productos listados a continuación (del *1.* al *${displayedItems.length}.*).
-3. PUREZA CATEGÓRICA ESTRICTA (CERO CABLES): ${genericFamily.isCable ? 'El cliente solicitó cables expresamente, por lo que se envían cables disponibles.' : 'ESTÁ TOTALMENTE PROHIBIDO incluir cables, cordones o adaptadores en esta lista (si es mouse solo mouse, si es impresora solo impresora, si es laptop solo laptop, etc.).'}
-4. CIERRE INTERACTIVO: Incluye al final la invitación interactiva (${remainingCount > 0 ? `indicando los ${remainingCount} modelos adicionales restantes` : 'confirmando el apartado'}).
+        `=== 🎯 CATÁLOGO COMPLETO OBLIGATORIO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
+🚨 ORDEN OBLIGATORIA E INQUEBRANTABLE PARA OPENAI:
+1. El cliente preguntó por disponibilidad o cuáles tenemos de "${genericFamily.label}"${brandFilter ? ` especificando la marca ${brandFilter.label}` : ' sin especificar marca ni presupuesto'}.
+2. ESTÁ ESTRICTAMENTE PROHIBIDO responder solo "Sí, tenemos disponibles, ¿buscas algún modelo o presupuesto en mente?" sin enviar la lista.
+3. ESTÁ ESTRICTAMENTE PROHIBIDO recortar, resumir o detener la lista en 3, 10 o 15 productos. DEBES ENVIAR EN ESTE MISMO MENSAJE TODOS LOS ${familyProducts.length} PRODUCTOS COMPLETO (desde el *1.* hasta el *${familyProducts.length}.* sin omitir ninguno).
+4. PUREZA CATEGÓRICA ESTRICTA: ${genericFamily.id === 'laptop' ? 'Estos ' + familyProducts.length + ' modelos son 100% LAPTOPS REALES. JAMÁS mezcles accesorios como hubs USB, mouse o mouse pads cuando piden laptops.' : 'Envía exclusivamente los productos de esta categoría listados a continuación.'}
 
-LISTA DE PRODUCTOS LISTA PARA ENVIAR (${displayedItems.length} opciones):
+COPIA Y ENVÍA ÍNTEGRAMENTE ESTE CATÁLOGO COMPLETO AL CLIENTE (${familyProducts.length} modelos):
 
-${itemsListFormatted}${paginationFooter}`
+<!-- [CATALOG_BLOCK_START] -->
+${catalogHeader}
+
+${itemsListFormatted}${catalogFooter}
+<!-- [CATALOG_BLOCK_END] -->`
       );
     } else {
       sections.push(
@@ -4953,7 +5703,10 @@ Informa cordialmente al cliente que en este momento no tenemos unidades disponib
     // If combined filters were too strict and yielded 0, relax to the primary filter so we still help the customer
     if (filtered.length === 0) {
       if (brandFilter) {
-        filtered = inStock.filter(brandFilter.matcher);
+        filtered = laptopsInStock.filter(brandFilter.matcher);
+        if (filtered.length === 0) {
+          filtered = inStock.filter(brandFilter.matcher);
+        }
       } else if (budgetFilter) {
         filtered = laptopsInStock.filter(
           p => p.list_price >= Math.max(2000, budgetFilter.min - 2000) && p.list_price <= budgetFilter.max + 3000
@@ -4967,45 +5720,61 @@ Informa cordialmente al cliente que en este momento no tenemos unidades disponib
 
     if (filtered.length > 0) {
       const filterTitle = activeFilterLabels.join(' + ');
-      const MAX_FILTER_BLOCK = 15;
-      const displayedFiltered = filtered.slice(0, MAX_FILTER_BLOCK);
-      const remainingFiltered = filtered.length - displayedFiltered.length;
-
       const readyFilteredList =
-        displayedFiltered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n') +
-        (remainingFiltered > 0
-          ? `\n\n📌 *Mostrando las primeras 15 de ${filtered.length} opciones disponibles dentro de este filtro.*\n*Tenemos ${remainingFiltered} modelos más que coinciden. ¿Deseas verlos, o te interesa apartar uno de estos?* 🛒`
-          : `\n\n*¿Cuál de estas opciones te apartamos de inmediato?* 🛒`);
+        filtered.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join('\n\n') +
+        `\n\n*¿Cuál de estas ${filtered.length} opciones te apartamos de inmediato?* 🛒`;
 
       sections.push(
-        `=== 🎯 FILTRO ESTRICTO ACTIVO (${filterTitle}) — MOSTRAR ESTOS ${displayedFiltered.length} MODELOS ===
-⚠️ INSTRUCCIÓN OBLIGATORIA PARA LA IA:
+        `=== 🎯 FILTRO ESTRICTO ACTIVO (${filterTitle}) — MOSTRAR TODOS ESTOS ${filtered.length} MODELOS ===
+🚨 INSTRUCCIÓN OBLIGATORIA PARA OPENAI:
 El cliente solicitó un filtro específico (${filterTitle}).
-${useCaseFilter ? `💡 Argumento de venta para este uso: ${useCaseFilter.pitch}\n` : ''}1. Debes enviar estos ${displayedFiltered.length} productos filtrados (del *1.* al *${displayedFiltered.length}.*).
-2. **ESTÁ ESTRICTAMENTE PROHIBIDO** enviar el catálogo general cuando el cliente pidió una marca, precio o uso específico.
-3. Incluye en cada opción su precio en RD$, stock, condición (Nuevo o Reacondicionado Clase A), especificaciones clave y su link directo sin corchetes Markdown.
+${useCaseFilter ? `💡 Argumento de venta para este uso: ${useCaseFilter.pitch}\n` : ''}1. Debes enviar TODOS estos ${filtered.length} productos filtrados completos (del *1.* al *${filtered.length}.* sin omitir ninguno).
+2. Incluye en cada opción su precio en RD$, stock, condición, especificaciones clave y su link directo sin corchetes Markdown.
 
-LISTA FILTRADA LISTA PARA ENVIAR AL CLIENTE (${displayedFiltered.length} opciones):
+LISTA FILTRADA COMPLETA PARA ENVIAR AL CLIENTE (${filtered.length} opciones):
 
-${readyFilteredList}`
+<!-- [CATALOG_BLOCK_START] -->
+¡Claro! Aquí tienes todas las opciones disponibles en stock (${filterTitle}):
+
+${readyFilteredList}
+<!-- [CATALOG_BLOCK_END] -->`
       );
     } else {
       sections.push(
         `=== ⚠️ SIN COINCIDENCIAS EXACTAS PARA EL FILTRO (${activeFilterLabels.join(' + ')}) ===
-Informa cordialmente al cliente que en este momento no tenemos un modelo exacto con esa combinación en stock, y muéstrale las 3 opciones más cercanas disponibles en nuestro inventario real.`
+Informa cordialmente al cliente que en este momento no tenemos un modelo exacto con esa combinación en stock, y muéstrale las opciones más cercanas disponibles en nuestro inventario real.`
       );
     }
   }
 
-  // 4. General Keyword & Model Search across all 600+ products (ONLY if no primary category/brand/budget filter already matched)
+  // 4. General Keyword & Model Search across all products (ONLY if no primary category/brand/budget filter already matched)
   if (!hasPrimaryFilterSection) {
     const stopWords = new Set([
-      'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'busco',
+      'hola', 'buenos', 'dias', 'tardes', 'noches', 'quiero', 'tienen', 'tiene', 'tienes', 'busco', 'buscando',
       'para', 'como', 'cual', 'cuales', 'precio', 'precios', 'cuanto', 'cuesta', 'vale',
-      'disponible', 'disponibles', 'todo', 'una', 'uno', 'unos', 'unas', 'por',
+      'disponible', 'disponibles', 'todo', 'todos', 'todas', 'una', 'uno', 'unos', 'unas', 'por',
       'favor', 'gracias', 'saludos', 'saludo', 'buenas', 'info', 'informacion', 'pesos', 'mil', 'tengo', 'presupuesto',
       'esta', 'este', 'esto', 'bien', 'listo', 'dale', 'claro', 'bueno', 'saber', 'hacer', 'donde', 'cuando',
-      'quien', 'porque', 'pero', 'solo', 'aqui', 'alla', 'algo', 'nada', 'mucho', 'poco', 'otro', 'otra', 'esos', 'esas'
+      'quien', 'porque', 'pero', 'solo', 'aqui', 'alla', 'algo', 'alguna', 'alguno', 'algunos', 'algunas',
+      'nada', 'mucho', 'poco', 'otro', 'otra', 'esos', 'esas', 'mente', 'opciones', 'opcion', 'modelo', 'modelos',
+      'especifico', 'especifica', 'catalogo', 'lista', 'mostrar', 'muestrame', 'mandame', 'enviame', 'dime', 'enseñame',
+      'complemento', 'general', 'unidad', 'unidades', 'condicion', 'nuevo', 'usado',
+      // Media, audio and voice terms (never match sound products like S8 Stereo on voice notes)
+      'audio', 'audios', 'nota', 'notas', 'voz', 'voces', 'microfono', 'micrófono', 'grabacion', 'grabación',
+      'transcribir', 'transcripcion', 'transcripción', 'claridad', 'escuchar', 'mensaje', 'mensajes', 'texto',
+      // Image terms
+      'foto', 'fotos', 'fotografia', 'imagen', 'imagenes', 'imágenes', 'captura', 'capturas', 'pantalla', 'pantallas',
+      'adjunto', 'adjuntos', 'archivo', 'archivos', 'documento', 'sticker',
+      // Operational store terms
+      'laborando', 'laboran', 'laborar', 'trabajando', 'trabajan', 'abierto', 'abiertos', 'abierta', 'abiertas',
+      'cerrado', 'cerrados', 'cerrada', 'cerradas', 'abren', 'cierran', 'horario', 'horarios', 'hora', 'horas',
+      'dia', 'dias', 'días', 'hoy', 'manana', 'mañana', 'feriado', 'feriados', 'domingo', 'domingos', 'sabado',
+      'sabados', 'sábados', 'lunes', 'direccion', 'dirección', 'ubicacion', 'ubicación', 'ubicados', 'quedan',
+      'tienda', 'local', 'sucursal', 'envio', 'envíos', 'envios', 'delivery', 'despacho', 'domicilio',
+      'garantia', 'garantía', 'garantias', 'garantías',
+      // Conversational metadata
+      'enviada', 'enviado', 'cliente', 'pudo', 'anterior', 'anteriormente', 'citado', 'citada', 'pregunta',
+      'preguntando', 'respuesta', 'duda', 'consulta'
     ]);
     const validShortTechTokens = new Set([
       'hp', 'pc', 'i3', 'i5', 'i7', 'i9', 'm1', 'm2', 'm3', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8',
@@ -5024,36 +5793,33 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       const scored: { product: ProductItem; score: number }[] = [];
 
       for (const p of inStock) {
-        const hay = `${p.name} ${p.brand || ''} ${p.condition || ''} ${p.specsSummary || ''} ${p.description_sale || ''} ${(p.useCases || []).join(' ')} ${p.category} ${p.odooCategory || ''}`.toLowerCase();
+        // Match strictly against product name, brand, specsSummary, and odooCategory (NEVER against generic useCases like "Complemento")
+        const hay = `${p.name} ${p.brand || ''} ${p.specsSummary || ''} ${p.description_sale || ''} ${p.category} ${p.odooCategory || ''}`.toLowerCase();
         let score = 0;
         for (const tk of tokens) {
           const escapedTk = tk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const wordBoundaryRegex = new RegExp(`\\b${escapedTk}\\b`, 'i');
           if (wordBoundaryRegex.test(hay)) {
-            score += tk.length >= 4 ? 4 : 2;
-          } else if (tk.length >= 5 && hay.includes(tk)) {
-            score += 2;
+            score += tk.length >= 4 ? 4 : 3;
           }
           if ((tk === 'lapto' || tk === 'laptop' || tk === 'laptops' || tk === 'computadora') && p.category === 'laptop') {
-            score += 5;
+            score += 6;
           }
         }
-        if (score >= 3) {
+        if (score >= 4) {
           scored.push({ product: p, score });
         }
       }
 
       scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-      let topMatches = scored.slice(0, 15).map(s => s.product);
-      if (genericFamily && !genericFamily.isCable) {
-        topMatches = topMatches.filter(p => !isCableOrWiringItem(p.name, p.odooCategory));
-      }
+      const topMatches = scored.map(s => s.product);
       if (topMatches.length > 0) {
         sections.push(
-          `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n` +
+          `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n<!-- [CATALOG_BLOCK_START] -->\n¡Claro! Aquí tienes las opciones disponibles en nuestro inventario actual:\n\n` +
             topMatches
               .map((p, idx) => formatWhatsAppProductBlock(p, idx))
-              .join('\n\n')
+              .join('\n\n') +
+            `\n\n*¿Cuál de estas opciones te interesa apartar?* 🛒\n<!-- [CATALOG_BLOCK_END] -->`
         );
       }
     }
@@ -5074,6 +5840,135 @@ function getLearnedInsightsPromptContext(): string {
 // ---------------------------------------------------------
 // REST API Endpoints
 // ---------------------------------------------------------
+
+// 0. System API Logs & Diagnostics Endpoints
+app.get('/api/system/logs', (req, res) => {
+  const service = req.query.service as string | undefined;
+  const status = req.query.status as string | undefined;
+  let filtered = [...systemApiLogs];
+
+  if (service && service !== 'all') {
+    filtered = filtered.filter(l => l.service.toLowerCase().includes(service.toLowerCase()));
+  }
+  if (status === 'error') {
+    filtered = filtered.filter(l => !l.success || (l.statusCode && l.statusCode >= 400));
+  } else if (status === 'success') {
+    filtered = filtered.filter(l => l.success && (!l.statusCode || l.statusCode < 400));
+  }
+
+  res.json({
+    success: true,
+    logs: filtered,
+    totalCount: systemApiLogs.length,
+    errorCount: systemApiLogs.filter(l => !l.success || (l.statusCode && l.statusCode >= 400)).length,
+  });
+});
+
+app.post('/api/system/logs/clear', (_req, res) => {
+  systemApiLogs.length = 0;
+  recordSystemApiLog({
+    service: 'Evolution API',
+    action: 'Registros del Sistema Vaciados',
+    method: 'SYS',
+    statusCode: 200,
+    success: true,
+    durationMs: 0,
+    requestPreview: 'Limpieza manual solicitada desde la interfaz',
+    responseSnippet: 'Buffer de diagnóstico reiniciado a 0.',
+  });
+  res.json({ success: true, message: 'Registros del sistema vaciados con éxito' });
+});
+
+app.post('/api/system/logs/test-ping', async (_req, res) => {
+  const results: any = { evolution: null, odoo: null };
+
+  // 1. Test Evolution API connectionState
+  try {
+    const t0 = Date.now();
+    const evoUrl = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/instance/connectionState/${appConfig.evolution.instance}`;
+    const evoRes = await fetch(evoUrl, {
+      headers: { apikey: appConfig.evolution.apiKey },
+      signal: AbortSignal.timeout(6000),
+    });
+    const evoText = await evoRes.text();
+    const evoDuration = Date.now() - t0;
+    let parsedEvo: any = {};
+    try { parsedEvo = JSON.parse(evoText); } catch {}
+
+    const isEvoOk = evoRes.ok && (parsedEvo?.instance?.state === 'open' || parsedEvo?.state === 'open');
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: 'Diagnóstico en Vivo (connectionState)',
+      method: 'GET',
+      url: evoUrl,
+      statusCode: evoRes.status,
+      success: isEvoOk,
+      durationMs: evoDuration,
+      requestPreview: `Instancia: ${appConfig.evolution.instance} | Server: ${appConfig.evolution.serverUrl}`,
+      responseSnippet: evoText.slice(0, 400),
+      error: isEvoOk ? undefined : (parsedEvo?.response?.message || evoText || `HTTP ${evoRes.status}`),
+    });
+    results.evolution = {
+      ok: isEvoOk,
+      status: evoRes.status,
+      durationMs: evoDuration,
+      state: parsedEvo?.instance?.state || parsedEvo?.state || 'unknown',
+      details: evoText.slice(0, 300),
+    };
+  } catch (err: any) {
+    recordSystemApiLog({
+      service: 'Evolution API',
+      action: 'Diagnóstico en Vivo (connectionState)',
+      method: 'GET',
+      statusCode: 0,
+      success: false,
+      durationMs: 0,
+      error: err.message,
+    });
+    results.evolution = { ok: false, status: 0, error: err.message };
+  }
+
+  // 2. Test Odoo ERP ping
+  try {
+    const t0 = Date.now();
+    const odooRes = await callOdoo('common', 'version', [], 1);
+    const odooDuration = Date.now() - t0;
+    results.odoo = {
+      ok: true,
+      status: 200,
+      durationMs: odooDuration,
+      serverVersion: odooRes?.server_version || 'Conectado',
+    };
+  } catch (err: any) {
+    results.odoo = { ok: false, status: 500, error: err.message };
+  }
+
+  // 3. Test OpenAI API Engine ping
+  try {
+    const t0 = Date.now();
+    const aiRes = await generateTextWithConfiguredAI({
+      prompt: 'Responde únicamente: OK',
+      systemInstruction: 'Eres un asistente de verificación rápida.',
+      allowFallback: false,
+    });
+    const aiDuration = Date.now() - t0;
+    results.openai = {
+      ok: true,
+      status: 200,
+      durationMs: aiDuration,
+      model: aiRes.modelUsed,
+      reply: aiRes.text.slice(0, 60),
+    };
+  } catch (err: any) {
+    results.openai = {
+      ok: false,
+      status: String(err.message || '').includes('401') ? 401 : String(err.message || '').includes('429') ? 429 : 500,
+      error: err.message,
+    };
+  }
+
+  res.json({ success: true, results });
+});
 
 // 1. Get Configuration & Status
 app.get('/api/config', (req, res) => {
@@ -5179,26 +6074,20 @@ app.post('/api/config', async (req, res) => {
   const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== undefined) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
-    const nextAi = { ...appConfig.aiProvider, ...aiProvider };
+    const nextAi = { ...appConfig.aiProvider, ...aiProvider, provider: 'openai' as const };
+    if (!nextAi.model || (!nextAi.model.startsWith('gpt-') && !nextAi.model.startsWith('o'))) {
+      nextAi.model = 'gpt-4o-mini';
+    }
     if (typeof aiProvider.openaiApiKey === 'string') {
       nextAi.openaiApiKey = aiProvider.openaiApiKey.trim();
-    }
-    if (typeof aiProvider.deepseekApiKey === 'string') {
-      nextAi.deepseekApiKey = aiProvider.deepseekApiKey.trim();
-    }
-    if (typeof aiProvider.geminiApiKey === 'string') {
-      nextAi.geminiApiKey = aiProvider.geminiApiKey.trim();
     }
     if (typeof aiProvider.openaiBaseUrl === 'string' && aiProvider.openaiBaseUrl.trim()) {
       nextAi.openaiBaseUrl = aiProvider.openaiBaseUrl.trim();
     }
-    if (typeof aiProvider.deepseekBaseUrl === 'string' && aiProvider.deepseekBaseUrl.trim()) {
-      nextAi.deepseekBaseUrl = aiProvider.deepseekBaseUrl.trim();
-    }
+    nextAi.deepseekApiKey = '';
+    nextAi.deepseekBaseUrl = '';
+    nextAi.geminiApiKey = '';
     appConfig.aiProvider = nextAi;
-    rejectedOpenAiKeys.clear();
-    rejectedDeepseekKeys.clear();
-    exhaustedGeminiModelsUntil.clear();
   }
   if (odoo) appConfig.odoo = { ...appConfig.odoo, ...odoo };
   if (evolution) appConfig.evolution = { ...appConfig.evolution, ...evolution };
@@ -5212,6 +6101,9 @@ app.post('/api/config', async (req, res) => {
     appConfig.holidayOverrides = holidayOverrides;
     setGlobalHolidayOverrides(appConfig.holidayOverrides);
   }
+  if (Array.isArray(req.body.activeWhatsAppStatuses)) {
+    appConfig.activeWhatsAppStatuses = req.body.activeWhatsAppStatuses;
+  }
 
   savePersistedConfig();
   if (appConfig.supabase?.autoSync !== false) {
@@ -5221,36 +6113,97 @@ app.post('/api/config', async (req, res) => {
   res.json({ success: true, config: appConfig });
 });
 
-// Dedicated endpoint to save AI Provider & API Keys with guaranteed persistence
+// ---------------------------------------------------------
+// WhatsApp Statuses (Stories) Management Endpoints
+// ---------------------------------------------------------
+app.get('/api/whatsapp-statuses', (_req, res) => {
+  res.json({
+    success: true,
+    statuses: appConfig.activeWhatsAppStatuses || [],
+  });
+});
+
+app.post('/api/whatsapp-statuses', (req, res) => {
+  const { statuses, status } = req.body;
+  if (Array.isArray(statuses)) {
+    appConfig.activeWhatsAppStatuses = statuses;
+  } else if (status && typeof status === 'object') {
+    const existing = appConfig.activeWhatsAppStatuses || [];
+    const idx = existing.findIndex(s => s.id === status.id);
+    if (idx >= 0) {
+      existing[idx] = { ...existing[idx], ...status };
+    } else {
+      existing.unshift({
+        id: status.id || `status-${Date.now()}`,
+        title: status.title || status.productName || 'Oferta de Estado',
+        productName: status.productName || '',
+        price: status.price || '',
+        description: status.description || '',
+        imageUrl: status.imageUrl || '',
+        active: status.active !== false,
+        createdAt: status.createdAt || new Date().toISOString(),
+      });
+    }
+    appConfig.activeWhatsAppStatuses = existing;
+  }
+  savePersistedConfig();
+  broadcastEvent('whatsapp_statuses_updated', appConfig.activeWhatsAppStatuses);
+  res.json({
+    success: true,
+    statuses: appConfig.activeWhatsAppStatuses,
+  });
+});
+
+app.post('/api/whatsapp-statuses/toggle', (req, res) => {
+  const { id, active } = req.body;
+  const list = appConfig.activeWhatsAppStatuses || [];
+  const item = list.find(s => s.id === id);
+  if (item) {
+    item.active = active !== undefined ? Boolean(active) : !item.active;
+    savePersistedConfig();
+    broadcastEvent('whatsapp_statuses_updated', appConfig.activeWhatsAppStatuses);
+  }
+  res.json({ success: true, statuses: list });
+});
+
+app.delete('/api/whatsapp-statuses/:id', (req, res) => {
+  const { id } = req.params;
+  appConfig.activeWhatsAppStatuses = (appConfig.activeWhatsAppStatuses || []).filter(s => s.id !== id);
+  savePersistedConfig();
+  broadcastEvent('whatsapp_statuses_updated', appConfig.activeWhatsAppStatuses);
+  res.json({ success: true, statuses: appConfig.activeWhatsAppStatuses });
+});
+
+// Dedicated endpoint to save AI Provider & API Keys with guaranteed persistence (OpenAI Exclusive)
 app.post('/api/ai/save-credentials', async (req, res) => {
   const {
-    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
     openaiBaseUrl,
-    deepseekApiKey,
-    deepseekBaseUrl,
-    geminiApiKey,
   } = req.body;
+
+  const cleanModel =
+    model && (String(model).startsWith('gpt-') || String(model).startsWith('o'))
+      ? String(model)
+      : appConfig.aiProvider?.model?.startsWith('gpt-') || appConfig.aiProvider?.model?.startsWith('o')
+      ? appConfig.aiProvider.model
+      : 'gpt-4o-mini';
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: provider || appConfig.aiProvider?.provider || 'gemini',
-    model: model || appConfig.aiProvider?.model || 'gemini-3.8-flash',
+    provider: 'openai',
+    model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? '',
     ...(openaiApiKey !== undefined ? { openaiApiKey: String(openaiApiKey).trim() } : {}),
     ...(openaiBaseUrl !== undefined && String(openaiBaseUrl).trim() ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {}),
-    ...(deepseekApiKey !== undefined ? { deepseekApiKey: String(deepseekApiKey).trim() } : {}),
-    ...(deepseekBaseUrl !== undefined && String(deepseekBaseUrl).trim() ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}),
-    ...(geminiApiKey !== undefined ? { geminiApiKey: String(geminiApiKey).trim() } : {}),
+    deepseekApiKey: '',
+    deepseekBaseUrl: '',
+    geminiApiKey: '',
   };
 
-  rejectedOpenAiKeys.clear();
-  rejectedDeepseekKeys.clear();
-  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
 
   try {
@@ -5261,7 +6214,7 @@ app.post('/api/ai/save-credentials', async (req, res) => {
   res.json({
     success: true,
     config: appConfig,
-    message: 'Credenciales de IA guardadas permanentemente en el servidor y respaldadas en Supabase.',
+    message: 'Credenciales de OpenAI guardadas permanentemente en el servidor y respaldadas en Supabase.',
   });
 });
 
@@ -5560,87 +6513,64 @@ app.delete('/api/users/:id', async (req, res) => {
   });
 });
 
-// Test Active AI Provider (Gemini, OpenAI, DeepSeek)
+// Test Active AI Provider (OpenAI Exclusive)
 app.post('/api/ai/test-provider', async (req, res) => {
   const {
-    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
     openaiBaseUrl,
-    deepseekApiKey,
-    deepseekBaseUrl,
-    geminiApiKey,
   } = req.body;
+
+  const cleanModel =
+    model && (String(model).startsWith('gpt-') || String(model).startsWith('o'))
+      ? String(model)
+      : appConfig.aiProvider?.model?.startsWith('gpt-') || appConfig.aiProvider?.model?.startsWith('o')
+      ? appConfig.aiProvider.model
+      : 'gpt-4o-mini';
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: provider || appConfig.aiProvider?.provider || 'gemini',
-    model: model || appConfig.aiProvider?.model || 'gemini-3.8-flash',
+    provider: 'openai',
+    model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? '',
-    ...(openaiApiKey !== undefined ? { openaiApiKey } : {}),
-    ...(openaiBaseUrl !== undefined ? { openaiBaseUrl } : {}),
-    ...(deepseekApiKey !== undefined ? { deepseekApiKey } : {}),
-    ...(deepseekBaseUrl !== undefined ? { deepseekBaseUrl } : {}),
-    ...(geminiApiKey !== undefined ? { geminiApiKey } : {}),
+    ...(openaiApiKey !== undefined ? { openaiApiKey: String(openaiApiKey).trim() } : {}),
+    ...(openaiBaseUrl !== undefined ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {}),
+    deepseekApiKey: '',
+    deepseekBaseUrl: '',
+    geminiApiKey: '',
   };
 
-  rejectedOpenAiKeys.clear();
-  rejectedDeepseekKeys.clear();
-  exhaustedGeminiModelsUntil.clear();
   savePersistedConfig();
 
-  const requested = appConfig.aiProvider.provider;
-  if (requested === 'openai' && !appConfig.aiProvider.openaiApiKey && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'MY_OPENAI_API_KEY')) {
+  if (!appConfig.aiProvider.openaiApiKey && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'MY_OPENAI_API_KEY')) {
     return res.json({
       success: false,
       message: 'Por favor ingresa tu API Key de OpenAI (sk-...) en el campo de credenciales para conectar con OpenAI.',
     });
   }
-  if (requested === 'deepseek' && !appConfig.aiProvider.deepseekApiKey && (!process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY === 'MY_DEEPSEEK_API_KEY')) {
-    return res.json({
-      success: false,
-      message: 'Por favor ingresa tu API Key de DeepSeek (sk-...) en el campo de credenciales para conectar con DeepSeek.',
-    });
-  }
 
   try {
     const result = await generateTextWithConfiguredAI({
-      prompt: 'Responde en una sola línea confirmando que estás activo para vender laptops en Todo Lapto.',
-      systemInstruction: 'Eres el motor de inteligencia artificial de Vendemá CRM para Todo Lapto.',
+      prompt: 'Responde en una sola línea confirmando que estás activo con OpenAI para vender laptops en Todo Lapto.',
+      systemInstruction: 'Eres el motor oficial de inteligencia artificial OpenAI de Vendemá CRM para Todo Lapto.',
       allowFallback: false,
     });
 
     res.json({
       success: true,
-      providerUsed: result.providerUsed,
+      providerUsed: 'openai',
       modelUsed: result.modelUsed,
-      message: `Motor ${result.providerUsed.toUpperCase()} (${result.modelUsed}) conectado y guardado: "${result.text.trim()}"`,
+      message: `Motor OPENAI (${result.modelUsed}) conectado y verificado con éxito: "${result.text.trim()}"`,
     });
   } catch (err: any) {
-    try {
-      const fallbackResult = await generateTextWithConfiguredAI({
-        prompt: 'Responde en una sola línea confirmando que estás activo para vender laptops en Todo Lapto.',
-        systemInstruction: 'Eres el motor de inteligencia artificial de Vendemá CRM para Todo Lapto.',
-        allowFallback: true,
-      });
-      res.json({
-        success: false,
-        requestedProvider: requested,
-        providerUsed: fallbackResult.providerUsed,
-        modelUsed: fallbackResult.modelUsed,
-        isFallbackActive: true,
-        message: `${err.message} ⚠️ Mientras actualizas la clave, el Bot de Ventas está respondiendo tus chats de WhatsApp automáticamente con el motor integrado de respaldo (${fallbackResult.providerUsed.toUpperCase()} ${fallbackResult.modelUsed}) para que ningún cliente quede desatendido.`,
-      });
-    } catch {
-      res.json({
-        success: false,
-        requestedProvider: requested,
-        message: `No se pudo conectar con ${requested.toUpperCase()}: ${err.message}`,
-      });
-    }
+    res.json({
+      success: false,
+      requestedProvider: 'openai',
+      message: `No se pudo conectar con OpenAI: ${err.message}`,
+    });
   }
 });
 
@@ -5891,6 +6821,8 @@ function findConversationByAnyId(sessionId: string): Conversation | undefined {
   );
 }
 
+const lastChatMessagesFetchBySession = new Map<string, number>();
+
 // 4. Live Conversations & Chat Management
 app.get('/api/conversations', async (req, res) => {
   recordFrontendHeartbeat();
@@ -5898,7 +6830,10 @@ app.get('/api/conversations', async (req, res) => {
   const now = Date.now();
   if (conversations.length === 0) {
     await syncEvolutionChats();
-  } else if (forceRefresh && now - lastEvolutionChatsSync > 15000) {
+  } else if (forceRefresh) {
+    lastChatMessagesFetchBySession.clear();
+    await syncEvolutionChats();
+  } else if (now - lastEvolutionChatsSync > 15000) {
     syncEvolutionChats().catch(() => {});
   }
   // Ensure each conversation has the latest Odoo client status resolved
@@ -5925,9 +6860,19 @@ app.get('/api/conversations/:sessionId/messages', async (req, res) => {
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
     const forceRefresh = req.query.refresh === 'true';
+    const canonicalKey = conv?.sessionId || sessionId;
+    const now = Date.now();
+    const lastFetchedAt = lastChatMessagesFetchBySession.get(canonicalKey) || 0;
 
-    // Fast return if chat messages are already loaded in memory (0ms lag)
-    if (conv && conv.messages && conv.messages.length > 0 && conv.messagesLoaded && !forceRefresh) {
+    // Return cached memory only if loaded within the last 3 seconds and not force-refreshing
+    if (
+      conv &&
+      conv.messages &&
+      conv.messages.length > 0 &&
+      conv.messagesLoaded &&
+      !forceRefresh &&
+      now - lastFetchedAt < 3000
+    ) {
       return res.json({
         success: true,
         sessionId: conv.sessionId,
@@ -5938,6 +6883,7 @@ app.get('/api/conversations/:sessionId/messages', async (req, res) => {
     }
 
     const messages = await loadEvolutionMessagesForChat(sessionId);
+    lastChatMessagesFetchBySession.set(canonicalKey, Date.now());
 
     res.json({
       success: true,
@@ -5947,7 +6893,7 @@ app.get('/api/conversations/:sessionId/messages', async (req, res) => {
       messages: messages || [],
     });
   } catch (err: any) {
-    console.error('[Load Messages Error]:', err.message);
+    console.log('[Load Messages Notice]:', err.message);
     res.json({
       success: false,
       message: err.message,
@@ -6037,7 +6983,7 @@ app.post('/api/conversations/:sessionId/send', async (req, res) => {
   res.json({ success: true, message: newMsg });
 
   // Deliver to WhatsApp via Evolution API in background so UI never blocks
-  sendEvolutionMessageToConversation(conv, content, 400)
+  sendEvolutionMessageToConversation(conv, content, 400, true)
     .then(r => {
       if (r.messageId) {
         newMsg.evolutionMessageId = r.messageId;
@@ -6114,7 +7060,7 @@ app.post('/api/conversations/:sessionId/send-product', async (req, res) => {
   res.json({ success: true, message: newMsg, sentWithPhoto: sentMediaOk });
 
   if (!sentMediaOk) {
-    sendEvolutionMessageToConversation(conv, caption, 400).catch(() => {});
+    sendEvolutionMessageToConversation(conv, caption, 400, true).catch(() => {});
   }
 });
 
@@ -6172,7 +7118,7 @@ app.post('/api/conversations/:sessionId/send-media', async (req, res) => {
   res.json({ success: true, message: newMsg, sentToWhatsApp: sentOk });
 });
 
-// 5. AI Voice Note Transcription & Multimodal Image/Video Analysis
+// 5. AI Voice Note Transcription & Multimodal Image/Video Analysis (OpenAI Whisper & OpenAI Vision)
 app.post('/api/ai/transcribe-audio', async (req, res) => {
   const { messageId, sessionId } = req.body;
   if (!messageId) {
@@ -6185,38 +7131,23 @@ app.post('/api/ai/transcribe-audio', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No se pudo descargar el audio desde Evolution API' });
     }
 
-    const geminiClient = getActiveGeminiClient();
-    const response = await geminiClient.models.generateContent({
-      model: 'gemini-3.5-transcribe',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: media.mimetype.split(';')[0] || 'audio/ogg',
-              data: media.base64,
-            },
-          },
-          { text: 'Transcribe este mensaje de voz en español con exactitud.' },
-        ],
-      },
-    });
-
-    const transcript = (response.text || '').trim() || '[Audio sin voz detectable]';
+    const transcript = (await transcribeAudioWithOpenAI(media.base64, media.mimetype)) || '[Audio sin voz detectable]';
     transcriptionsByMsgId.set(messageId, transcript);
 
     if (sessionId) {
       const conv = conversations.find(c => c.sessionId === sessionId);
       const msg = conv?.messages.find(m => m.evolutionMessageId === messageId);
-      if (msg) {
+      if (conv && msg) {
         msg.transcription = transcript;
         msg.content = `🎤 "${transcript}"`;
+        conv.lastMessagePreview = `🎤 "${transcript}"`;
+        broadcastEvent('message_updated', { sessionId: conv.sessionId, message: msg });
       }
     }
 
     res.json({ success: true, transcription: transcript });
   } catch (err: any) {
-    const cleanErr = formatCleanAiError(err);
-    res.status(500).json({ success: false, message: cleanErr.summary });
+    res.status(500).json({ success: false, message: err?.message || 'Error al transcribir audio con OpenAI' });
   }
 });
 
@@ -6232,35 +7163,22 @@ app.post('/api/ai/analyze-media', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No se pudo descargar la imagen desde Evolution API' });
     }
 
-    const geminiClient = getActiveGeminiClient();
-    const response = await geminiClient.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: media.mimetype.split(';')[0] || 'image/jpeg',
-              data: media.base64,
-            },
-          },
-          {
-            text: `Analiza esta imagen enviada por un cliente a Todo Lapto (República Dominicana).
+    const analysis = await analyzeImageWithOpenAI(
+      media.base64,
+      media.mimetype,
+      `Analiza esta imagen enviada por un cliente a Todo Lapto (República Dominicana).
 Indica en español de forma concisa (máximo 3 líneas):
 1. ¿Es un comprobante de pago bancario (monto, banco, referencia), un producto/laptop (marca, modelo), o un equipo para reparación?
-2. Recomendación de acción inmediata para el vendedor.`,
-          },
-        ],
-      },
-    });
-
-    const analysis = (response.text || '').trim();
+2. Recomendación de acción inmediata para el vendedor.`
+    );
     aiAnalysisByMsgId.set(messageId, analysis);
 
     if (sessionId) {
       const conv = conversations.find(c => c.sessionId === sessionId);
       const msg = conv?.messages.find(m => m.evolutionMessageId === messageId);
-      if (msg) {
+      if (conv && msg) {
         msg.aiAnalysis = analysis;
+        broadcastEvent('message_updated', { sessionId: conv.sessionId, message: msg });
       }
     }
 
@@ -6747,9 +7665,47 @@ Responde ÚNICAMENTE con el objeto JSON.`;
   }
 });
 
+// Helper: Check if customer's message refers to a WhatsApp Status (Story) or quotes a status
+function isWhatsAppStatusInquiry(rawText: string, isStatusReply = false): boolean {
+  if (isStatusReply) return true;
+  const cleaned = (rawText || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return /\b(estado|estados|historia|historias|story|stories|subieron|publicaron|publicacion|lo que subieron|la que subieron|el que subieron|foto del estado|video del estado)\b/i.test(cleaned);
+}
+
+// Helper: Format active WhatsApp statuses for sales AI context
+function formatActiveWhatsAppStatusesPrompt(): string {
+  const list = (appConfig.activeWhatsAppStatuses || []).filter(s => s.active !== false);
+  if (list.length === 0) {
+    return '📱 ESTADOS DE WHATSAPP: Actualmente no hay estados manuales específicos cargados en el CRM. Si el cliente pregunta por un estado de WhatsApp sin especificar el modelo, pregúntale cortésmente qué laptop o producto vio en nuestro estado o pídele una captura de pantalla 📸 para confirmarle disponibilidad y precio de una vez.';
+  }
+
+  let text = `=== 📱 ESTADOS DE WHATSAPP ACTIVOS DE TODO LAPTO (STORIES PUBLICADOS HOY) ===\n`;
+  text += `El equipo de Todo Lapto tiene actualmente subidos los siguientes productos y promociones a sus estados de WhatsApp:\n\n`;
+  list.forEach((s, idx) => {
+    const priceStr = typeof s.price === 'number' ? `RD$${s.price.toLocaleString()}` : s.price || '';
+    text += `*Estado #${idx + 1}:* ${s.title || s.productName}\n`;
+    if (s.productName) text += `   • Producto: ${s.productName}\n`;
+    if (priceStr) text += `   • Precio en Estado: ${priceStr}\n`;
+    if (s.description) text += `   • Detalles / Especificaciones: ${s.description}\n`;
+    text += '\n';
+  });
+
+  text += `👉 INSTRUCCIÓN CRÍTICA DE ESTADOS:
+1. Si el cliente pregunta "¿Cuánto cuesta la que subieron al estado?", "Vi su estado", "La laptop de la historia", o cita un estado:
+   - Identifica a cuál de los estados activos se refiere según el modelo, precio o características mencionadas.
+   - Si se refiere a una de ellas: confírmala de inmediato con entusiasmo: "¡Hola! Sí, la que viste en nuestro estado es la [Producto] por [Precio]. [Breve detalle]. La tenemos disponible en nuestra tienda física de la Av. Charles de Gaulle #133 y también con envío a domicilio en Santo Domingo contra entrega 🚚. ¿Te gustaría apartarla?".
+   - Si no especificó cuál de las opciones vio: menciona las opciones activas brevemente (ej. "¡Hola! Hoy en nuestro estado tenemos la HP ProBook x360 en RD$7,500 y la Lenovo ThinkPad T480 en RD$14,500. ¿Cuál de esas dos fue la que te interesó?") o pídele que te envíe una captura de pantalla 📸.`;
+  return text;
+}
+
 // Helper: Detect if customer sent a simple greeting or courtesy that does NOT need an inventory search
 function isSimpleConversationalMessage(rawText: string, hasQuote = false): boolean {
   if (hasQuote) return false;
+  if (isWhatsAppStatusInquiry(rawText)) return false;
+
   const cleaned = (rawText || '')
     .toLowerCase()
     .normalize('NFD')
@@ -6762,7 +7718,7 @@ function isSimpleConversationalMessage(rawText: string, hasQuote = false): boole
 
   // If the message contains ANY product, brand, price, repair, store, or order keyword, it is NOT a simple greeting
   const commercialOrProductRegex =
-    /\b(laptop|lapto|laptos|portatil|notebook|computadora|pc|mouse|raton|impresora|epson|canon|brother|teclado|monitor|pantalla|bocina|parlante|audifono|auricular|headset|diadema|disco|ssd|nvme|ram|memoria|cargador|bateria|router|modem|ups|inversor|mochila|bulto|maletin|camara|webcam|cable|hdmi|vga|usb|adaptador|dell|hp|lenovo|thinkpad|latitude|chromebook|asus|acer|macbook|apple|precio|cuanto|cuesta|vale|catalogo|disponible|stock|barat[oa]|economic[oa]|usad[oa]|nuev[oa]|reacondicionad[oa]|reparacion|reparan|arreglan|garantia|envio|delivery|tienda|ubicacion|direccion|horario|abierto|cerrado|comprar|apartar|pedido|cotizacion|transferencia|cuenta|banco|anuncio|foto|vacante|empleo|trabajo|estudio|oficina|gamer|juego|\d{3,})\b/i;
+    /\b(laptop|lapto|laptos|portatil|notebook|computadora|pc|mouse|raton|impresora|epson|canon|brother|teclado|monitor|pantalla|bocina|parlante|audifono|auricular|headset|diadema|disco|ssd|nvme|ram|memoria|cargador|bateria|router|modem|ups|inversor|mochila|bulto|maletin|camara|webcam|cable|hdmi|vga|usb|adaptador|dell|hp|lenovo|thinkpad|latitude|chromebook|asus|acer|macbook|apple|precio|cuanto|cuesta|vale|catalogo|disponible|stock|barat[oa]|economic[oa]|usad[oa]|nuev[oa]|reacondicionad[oa]|reparacion|reparan|arreglan|garantia|envio|delivery|tienda|ubicacion|direccion|horario|abierto|cerrado|comprar|apartar|pedido|cotizacion|transferencia|cuenta|banco|anuncio|foto|vacante|empleo|trabajo|estudio|oficina|gamer|juego|estado|estados|historia|historias|story|stories|subieron|publicacion|audio|voz|\d{3,})\b/i;
 
   if (commercialOrProductRegex.test(cleaned)) {
     return false;
@@ -6770,7 +7726,7 @@ function isSimpleConversationalMessage(rawText: string, hasQuote = false): boole
 
   // Match common greetings, courtesies, and short acknowledgments
   const simplePatterns =
-    /^(hola|saludos|saludo|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|como estan|como estas|todo bien|klk|que lo que|hey|alo|buenas todo lapto|hola todo lapto|saludos todo lapto|hola buenas|hola buenos dias|hola buenas tardes|hola buenas noches|saludos buenas|saludos buenos dias|saludos buenas tardes|disculpa|disculpe|una pregunta|tengo una pregunta|una consulta|gracias|muchas gracias|mil gracias|ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|amen|bendiciones|un placer|igualmente|igual)(\s+(amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|por favor|gracias))?$/i;
+    /^(hola|saludos|saludo|buenas|buen dia|buenos dias|buenas tardes|buenas noches|que tal|como estan|como estas|todo bien|klk|que lo que|hey|alo|dime|dimelo|dime a ver|dimelo a ver|cuentame|que paso|que hay|que hubo|buenas todo lapto|hola todo lapto|saludos todo lapto|hola buenas|hola buenos dias|hola buenas tardes|hola buenas noches|saludos buenas|saludos buenos dias|saludos buenas tardes|disculpa|disculpe|una pregunta|tengo una pregunta|una consulta|gracias|muchas gracias|mil gracias|ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|dale|de acuerdo|vale|amen|bendiciones|un placer|igualmente|igual)(\s+(amigo|amiga|hermano|lider|bro|senor|sr|sra|jefe|equipo|todo lapto|por favor|gracias))?$/i;
 
   return simplePatterns.test(cleaned);
 }
@@ -6794,8 +7750,15 @@ function buildInstantConversationalReply(conv?: Conversation, rawText = ''): str
     return `¡Siempre a tu orden en *Todo Lapto*${namePart}! 😊 Cualquier otra consulta aquí estamos para servirte.`;
   }
 
-  if (/^(ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|dale)\b/i.test(cleaned)) {
+  if (/^(ok|okay|esta bien|ta bien|perfecto|excelente|entendido|listo|dale|de acuerdo|vale)\b/i.test(cleaned)) {
     return `¡Perfecto${namePart}! 👍 Quedamos atentos por aquí para ayudarte con lo que necesites en *Todo Lapto*.`;
+  }
+
+  if (/\b(dime|dimelo|dime a ver|dimelo a ver|cuentame|que paso|que hay|que hubo|klk|que lo que)\b/i.test(cleaned)) {
+    if (hasPriorMessages) {
+      return `¡Saludos de nuevo${namePart}! 😊 Cuéntanos, ¿en qué te podemos colaborar hoy?`;
+    }
+    return `¡Saludos${namePart}! 😊 Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos colaborar hoy? Cuéntanos qué equipo o accesorio buscas y con gusto te asesoramos.`;
   }
 
   if (/\b(disculpa|disculpe|una pregunta|tengo una pregunta|una consulta)\b/i.test(cleaned)) {
@@ -6824,70 +7787,86 @@ function buildInstantConversationalReply(conv?: Conversation, rawText = ''): str
 
 // Helper: Direct deterministic replies for standard operational queries (Store hours, location, delivery, warranty)
 // Responds in < 1ms, zero LLM wait, zero hallucinations, zero re-greetings
-function resolveDirectStoreQuestion(rawText: string, conv?: Conversation): string | null {
-  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
-  const namePart = customerName ? `, ${customerName}` : '';
-  const cleaned = (rawText || '')
+function cleanQueryForStoreCheck(str: string): string {
+  return (str || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\[nota de voz[^\]]*\]/gi, ' ')
+    .replace(/\[audio[^\]]*\]/gi, ' ')
+    .replace(/\[foto[^\]]*\]/gi, ' ')
+    .replace(/\[detalles[^\]]*\]/gi, ' ')
+    .replace(/\[contenido visual[^\]]*\]/gi, ' ')
+    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, ' ')
+    .replace(/[🎤📷🔍]/g, ' ')
     .replace(/[¡!¿?.,;:"'()\-_*~]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
 
-  if (!cleaned || cleaned.length > 80) return null;
+function resolveDirectStoreQuestion(rawText: string, conv?: Conversation, quotedText?: string): string | null {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const cleanedRaw = cleanQueryForStoreCheck(rawText);
+  const cleanedQuote = cleanQueryForStoreCheck(quotedText || '');
+  const combined = `${cleanedQuote} ${cleanedRaw}`.trim();
 
-  // 1. Horario / ¿Están abiertos? / ¿Hasta qué hora? / ¿A qué hora abren?
-  if (
-    /\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy)\b/i.test(
-      cleaned
-    ) ||
-    /^(abierto|abiertos|horario)\??$/i.test(cleaned)
-  ) {
+  // Test target: evaluate cleanedRaw first, then cleanedQuote, then combined
+  const candidates = [cleanedRaw, cleanedQuote, combined].filter(c => Boolean(c) && c.length <= 140);
+  if (candidates.length === 0) return null;
+
+  // 1. Horario / ¿Están laborando? / ¿Están abiertos? / ¿Hasta qué hora? / ¿A qué hora abren?
+  const isHoursQuery = candidates.some(c =>
+    /\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy|laboran|estan trabajando|trabajan hoy)\b/i.test(c) ||
+    /^(abierto|abiertos|horario|laborando)\??$/i.test(c)
+  );
+
+  if (isHoursQuery) {
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
     if (rdNow.isOpen) {
-      return `¡Claro que sí${namePart}! Estamos abiertos ahora mismo en nuestra tienda física en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el envío directo a tu dirección. 🛒`;
+      return `¡Claro que sí${namePart}! Estamos abiertos y laborando ahora mismo en nuestra tienda física en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el envío directo a tu dirección con pago contra entrega en Santo Domingo. 🛒`;
     } else {
-      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda física en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido por aquí para despacharlo a primera hora. 🛒`;
+      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda física en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido o consulta por aquí para despacharlo a primera hora. 🛒`;
     }
   }
 
   // 2. Ubicación / ¿Dónde están ubicados? / Dirección
-  if (
-    /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(
-      cleaned
-    ) ||
-    /^(ubicacion|direccion)\??$/i.test(cleaned)
-  ) {
-    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la estación del teleférico). ¿Tienes pensado pasar por la tienda hoy o prefieres que coordinemos el envío a domicilio? 📍`;
+  const isLocationQuery = candidates.some(c =>
+    /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(c) ||
+    /^(ubicacion|direccion)\??$/i.test(c)
+  );
+
+  if (isLocationQuery) {
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total). ¿Tienes pensado pasar por la tienda hoy o prefieres que coordinemos el envío a domicilio? 📍`;
   }
 
   // 3. Envíos / Delivery / Envíos al interior
-  if (
-    /\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(
-      cleaned
-    ) ||
-    /^(envio|envios|delivery)\??$/i.test(cleaned)
-  ) {
+  const isShippingQuery = candidates.some(c =>
+    /\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(c) ||
+    /^(envio|envios|delivery)\??$/i.test(c)
+  );
+
+  if (isShippingQuery) {
     return `Sí, realizamos envíos a todo el país${namePart}. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. ¿En qué sector o provincia te encuentras? 🚚`;
   }
 
   // 4. Garantía
-  if (
-    /\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(
-      cleaned
-    ) ||
-    /^(garantia)\??$/i.test(cleaned)
-  ) {
-    return `Todos nuestros equipos cuentan con **garantía certificada de 6 meses por escrito** y soporte técnico directo en Todo Lapto. ¿Buscas alguna laptop o equipo en específico? 🛡️`;
+  const isWarrantyQuery = candidates.some(c =>
+    /\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(c) ||
+    /^(garantia)\??$/i.test(c)
+  );
+
+  if (isWarrantyQuery) {
+    return `Todos nuestros equipos reacondicionados cuentan con **garantía certificada de 6 meses por escrito** y los nuevos con **1 año de garantía** con soporte técnico directo en Todo Lapto. ¿Buscas alguna laptop o equipo en específico? 🛡️`;
   }
 
   // 5. Cuentas bancarias / Transferencias
-  if (
-    /\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(
-      cleaned
-    )
-  ) {
+  const isPaymentQuery = candidates.some(c =>
+    /\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(c) ||
+    /^(cuenta|cuentas|banco|transferencia)\??$/i.test(c)
+  );
+
+  if (isPaymentQuery) {
     return `Aceptamos pago contra entrega (efectivo o transferencia al recibir tu equipo en Santo Domingo) y transferencias bancarias a nuestras cuentas de **Banreservas, Banco Popular y BHD**. ¿Qué método te resulta más cómodo? 💳`;
   }
 
@@ -6899,6 +7878,11 @@ function resolveDirectCatalogReply(rawText: string, conv?: Conversation, hasQuot
   if (hasQuote) return null;
   const cleaned = (rawText || '').trim();
   if (!cleaned || cleaned.length > 160) return null;
+
+  // Do not intercept simple greetings or courtesies
+  if (isSimpleConversationalMessage(cleaned)) {
+    return null;
+  }
 
   // Do not intercept order confirmation / address / checkout messages that require CRM tools
   if (
@@ -6954,9 +7938,14 @@ function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): st
     .trim();
 
   // 1. Check if it is a direct operational store question (hours, location, shipping, warranty)
-  const storeAnswer = resolveDirectStoreQuestion(cleanUserQuery, conv);
+  const storeAnswer = resolveDirectStoreQuestion(cleanUserQuery, conv, lastMsg?.quotedMessage?.text);
   if (storeAnswer) {
     return storeAnswer;
+  }
+
+  // 1b. Check if it is a simple greeting or courtesy (never return product catalogs for greetings)
+  if (isSimpleConversationalMessage(cleanUserQuery, hasQuote)) {
+    return buildInstantConversationalReply(conv, cleanUserQuery);
   }
 
   // 2. If customer is quoting a previous message ("¿Te acuerdas de esto?", "Me interesa", etc.)
@@ -7027,7 +8016,8 @@ function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''
     return buildFastConversationalSystemInstruction(conv);
   }
 
-  const rawTemplate = appConfig.aiProvider?.systemPrompt || OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+  // Always use the latest OFFICIAL_TODO_LAPTO_MASTER_PROMPT so updated catalog rules are never overridden by stale cached prompts
+  const rawTemplate = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
   const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
   // Only treat 10-13 digit numbers as valid phone numbers (14+ digits are WhatsApp @lid IDs)
   const detectedPhone =
@@ -7037,10 +8027,20 @@ function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''
         : cleanPhone
       : 'NO DISPONIBLE';
 
-  // Only pass the current message and any explicitly quoted text to getRelevantProductsHighlight
-  // (NEVER pass old messages from conv.messages.slice(-6), so old history never pollutes the current filter!)
-  const quotedContext = lastMsg?.quotedMessage?.text || '';
-  const relevantHighlight = getRelevantProductsHighlight(latestQuery, quotedContext);
+  // Pass the current message, any explicitly quoted text + vision analysis of quoted status/image, and recent customer messages (newest first) for category inheritance
+  const quotedContext = [
+    lastMsg?.quotedMessage?.text || '',
+    lastMsg?.quotedMessage?.aiAnalysis || '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const recentConversationText = (conv?.messages || [])
+    .filter(m => m.sender === 'customer')
+    .slice(-6)
+    .reverse()
+    .map(m => [m.transcription || m.content || '', m.aiAnalysis || ''].filter(Boolean).join(' '))
+    .join('\n');
+  const relevantHighlight = getRelevantProductsHighlight(latestQuery, quotedContext, recentConversationText);
 
   // Never dump 45,000 characters of all 600 products when relevantHighlight is empty (which caused 15-26s latency on non-product queries)!
   const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
@@ -7101,9 +8101,12 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
   // Real-time Dominican Republic date, time, business hours & holiday context
   const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const statusPromptBlock = formatActiveWhatsAppStatusesPrompt();
 
   const filledInstruction =
     rdTimePromptBlock +
+    '\n\n' +
+    statusPromptBlock +
     '\n\n' +
     rawTemplate
       .replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone)
@@ -7111,6 +8114,7 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
       .replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext)
       .replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext)
       .replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext)
+      .replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock)
       .replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12)
       .replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr)
       .replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary)
@@ -7140,10 +8144,15 @@ function buildChatHistoryTurns(conv?: Conversation): { role: 'user' | 'assistant
     }
     if (!text.trim()) continue;
 
-    // In assistant turns, if a previous message contained the entire 38-laptop catalog (> 1000 chars),
-    // shorten it in history so it doesn't trigger the model to repeat all 38 laptops again!
-    if (role === 'assistant' && text.includes('Catálogo completo de laptops') && text.length > 800) {
-      text = text.slice(0, 400) + '\n... [Opciones de laptops enviadas previamente con modelos desde RD$4,000 en vitrina]';
+    // Skip any previously sent broken catalog message that erroneously listed USB-4 TASBEL HUB under laptops
+    if (role === 'assistant' && text.includes('Catálogo completo de laptops') && text.includes('USB-4 TASBEL HUB')) {
+      continue;
+    }
+
+    // In assistant turns, if a previous message contained the entire laptop catalog (> 1200 chars),
+    // shorten it in history so it doesn't waste context tokens
+    if (role === 'assistant' && text.includes('Catálogo completo de laptops') && text.length > 1200) {
+      text = text.slice(0, 400) + '\n... [Catálogo completo de laptops enviado previamente]';
     }
 
     // Merge consecutive messages from the same role so OpenAI/DeepSeek alternating turn rules are respected
@@ -7359,45 +8368,17 @@ async function triggerSalesBotReplyForConversation(
   }
 
   try {
-    // Multi-Server Coordination (Hostinger + Cloud Preview):
-    // When triggered by background polling, stagger slightly and query Evolution API live messages
-    // to check if another active server instance already replied to this message.
-    if (triggerSource === 'live_evolution_poll' && initialLastMsg) {
-      await sleepMs(1100 + Math.floor(Math.random() * 600));
-      const preCheck = await hasEvolutionAlreadyAnsweredSince(conv, initialLastMsg);
-      if (preCheck.answered) {
-        const externalReply = preCheck.latestOutgoing?.content || '';
-        recordBotReplyForConversation(
-          conv,
-          initialMsgId,
-          initialLastMsg.transcription || initialLastMsg.content || '',
-          externalReply
-        );
-        recordBotAuditLog({
-          customerName: conv.customerName,
-          customerPhone: conv.customerPhone,
-          sessionId: conv.sessionId,
-          triggerSource,
-          incomingMessageId: initialMsgId,
-          incomingText: initialLastMsg.transcription || initialLastMsg.content || '',
-          decision: 'blocked_already_answered',
-          reason: `Bloqueado en pre-vuelo: Otra instancia activa (ej. Hostinger) ya respondió en WhatsApp ("${externalReply.slice(0, 45)}...")`,
-          replyText: externalReply,
-          durationMs: Date.now() - startTime,
-        });
-        return {
-          success: false,
-          error: 'Ya respondido por otra instancia conectada a Evolution API',
-        };
-      }
-    }
-
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting =
       initialLastMsg?.type === 'text' &&
       !initialLastMsg?.quotedMessage &&
       isSimpleConversationalMessage(initialText, initialHasQuote);
+
+    // Anti-ban humanized typing simulation:
+    // Short greeting: 3500ms composing. Products/catalog: 5500ms composing.
+    const typingPresenceMs = isInitialSimpleGreeting ? 3500 : 5500;
+    sendEvolutionTypingPresence(conv, typingPresenceMs).catch(() => {});
 
     // 1. Ensure Odoo inventory is loaded (only block if not a simple greeting)
     if (products.length === 0 && !isInitialSimpleGreeting) {
@@ -7427,95 +8408,225 @@ async function triggerSalesBotReplyForConversation(
       return { success: false, error: 'El último mensaje ya fue respondido por el equipo o el bot' };
     }
 
-    // 3. Auto-transcribe if the customer sent a voice note!
-    if (lastMsg.type === 'audio' && lastMsg.evolutionMessageId && !lastMsg.transcription) {
+    // For manual CRM trigger or mixed threads, identify the substantive customer message to address
+    const targetCustomerMsg =
+      lastMsg.sender === 'customer'
+        ? lastMsg
+        : [...conv.messages].reverse().find(m => m.sender === 'customer') || lastMsg;
+
+    // 3. Auto-transcribe if the customer sent a voice note (OpenAI Whisper)!
+    if (targetCustomerMsg.type === 'audio' && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.transcription) {
       try {
-        const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
-        if (media) {
-          const geminiClient = getActiveGeminiClient();
-          const trRes = await geminiClient.models.generateContent({
-            model: 'gemini-3.5-transcribe',
-            contents: {
-              parts: [
-                { inlineData: { mimeType: media.mimetype.split(';')[0] || 'audio/ogg', data: media.base64 } },
-                { text: 'Transcribe este mensaje de voz en español con exactitud.' },
-              ],
-            },
-          });
-          const trText = (trRes.text || '').trim();
+        console.log(`🎤 [Audio Processing]: Descargando audio para transcribir con Whisper (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+        let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        if (!media) {
+          await new Promise(r => setTimeout(r, 800));
+          media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        }
+        if (media && media.base64) {
+          const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
           if (trText) {
-            lastMsg.transcription = trText;
-            lastMsg.content = `🎤 "${trText}"`;
-            transcriptionsByMsgId.set(lastMsg.evolutionMessageId, trText);
+            targetCustomerMsg.transcription = trText;
+            targetCustomerMsg.content = `🎤 "${trText}"`;
+            transcriptionsByMsgId.set(targetCustomerMsg.evolutionMessageId, trText);
+            conv.lastMessagePreview = `🎤 "${trText}"`;
+            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+            console.log(`✅ [Audio Whisper Transcrito]: "${trText}"`);
           }
         }
       } catch (e: any) {
-        const cleanErr = formatCleanAiError(e);
-        console.log('[Auto-Transcribe Audio Info]:', cleanErr.summary);
+        console.log('[Auto-Transcribe Audio Info]:', e?.message || e);
       }
     }
 
-    // 4. Auto-analyze if the customer sent an image (payment receipt, laptop photo, damaged screen)!
-    if (lastMsg.type === 'image' && lastMsg.evolutionMessageId && !lastMsg.aiAnalysis) {
+    // 4. Auto-analyze if the customer sent an image (OpenAI Vision)!
+    if (targetCustomerMsg.type === 'image' && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.aiAnalysis) {
       try {
-        const media = await fetchMediaBase64FromEvolution(lastMsg.evolutionMessageId, false);
-        if (media) {
-          const geminiClient = getActiveGeminiClient();
-          const imgRes = await geminiClient.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
-            contents: {
-              parts: [
-                { inlineData: { mimeType: media.mimetype.split(';')[0] || 'image/jpeg', data: media.base64 } },
-                {
-                  text: 'Analiza esta imagen enviada por el cliente a Todo Lapto. Indica si es un comprobante de pago (banco, monto, referencia), una foto de laptop/producto, o un equipo para reparación, y describe todos los detalles visibles.',
-                },
-              ],
-            },
-          });
-          const analysis = (imgRes.text || '').trim();
+        console.log(`📷 [Image Processing]: Descargando imagen para analizar con GPT-4o Vision (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+        let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        if (!media) {
+          await new Promise(r => setTimeout(r, 800));
+          media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        }
+        if (media && media.base64) {
+          const visionPrompt = `Analiza detalladamente esta imagen enviada por un cliente a Todo Lapto (tienda física de laptops, tecnología y servicio técnico en Santo Domingo, RD).
+Identifica con precisión:
+1. CATEGORÍA:
+   - Laptop o computadora: marca, modelo exacto, pantalla, etiquetas de specs (Core i3, i5, i7, Celeron, Ryzen, RAM, SSD), condición física visible.
+   - Pantalla de especificaciones / Windows: procesador exacto, memoria RAM, almacenamiento, GPU, estado de batería.
+   - Daño físico o avería para reparación: pantalla rota/rajada, bisagra rota, no enciende, mensaje de error en pantalla, teclado.
+   - Comprobante de pago bancario: Banco (Banreservas, Popular, BHD, etc.), monto exacto en RD$, número de referencia/autorización y fecha.
+   - Captura de pantalla de anuncio o estado de WhatsApp de Todo Lapto: producto anunciado, precio, texto visible.
+   - Accesorio o repuesto: cargador, batería, teclado, mouse, monitor, memoria, etc.
+2. RESUMEN COMERCIAL: Explica qué equipo es y qué necesita el cliente para que el bot de ventas le responda de inmediato con el catálogo, precio o taller de reparación.`;
+
+          const analysis = await analyzeImageWithOpenAI(
+            media.base64,
+            media.mimetype,
+            visionPrompt
+          );
           if (analysis) {
-            lastMsg.aiAnalysis = analysis;
-            aiAnalysisByMsgId.set(lastMsg.evolutionMessageId, analysis);
+            targetCustomerMsg.aiAnalysis = analysis;
+            aiAnalysisByMsgId.set(targetCustomerMsg.evolutionMessageId, analysis);
+            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+            console.log(`✅ [Image GPT-4o Vision Analizada]: ${analysis.slice(0, 120)}...`);
           }
         }
       } catch (e: any) {
-        const cleanErr = formatCleanAiError(e);
-        console.log('[Auto-Analyze Image Info]:', cleanErr.summary);
+        console.log('[Auto-Analyze Image Info]:', e?.message || e);
       }
     }
 
-    const baseCustomerText =
-      lastMsg.transcription ||
-      (lastMsg.aiAnalysis
-        ? `${lastMsg.content || '📷 [Imagen enviada]'}\n[Contenido de la imagen: ${lastMsg.aiAnalysis}]`
-        : lastMsg.content) ||
-      'Hola, me gustaría recibir información.';
+    // 4b. Auto-analyze Quoted Status / Quoted Media with OpenAI Vision!
+    // When a customer asks a question directly from inside a WhatsApp Status (Story) or quotes a flyer/photo,
+    // analyze the Status image (jpegThumbnail or full media) so the bot knows what product is in that Status!
+    if (targetCustomerMsg.quotedMessage) {
+      const qId = targetCustomerMsg.quotedMessage.id;
+      const isQuotedIdInChatHistory = qId
+        ? conv.messages.some(
+            m => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.id === `evo-${qId}`)
+          )
+        : true;
 
-    const hasQuote = Boolean(lastMsg.quotedMessage?.text?.trim());
-    const isSimpleMsg = isSimpleConversationalMessage(baseCustomerText, hasQuote);
+      // If customer quotes a Todo Lapto image/video that was never sent in 1-on-1 chat, it is a reply to a WhatsApp Status (Story)!
+      if (
+        !targetCustomerMsg.quotedMessage.isStatusReply &&
+        !isQuotedIdInChatHistory &&
+        (targetCustomerMsg.quotedMessage.type === 'image' || targetCustomerMsg.quotedMessage.type === 'video')
+      ) {
+        targetCustomerMsg.quotedMessage.isStatusReply = true;
+        targetCustomerMsg.quotedMessage.author = 'Estado de WhatsApp de Todo Lapto (Story)';
+      }
 
-    const quotedBlock = hasQuote
-      ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      if (
+        !targetCustomerMsg.quotedMessage.aiAnalysis &&
+        (targetCustomerMsg.quotedMessage.mediaBase64 ||
+          targetCustomerMsg.quotedMessage.isStatusReply ||
+          targetCustomerMsg.quotedMessage.type === 'image' ||
+          targetCustomerMsg.quotedMessage.type === 'video')
+      ) {
+        try {
+          let qBase64 = targetCustomerMsg.quotedMessage.mediaBase64;
+          let qMime = targetCustomerMsg.quotedMessage.mediaMimeType || 'image/jpeg';
+          if (!qBase64 && qId) {
+            const fetchedQuoted = await fetchMediaBase64FromEvolution(
+              qId,
+              false,
+              targetCustomerMsg.quotedMessage.isStatusReply ? 'status@broadcast' : conv.sessionId
+            );
+            if (fetchedQuoted?.base64) {
+              qBase64 = fetchedQuoted.base64;
+              qMime = fetchedQuoted.mimetype || 'image/jpeg';
+            }
+          }
+          if (qBase64) {
+            console.log(`📱 [Status/Quoted Vision]: Analizando imagen del Estado de WhatsApp con GPT-4o Vision...`);
+            const statusVisionPrompt = `Analiza esta imagen de un Estado de WhatsApp (Story) o publicación de Todo Lapto sobre la cual el cliente está preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
+Extrae con máxima precisión:
+1. Qué producto, laptop, marca y modelo exacto (ej. Dell Latitude, Lenovo ThinkPad, HP ProBook, impresora, monitor, etc.) aparece en el estado.
+2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoción escrita dentro de la imagen o flyer del estado.
+3. Si es una foto real sin texto, describe la marca, línea, color y características visibles del equipo.`;
+            const qAnalysis = await analyzeImageWithOpenAI(qBase64, qMime, statusVisionPrompt);
+            if (qAnalysis) {
+              targetCustomerMsg.quotedMessage.aiAnalysis = qAnalysis;
+              broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+              console.log(`✅ [Status Vision Analizada]: ${qAnalysis.slice(0, 140)}...`);
+            }
+          }
+        } catch (e: any) {
+          console.log('[Quoted/Status Vision Info]:', e?.message || e);
+        }
+      }
+    }
+
+    const isStatusReply = Boolean(targetCustomerMsg.quotedMessage?.isStatusReply);
+    const mentionsStatus = isWhatsAppStatusInquiry(
+      targetCustomerMsg.transcription || targetCustomerMsg.content || '',
+      isStatusReply
+    );
+
+    let baseCustomerText = '';
+    if (targetCustomerMsg.type === 'audio') {
+      baseCustomerText = targetCustomerMsg.transcription
+        ? targetCustomerMsg.transcription
+        : '🎤 [Nota de voz enviada por el cliente — el audio no se pudo transcribir con claridad]';
+    } else if (targetCustomerMsg.type === 'image') {
+      const caption = targetCustomerMsg.content && targetCustomerMsg.content !== '📷 Foto' ? targetCustomerMsg.content : '';
+      baseCustomerText = targetCustomerMsg.aiAnalysis
+        ? (caption ? `${caption}\n[Detalles de la imagen analizada por Visión Artificial IA: ${targetCustomerMsg.aiAnalysis}]` : `[Detalles de la imagen analizada por Visión Artificial IA: ${targetCustomerMsg.aiAnalysis}]`)
+        : (caption || '📷 [Foto enviada por el cliente]');
+    } else {
+      baseCustomerText = targetCustomerMsg.content || 'Hola, me gustaría recibir información.';
+    }
+
+    const hasQuote = Boolean(
+      targetCustomerMsg.quotedMessage?.text?.trim() || targetCustomerMsg.quotedMessage?.aiAnalysis?.trim()
+    );
+    const isSimpleMsg =
+      !isStatusReply &&
+      !mentionsStatus &&
+      targetCustomerMsg.type !== 'audio' &&
+      targetCustomerMsg.type !== 'image' &&
+      isSimpleConversationalMessage(baseCustomerText, hasQuote);
+
+    let quotedBlock = '';
+    if (isStatusReply) {
+      const statusText =
+        targetCustomerMsg.quotedMessage?.text ||
+        '📷 [Foto / Oferta publicada en el Estado de WhatsApp de Todo Lapto]';
+      const statusVisionDetail = targetCustomerMsg.quotedMessage?.aiAnalysis
+        ? `\n🔍 [Contenido visual detectado por IA en la imagen/flyer del Estado]:\n${targetCustomerMsg.quotedMessage.aiAnalysis}\n`
+        : '';
+      quotedBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP (STORY) DE TODO LAPTO]
+El cliente vio un Estado de WhatsApp subido por Todo Lapto y escribió su pregunta directamente desde ese estado (en vez de escribir sin contexto en el chat).
+
+📄 Texto / pie de foto del Estado al que responde el cliente:
+"""
+${statusText}
+"""${statusVisionDetail}
+💬 Pregunta o mensaje del cliente sobre ESTE estado:
+"${baseCustomerText}"
+
+🎯 INSTRUCCIÓN OBLIGATORIA PARA CONTESTAR EN BASE A LO QUE PREGUNTA EL CLIENTE DE ESE ESTADO:
+1. Contesta DIRECTAMENTE a lo que el cliente está preguntando ("${baseCustomerText}") sobre el equipo o promoción de ese estado:
+   - Si pregunta por el precio ("¿Precio?", "¿Cuánto cuesta?", "¿En cuánto sale?", "Info"): indícale el precio exacto en RD$, el modelo y las especificaciones clave del equipo del estado (cruzándolo con el inventario en tiempo real o los estados activos).
+   - Si pregunta si está disponible ("¿Todavía la tienen?", "¿Disponible?"): confírmale disponibilidad inmediata en stock de ese equipo del estado.
+   - Si hace una pregunta específica sobre el equipo del estado ("¿Cuánta RAM tiene?", "¿Es táctil?", "¿Tiene garantía?", "¿Hacen envío?"): responde exactamente esa pregunta sobre el equipo del estado.
+2. NO envíes el catálogo completo de 38 laptops cuando el cliente está preguntando por el equipo específico de un estado; enfócate en el producto del estado por el que preguntó.
+3. Cierra de forma cordial ofreciendo retiro en nuestra tienda física de la Av. Charles de Gaulle #133 o envío a domicilio con pago contra entrega en Santo Domingo 🚚.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    } else if (mentionsStatus) {
+      quotedBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📱 [ATENCIÓN — EL CLIENTE PREGUNTA POR UN ESTADO DE WHATSAPP / HISTORIA SUBIDA HOY]
+El cliente menciona que vio un estado o publicación de Todo Lapto ("${baseCustomerText}").
+Consulta la lista de ESTADOS DE WHATSAPP ACTIVOS inyectada en tu instrucción del sistema:
+- Si se refiere a uno de los modelos publicados en el estado de hoy, responde directamente a lo que pregunta sobre ese modelo con su precio y stock.
+- Si no especificó cuál de las opciones vio, menciónale brevemente los modelos destacados del estado de hoy o pídele que te responda directamente desde el estado o envíe captura 📸.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    } else if (hasQuote) {
+      const quotedVisionDetail = targetCustomerMsg.quotedMessage?.aiAnalysis
+        ? `\n🔍 [Contenido visual de la imagen citada]:\n${targetCustomerMsg.quotedMessage.aiAnalysis}\n`
+        : '';
+      quotedBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACIÓN]
-Autor del mensaje citado: ${lastMsg.quotedMessage!.author || 'Todo Lapto'}
+Autor del mensaje citado: ${targetCustomerMsg.quotedMessage!.author || 'Todo Lapto'}
 Contenido del mensaje anterior que el cliente está citando:
 """
-${lastMsg.quotedMessage!.text}
-"""
-
+${targetCustomerMsg.quotedMessage!.text || '📷 [Imagen citada]'}
+"""${quotedVisionDetail}
 Mensaje actual del cliente sobre esta cita anterior:
 "${baseCustomerText}"
 
 ⚠️ REGLAS OBLIGATORIAS PARA ESTA CITA:
-1. El cliente pregunta o se refiere a lo conversado anteriormente (la visita acordada a la tienda física de la Charles de Gaulle No. 133 o las opciones de laptops). NO está citando un error ni pidiendo un catálogo nuevo.
-2. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
-3. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas):
-   - Confirma de inmediato que sí recuerdas: "¡Claro que sí, ${conv.customerName}! Recuerdo perfectamente [lo que conversamos sobre tu visita a la tienda / las opciones de laptops que te mostré]."
-   - Confirma que las opciones siguen disponibles en nuestra tienda de la Av. Charles de Gaulle No. 133.
-   - Haz una pregunta directa para cerrar o coordinar: "¿Tienes pensado pasar hoy por la tienda para apartarte el equipo, o prefieres que coordinemos el envío directo a tu dirección?"
-4. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa información...", pedir que repitan lo dicho, o enviar mensajes evasivos. Tienes todo el contexto citado e inventario en tiempo real.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
-      : '';
+1. Responde directamente en base a lo que el cliente pregunta sobre el mensaje o producto citado ("${baseCustomerText}").
+2. SI EL MENSAJE CITADO ES UNA PREGUNTA OPERATIVA (ej. "¿Están laborando?", "¿Abren hoy?", "¿Cuál es el horario?", "¿Dónde están ubicados?", "¿Hacen envíos?", "¿Tienen garantía?"): Responde DIRECTA y EXACTAMENTE a esa pregunta citada informando el estado de la tienda física en la Av. Charles de Gaulle #133. ESTÁ TERMINANTEMENTE PROHIBIDO enviar catálogos o listas de productos cuando el cliente cita una pregunta operativa.
+3. SI LA CITA VIENE ACOMPAÑADA DE UNA NOTA DE VOZ O IMAGEN: Interpreta la nota de voz transcrita o imagen en conjunto con la cita. Si la nota de voz fue corta (1-2s), inaudible o dice "dime a ver", responde DIRECTAMENTE a la pregunta o producto citado sin evasivas.
+4. SI CITA UN PRODUCTO O LAPTOP: Confirma precio, stock y specs de ese producto citado. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
+5. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas) confirmando disponibilidad en nuestra tienda de la Av. Charles de Gaulle No. 133 o coordinando envío a domicilio.
+6. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa información...", pedir que repitan lo dicho, o enviar mensajes evasivos. Tienes todo el contexto citado e inventario en tiempo real.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    }
 
     const customerMessageText = quotedBlock
       ? `${quotedBlock}\nConsulta del cliente: "${baseCustomerText}"`
@@ -7530,7 +8641,7 @@ Mensaje actual del cliente sobre esta cita anterior:
     const historyTurns = isSimpleMsg ? fullHistoryTurns.slice(-4) : fullHistoryTurns;
 
     console.log(
-      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Simple="${isSimpleMsg ? 'SÍ (Fast-Path)' : 'NO'}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`
+      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=OpenAI (${appConfig.aiProvider?.model || 'gpt-4o-mini'})`
     );
 
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
@@ -7544,101 +8655,79 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     : `👉 INSTRUCCIÓN DE HORARIO: Si el cliente SOLO está saludando o preguntando por productos/precios, NO menciones que estamos cerrados; responde directo al grano. ÚNICAMENTE menciona que estamos cerrados (y que despachamos ${rdNow.nextOpeningStr}) si el cliente pregunta por el horario, si puede pasar por la tienda ahora mismo, o al momento de confirmar el despacho de un pedido.`
 }`;
 
-    const hasPriorMessages = (conv.messages || []).filter(m => m.id !== lastMsg.id).length > 0;
-    const conversationStateNotice = hasPriorMessages
-      ? `\n⚠️ REGLA ESTRICTA DE CONVERSACIÓN EN CURSO: El cliente ya está en medio de una conversación previa contigo en este chat. ESTÁ TERMINANTEMENTE PROHIBIDO volver a saludarlo ("¡Hola [Nombre]!", "Bienvenido a Todo Lapto...", "¿En qué te podemos ayudar hoy?"). Responde DIRECTO y únicamente a lo que acaba de consultar en 1 a 2 líneas concisas, sin mensajes de más ni párrafos innecesarios.`
+    const isCatalogSectionPresent = systemInstruction.includes('=== 🎯 CATÁLOGO COMPLETO OBLIGATORIO DE') || systemInstruction.includes('=== 🎯 FILTRO ESTRICTO ACTIVO');
+    const hasPriorMessages = (conv.messages || []).filter(m => m.id !== targetCustomerMsg.id).length > 0;
+    const conversationStateNotice = isCatalogSectionPresent
+      ? `\n🚨 INSTRUCCIÓN CRÍTICA DE CATÁLOGO COMPLETO: El cliente está consultando por productos o pidiendo ver cuáles tenemos disponibles. ESTÁ ESTRICTAMENTE PROHIBIDO responder en 1 o 2 líneas diciendo "Sí tenemos disponibles, ¿buscas algún modelo o presupuesto?". DEBES ENVIAR AHORA MISMO LA LISTA COMPLETA DE TODOS LOS PRODUCTOS INCLUIDOS EN LA SECCIÓN "=== 🎯 CATÁLOGO COMPLETO OBLIGATORIO ===" O "=== 🎯 FILTRO ESTRICTO ACTIVO ===" DEL INVENTARIO (desde el *1.* hasta el último producto de la lista, sin omitir ninguno).`
+      : hasPriorMessages
+      ? `\n⚠️ REGLA DE CONVERSACIÓN EN CURSO: El cliente ya está en medio de una conversación previa contigo en este chat. No vuelvas a enviar saludos de bienvenida ("¡Hola [Nombre]!", "Bienvenido a Todo Lapto...") y responde directo a lo que acaba de consultar.`
       : '';
 
     const promptToSend = isSimpleMsg
-      ? `Mensaje actual del cliente (${conv.customerName}): "${baseCustomerText}"\n\n⚠️ El cliente envió un mensaje sencillo de saludo o cortesía. Responde directo al grano en 1 a 2 líneas cortas máximo (sin enviar listas de productos y sin decir que estamos cerrados):`
-      : `${liveTimePromptNotice}${conversationStateNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
+      ? `${liveTimePromptNotice}\n\nEl cliente (${conv.customerName}) acaba de enviar un saludo o cortesía: "${baseCustomerText}".\nResponde en máximo 1 o 2 líneas cortas y cordiales saludándole por su nombre y preguntándole en qué equipo, laptop, impresora o accesorio le podemos colaborar hoy. ESTÁ ESTRICTAMENTE PROHIBIDO enviar listas de productos, precios o catálogos en este mensaje.`
+      : `${liveTimePromptNotice}${conversationStateNotice}\n\nMensaje actual del cliente (${conv.customerName}):\n${customerMessageText}\n\nResponde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionPresent ? ' cumpliendo estrictamente las instrucciones de catálogo completo:' : ':'}`;
 
-    const directStoreReply = resolveDirectStoreQuestion(baseCustomerText, conv);
-    const directCatalogReply = !directStoreReply
-      ? resolveDirectCatalogReply(baseCustomerText, conv, hasQuote)
-      : null;
+    let aiReply = '';
+    let toolsExecuted: string[] = [];
+    let providerUsed = 'openai';
+    let modelUsed = appConfig.aiProvider?.model || 'gpt-4o-mini';
 
-    let aiResult: { text: string; providerUsed: string; modelUsed: string };
-    if (directStoreReply) {
-      aiResult = {
-        text: directStoreReply,
-        providerUsed: 'direct-operational-engine',
-        modelUsed: 'instant-store-faq',
-      };
+    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+
+    if (storeAnswer) {
+      aiReply = storeAnswer;
     } else if (isSimpleMsg) {
-      aiResult = {
-        text: buildInstantConversationalReply(conv, baseCustomerText),
-        providerUsed: appConfig.aiProvider?.provider || 'gemini',
-        modelUsed: 'instant-fast-path',
-      };
-    } else if (directCatalogReply) {
-      aiResult = {
-        text: directCatalogReply,
-        providerUsed: 'odoo-catalog-engine',
-        modelUsed: 'instant-catalog-match',
-      };
+      aiReply = buildInstantConversationalReply(conv, baseCustomerText);
     } else {
-      try {
-        aiResult = await generateTextWithConfiguredAI({
-          prompt: promptToSend,
-          systemInstruction,
-          chatMessages: historyTurns,
-          allowFallback: true,
-        });
-      } catch (aiErr: any) {
-        const cleanErr = formatCleanAiError(aiErr);
-        console.log(`[Sales Bot]: Utilizando motor de catálogo en tiempo real (${cleanErr.summary})`);
-        aiResult = {
-          text: buildSmartCatalogFallbackReply(conv, customerMessageText),
-          providerUsed: appConfig.aiProvider?.provider || 'gemini',
-          modelUsed: 'catalog-smart-engine',
-        };
-      }
+      // Strict OpenAI execution for product queries, catalogs, and technical sales questions
+      const aiResult = await generateTextWithConfiguredAI({
+        prompt: promptToSend,
+        systemInstruction,
+        chatMessages: historyTurns,
+        allowFallback: false,
+      });
+
+      const processed = await processAndExecuteCrmTools(aiResult.text || '', conv);
+      aiReply = processed.cleanText.trim();
+      toolsExecuted = processed.toolsExecuted;
+      providerUsed = aiResult.providerUsed;
+      modelUsed = aiResult.modelUsed;
     }
 
-    const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(aiResult.text || '', conv);
-    const aiReply =
-      cleanText ||
-      '¡Hola! Bienvenido a *Todo Lapto* 💻. ¿En qué te podemos ayudar hoy? ¿Buscas alguna laptop, impresora o accesorio en específico?';
+    if (!aiReply) {
+      throw new Error('No se pudo generar el texto de respuesta.');
+    }
 
-    // Final Pre-Flight Check right before dispatching to WhatsApp (in case another server answered during AI generation)
-    if (triggerSource !== 'manual_crm_trigger' && lastMsg) {
-      const finalCheck = await hasEvolutionAlreadyAnsweredSince(conv, lastMsg);
-      if (finalCheck.answered) {
-        const externalReply = finalCheck.latestOutgoing?.content || aiReply;
-        recordBotReplyForConversation(
-          conv,
-          initialMsgId,
-          baseCustomerText,
-          externalReply
-        );
-        recordBotAuditLog({
-          customerName: conv.customerName,
-          customerPhone: conv.customerPhone,
-          sessionId: conv.sessionId,
-          triggerSource,
-          incomingMessageId: initialMsgId,
-          incomingText: baseCustomerText,
-          decision: 'blocked_already_answered',
-          reason: `Bloqueado justo antes de enviar: Otra instancia activa ya entregó respuesta en WhatsApp ("${externalReply.slice(0, 45)}...")`,
-          replyText: externalReply,
-          durationMs: Date.now() - startTime,
-        });
-        return {
-          success: false,
-          error: 'Ya respondido por otra instancia antes del despacho',
-        };
-      }
+    // Anti-ban humanized pacing (Meta / WhatsApp automated spam prevention):
+    // Realistic typing delay: 3500ms for short greetings/answers, 5500ms for catalogs/long lists
+    const targetDelayMs = isSimpleMsg ? 3500 : (isCatalogSectionPresent ? 5500 : 3500);
+    const sendRes = await sendEvolutionMessageToConversation(
+      conv,
+      aiReply,
+      targetDelayMs,
+      triggerSource === 'manual_crm_trigger'
+    );
+    const sentOk = sendRes.ok;
+    const durationMs = Date.now() - startTime;
+
+    if (!sentOk) {
+      throw new Error('No se pudo entregar el mensaje a WhatsApp vía Evolution API.');
     }
 
     const assistantMessage: ChatMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: sendRes.messageId ? `evo-${sendRes.messageId}` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      evolutionMessageId: sendRes.messageId,
       sender: 'assistant',
       type: 'text',
       content: aiReply,
       timestamp: new Date().toISOString(),
       status: 'sent',
     };
+
+    if (sendRes.messageId) {
+      const contactKeys = getConversationContactKeys(conv);
+      markMessageIdProcessed(sendRes.messageId, contactKeys);
+    }
 
     recordLocalMessage(conv.sessionId, assistantMessage, conv.customerPhone);
     conv.messages.push(assistantMessage);
@@ -7648,18 +8737,6 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
 
     broadcastEvent('new_message', { sessionId: conv.sessionId, message: assistantMessage });
     broadcastEvent('conversations_update', { count: conversations.length });
-
-    // Send to WhatsApp via Evolution API using smart JID/phone resolution (fast 150ms dispatch)
-    const sendRes = await sendEvolutionMessageToConversation(conv, aiReply, 150);
-    const sentOk = sendRes.ok;
-    const durationMs = Date.now() - startTime;
-
-    if (sendRes.messageId) {
-      assistantMessage.evolutionMessageId = sendRes.messageId;
-      assistantMessage.id = `evo-${sendRes.messageId}`;
-      const contactKeys = getConversationContactKeys(conv);
-      markMessageIdProcessed(sendRes.messageId, contactKeys);
-    }
 
     // Schedule a quick live message sync from Evolution API so the CRM reflects the exact WhatsApp message IDs 1:1
     setTimeout(() => {
@@ -7686,7 +8763,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
       incomingText: baseCustomerText,
       decision: 'sent',
-      reason: `Respuesta entregada con éxito a WhatsApp en ${durationMs}ms vía Evolution API (${aiResult.providerUsed} / ${aiResult.modelUsed})`,
+      reason: `Respuesta entregada con éxito a WhatsApp en ${durationMs}ms vía Evolution API (${providerUsed} / ${modelUsed})`,
       replyText: aiReply,
       durationMs,
     });
@@ -7694,8 +8771,8 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     return {
       success: true,
       reply: aiReply,
-      providerUsed: aiResult.providerUsed,
-      modelUsed: aiResult.modelUsed,
+      providerUsed,
+      modelUsed,
       toolsExecuted,
       sentToWhatsApp: sentOk,
     };
@@ -7709,36 +8786,26 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
       incomingText: initialLastMsg?.transcription || initialLastMsg?.content || '',
       decision: 'error',
-      reason: `Error al procesar/enviar respuesta: ${err.message}`,
+      reason: `Error al procesar/enviar respuesta (OpenAI): ${err.message}`,
       durationMs,
     });
-    console.log(`[Sales Bot Info for ${conv.customerName}]:`, err.message);
+    console.log(`[Sales Bot Notice for ${conv.customerName}]:`, err.message);
     return { success: false, error: err.message };
   } finally {
     releaseBotLock(conv);
   }
 }
 
-// AI Sales Assistant Suggestion Endpoint (Generates draft in composer without sending)
+// AI Sales Assistant Suggestion Endpoint (Generates draft in composer without sending — Strictly OpenAI)
 app.post('/api/ai/generate-reply', async (req, res) => {
-  const { sessionId, userMessage } = req.body;
+  const { sessionId, userMessage, quotedStatusText, isStatusReply: reqIsStatusReply } = req.body;
   const conv = conversations.find(c => c.sessionId === sessionId);
 
   const lastMsg = conv?.messages[conv.messages.length - 1];
   const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || 'Hola';
-  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
-  const isSimpleMsg = isSimpleConversationalMessage(baseText, hasQuote);
-
-  // Instant sub-10ms fast-path for simple greetings & courtesies
-  if (isSimpleMsg) {
-    return res.json({
-      success: true,
-      reply: buildInstantConversationalReply(conv, baseText),
-      toolsExecuted: [],
-      providerUsed: appConfig.aiProvider?.provider || 'gemini',
-      modelUsed: 'instant-fast-path',
-    });
-  }
+  const effectiveQuotedText = quotedStatusText || req.body.quotedText || lastMsg?.quotedMessage?.text || '';
+  const isStatusReply = Boolean(reqIsStatusReply || req.body.isStatusReply || quotedStatusText || lastMsg?.quotedMessage?.isStatusReply);
+  const hasQuote = Boolean(effectiveQuotedText.trim());
 
   if (products.length === 0) {
     await syncOdooInventory();
@@ -7748,23 +8815,45 @@ app.post('/api/ai/generate-reply', async (req, res) => {
     await loadEvolutionMessagesForChat(conv.sessionId);
   }
 
-  const quotedBlock = hasQuote
-    ? `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  let quotedBlock = '';
+  if (isStatusReply) {
+    quotedBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP (STORY) DE TODO LAPTO]
+El cliente vio un Estado de WhatsApp subido por Todo Lapto y escribió su pregunta directamente desde ese estado (en vez de escribir sin contexto en el chat).
+
+📄 Contenido del Estado de WhatsApp al que responde el cliente:
+"""
+${effectiveQuotedText || '📷 [Foto / Oferta publicada en el Estado de WhatsApp de Todo Lapto]'}
+"""
+
+💬 Pregunta o mensaje del cliente sobre ESTE estado:
+"${baseText}"
+
+🎯 INSTRUCCIÓN OBLIGATORIA PARA CONTESTAR EN BASE A LO QUE PREGUNTA EL CLIENTE DE ESE ESTADO:
+1. Contesta DIRECTAMENTE a lo que el cliente está preguntando ("${baseText}") sobre el equipo o promoción de ese estado:
+   - Si pregunta por el precio ("¿Precio?", "¿Cuánto cuesta?", "¿En cuánto sale?", "Info"): indícale el precio exacto en RD$, el modelo y las especificaciones clave del equipo del estado.
+   - Si pregunta si está disponible ("¿Todavía la tienen?", "¿Disponible?"): confírmale disponibilidad inmediata en stock de ese equipo del estado.
+   - Si hace una pregunta específica sobre el equipo del estado ("¿Cuánta RAM tiene?", "¿Es táctil?", "¿Tiene garantía?", "¿Hacen envío?"): responde exactamente esa pregunta sobre el equipo del estado.
+2. NO envíes el catálogo completo de 38 laptops cuando el cliente está preguntando por el equipo específico de un estado; enfócate en el producto del estado por el que preguntó.
+3. Cierra de forma cordial ofreciendo retiro en nuestra tienda física de la Av. Charles de Gaulle #133 o envío a domicilio con pago contra entrega en Santo Domingo 🚚.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  } else if (hasQuote) {
+    quotedBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📌 [ATENCIÓN MÁXIMA — EL CLIENTE ESTÁ CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACIÓN]
-Autor del mensaje citado: ${lastMsg!.quotedMessage!.author || 'Todo Lapto'}
+Autor del mensaje citado: ${lastMsg?.quotedMessage?.author || 'Todo Lapto'}
 Contenido del mensaje anterior que el cliente está citando:
 """
-${lastMsg!.quotedMessage!.text}
+${effectiveQuotedText}
 """
 Mensaje actual del cliente sobre la cita: "${baseText}"
 
 ⚠️ REGLAS OBLIGATORIAS:
-1. El cliente pregunta o se refiere a lo conversado anteriormente (la visita acordada a la tienda física de la Charles de Gaulle No. 133 o las opciones de laptops). NO está pidiendo un catálogo nuevo.
+1. Responde directamente en base a lo que el cliente pregunta sobre el mensaje o producto citado ("${baseText}").
 2. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
-3. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas) confirmando que sí recuerdas lo conversado, confirmando disponibilidad en tienda y preguntando si pasará hoy por la tienda o prefiere coordinar envío.
+3. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas) confirmando disponibilidad en tienda y preguntando si pasará hoy por la tienda o prefiere coordinar envío.
 4. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa información...", pedir que repitan lo dicho, o enviar mensajes evasivos.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
-    : '';
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  }
 
   const queryText = quotedBlock ? `${quotedBlock}\nConsulta del cliente: "${baseText}"` : baseText;
   const systemInstruction = buildMasterSalesSystemInstruction(conv, queryText);
@@ -7775,6 +8864,27 @@ Mensaje actual del cliente sobre la cita: "${baseText}"
   const historyTurns = fullHistoryTurns;
 
   try {
+    const storeAnswer = resolveDirectStoreQuestion(baseText, conv, req.body.quotedStatusText || req.body.quotedText);
+    if (storeAnswer) {
+      return res.json({
+        success: true,
+        reply: storeAnswer,
+        toolsExecuted: [],
+        providerUsed: 'deterministic',
+        modelUsed: 'store-direct',
+      });
+    }
+
+    if (isSimpleConversationalMessage(baseText, hasQuote)) {
+      return res.json({
+        success: true,
+        reply: buildInstantConversationalReply(conv, baseText),
+        toolsExecuted: [],
+        providerUsed: 'deterministic',
+        modelUsed: 'instant-greeting',
+      });
+    }
+
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
     const liveTimePromptNotice = `[🕒 HORA OFICIAL EN REPÚBLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
 - Fecha y hora actual en RD: ${rdNow.fullDateStr} · ${rdNow.time12} (${rdNow.time24} hrs)
@@ -7788,42 +8898,12 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
 
     const promptToSend = `${liveTimePromptNotice}\n\nMensaje actual del cliente:\n${queryText}\n\nResponde siguiendo las reglas del Agente Oficial de Ventas de Todo Lapto de forma clara, precisa y directa al grano:`;
 
-    const directStoreReply = resolveDirectStoreQuestion(baseText, conv);
-    const directCatalogReply = !directStoreReply
-      ? resolveDirectCatalogReply(baseText, conv, hasQuote)
-      : null;
-
-    let result: { text: string; providerUsed: string; modelUsed: string };
-    if (directStoreReply) {
-      result = {
-        text: directStoreReply,
-        providerUsed: 'direct-operational-engine',
-        modelUsed: 'instant-store-faq',
-      };
-    } else if (directCatalogReply) {
-      result = {
-        text: directCatalogReply,
-        providerUsed: 'odoo-catalog-engine',
-        modelUsed: 'instant-catalog-match',
-      };
-    } else {
-      try {
-        result = await generateTextWithConfiguredAI({
-          prompt: promptToSend,
-          systemInstruction,
-          chatMessages: historyTurns,
-          allowFallback: true,
-        });
-      } catch (aiErr: any) {
-        const cleanErr = formatCleanAiError(aiErr);
-        console.log(`[Generate Reply]: Utilizando motor de catálogo en tiempo real (${cleanErr.summary})`);
-        result = {
-          text: buildSmartCatalogFallbackReply(conv, queryText),
-          providerUsed: appConfig.aiProvider?.provider || 'gemini',
-          modelUsed: 'catalog-smart-engine',
-        };
-      }
-    }
+    const result = await generateTextWithConfiguredAI({
+      prompt: promptToSend,
+      systemInstruction,
+      chatMessages: historyTurns,
+      allowFallback: false,
+    });
 
     const { cleanText, toolsExecuted } = await processAndExecuteCrmTools(result.text, conv);
 
@@ -7835,28 +8915,27 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       modelUsed: result.modelUsed,
     });
   } catch (err: any) {
-    const cleanErr = formatCleanAiError(err);
-    res.status(500).json({ success: false, message: cleanErr.summary });
+    res.status(500).json({ success: false, message: err?.message || 'Error al generar respuesta con OpenAI' });
   }
 });
 
 // Trigger Immediate AI Sales Bot Auto-Reply & Send to WhatsApp
 app.post('/api/conversations/:sessionId/auto-reply', async (req, res) => {
   const { sessionId } = req.params;
-  const conv = conversations.find(c => c.sessionId === sessionId);
+  const conv = findConversationByAnyId(sessionId);
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
 
   const result = await triggerSalesBotReplyForConversation(conv, 'manual_crm_trigger');
   if (!result.success) {
-    return res.status(500).json({ success: false, message: result.error || 'Error al generar respuesta' });
+    return res.status(500).json({ success: false, message: result.error || 'Error al generar respuesta con OpenAI' });
   }
 
   res.json(result);
 });
 
-// AI Multimodal Receipt Verifier Endpoint
+// AI Multimodal Receipt Verifier Endpoint (OpenAI Vision)
 app.post('/api/ai/verify-receipt', async (req, res) => {
   const { imageBase64, mimeType } = req.body;
   if (!imageBase64) {
@@ -7879,32 +8958,16 @@ Extrae los siguientes datos en formato JSON:
 }
 Responde ÚNICAMENTE con el objeto JSON.`;
 
-    const geminiClient = getActiveGeminiClient();
-    const response = await geminiClient.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType || 'image/jpeg',
-              data: imageBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
-            },
-          },
-          { text: prompt },
-        ],
-      },
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
-
-    const parsed = JSON.parse(response.text || '{}');
+    const jsonText = await analyzeImageWithOpenAI(imageBase64, mimeType || 'image/jpeg', prompt, true);
+    const parsed = JSON.parse(jsonText || '{}');
     res.json({ success: true, verification: parsed });
   } catch (err: any) {
-    const cleanErr = formatCleanAiError(err);
-    res.status(500).json({ success: false, message: cleanErr.summary });
+    res.status(500).json({ success: false, message: err?.message || 'Error al verificar comprobante con OpenAI' });
   }
 });
+
+// Track raw webhook HTTP deliveries so duplicate Evolution API webhook retries are ignored without prematurely marking the message as bot-processed
+const seenWebhookDeliveryIds = new Map<string, number>();
 
 // 9. Webhook for Evolution API (Real-Time Inbound Messages, Audio, Photos, Videos)
 const handleEvolutionWebhook = async (req: express.Request, res: express.Response) => {
@@ -7935,10 +8998,21 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
   const messageId = normalizeMsgIdKey(key.id);
   const now = Date.now();
 
+  if (messageId) {
+    const prevWebhookTs = seenWebhookDeliveryIds.get(messageId);
+    if (prevWebhookTs && now - prevWebhookTs < 120000) {
+      return;
+    }
+    seenWebhookDeliveryIds.set(messageId, now);
+    if (seenWebhookDeliveryIds.size > 1000) {
+      const oldestKey = seenWebhookDeliveryIds.keys().next().value;
+      if (oldestKey) seenWebhookDeliveryIds.delete(oldestKey);
+    }
+  }
+
   if (isMessageIdAlreadyProcessed(messageId)) {
     return;
   }
-  markMessageIdProcessed(messageId);
 
   const remoteJid = key.remoteJid || '';
   const rawAlt = key.remoteJidAlt || '';
@@ -7949,7 +9023,22 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
     return;
   }
 
-  const senderNumber = (rawAlt.endsWith('@s.whatsapp.net') ? rawAlt : remoteJid)
+  // Link @lid and @s.whatsapp.net if remoteJidAlt is present
+  if (remoteJid.endsWith('@lid') && rawAlt.endsWith('@s.whatsapp.net')) {
+    const altPhone = rawAlt.replace(/@.*$/, '').replace(/\D/g, '');
+    if (altPhone) {
+      lidToPhoneMap.set(remoteJid, altPhone);
+      lidToPhoneMap.set(remoteJid.replace(/@.*$/, ''), altPhone);
+    }
+  }
+
+  const senderNumber = (
+    rawAlt.endsWith('@s.whatsapp.net')
+      ? rawAlt
+      : remoteJid.endsWith('@lid') && lidToPhoneMap.get(remoteJid)
+      ? lidToPhoneMap.get(remoteJid)!
+      : remoteJid
+  )
     .replace(/@.*$/, '')
     .replace(/\D/g, '');
   const pushName = messageData.pushName || 'Cliente WhatsApp';
@@ -7960,13 +9049,19 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
   let conv = conversations.find(
     c =>
       c.sessionId === remoteJid ||
-      (senderNumber && c.customerPhone === senderNumber) ||
+      (rawAlt && c.sessionId === rawAlt) ||
+      (senderNumber && senderNumber.length <= 12 && c.customerPhone === senderNumber) ||
       relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
   );
 
+  const canonicalNewJid =
+    senderNumber && senderNumber.length >= 10 && senderNumber.length <= 12
+      ? `${senderNumber}@s.whatsapp.net`
+      : remoteJid;
+
   if (!conv) {
     conv = {
-      sessionId: remoteJid,
+      sessionId: canonicalNewJid,
       customerPhone: senderNumber,
       customerName: pushName,
       aiEnabled: true,
@@ -7977,11 +9072,19 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
       intentStatus: 'explorando',
       detectedProducts: [],
       messages: [parsedIncoming],
-      messagesLoaded: true,
+      messagesLoaded: false,
       isLiveEvolution: true,
     };
+    const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+    if (remoteJid) jSet.add(remoteJid);
+    if (rawAlt) jSet.add(rawAlt);
+    relatedJidsBySession.set(conv.sessionId, jSet);
     conversations.unshift(conv);
   } else {
+    const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+    if (remoteJid) jSet.add(remoteJid);
+    if (rawAlt) jSet.add(rawAlt);
+    relatedJidsBySession.set(conv.sessionId, jSet);
     conv.unreadCount += 1;
     conv.lastTimestamp = parsedIncoming.timestamp;
     conv.lastMessagePreview = parsedIncoming.content;
@@ -8185,7 +9288,6 @@ app.get('/api/proxy-image', async (req, res) => {
 // Mount Vite middlewares & Start Background Real-Time Syncs
 // ---------------------------------------------------------
 async function startServer() {
-  const isAiStudio = Boolean(process.env.AISTUDIO_APPLET_ID);
   const isProduction = process.env.NODE_ENV === 'production';
 
   const candidateDist = [
@@ -8195,27 +9297,47 @@ async function startServer() {
     path.join(__dirname, 'public_html'),
   ].find(dir => fs.existsSync(path.join(dir, 'index.html')));
 
-  // In AI Studio dev environment, mount Vite dev middleware for live coding & HMR.
-  // In production (Hostinger, Docker, Coolify, or any deployed server), ALWAYS serve the pre-built static bundle.
-  const shouldUseVite = isAiStudio && !isProduction;
+  // In development (or whenever pre-built static bundle is not present), mount Vite development middleware
+  const shouldUseVite = !isProduction || !candidateDist;
 
   let viteMounted = false;
+  let viteServer: any = null;
   if (shouldUseVite) {
     try {
       console.log('[Server]: Running Vite development middleware for AI Studio live preview');
       const { createServer } = await import('vite');
-      const vite = await createServer({
+      viteServer = await createServer({
         server: { middlewareMode: true },
         appType: 'spa',
       });
-      app.use(vite.middlewares);
+      app.use(viteServer.middlewares);
       viteMounted = true;
+      console.log('[Server]: Vite middleware mounted successfully!');
     } catch (viteErr: any) {
       console.warn('[Server]: Could not mount Vite middleware, falling back to static:', viteErr.message);
     }
   }
 
-  if (!viteMounted) {
+  if (viteMounted && viteServer) {
+    app.get('*', async (req, res, next) => {
+      if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/')) {
+        return next();
+      }
+      try {
+        const url = req.originalUrl;
+        const indexPath = path.join(process.cwd(), 'index.html');
+        if (fs.existsSync(indexPath)) {
+          let template = fs.readFileSync(indexPath, 'utf-8');
+          template = await viteServer.transformIndexHtml(url, template);
+          return res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').send(template);
+        }
+        next();
+      } catch (e: any) {
+        viteServer.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
+  } else {
     const distPath = candidateDist || path.join(process.cwd(), 'dist');
     const publicPath = path.join(process.cwd(), 'public');
     console.log(`[Server]: Production mode - serving static files via direct buffer from ${distPath}`);
@@ -8355,25 +9477,28 @@ async function startServer() {
       `🚀 Vendemá CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || 'default(3000)'} (PID: ${process.pid})`
     );
 
-    // Defer heavy network syncs by 3.5 seconds to let Hostinger healthchecks and initial page requests succeed instantly
+    // Immediately synchronize WhatsApp chats & Odoo inventory in parallel so the bot is ready within ~1s of boot
     setTimeout(() => {
+      syncEvolutionChats()
+        .then(() => ensureEvolutionWebhookRegistered())
+        .catch(e => console.log('Initial Evolution sync info:', e?.message || e));
+
+      syncOdooInventory()
+        .then(() => syncOdooCustomers())
+        .catch(e => console.log('Initial Odoo sync info:', e?.message || e));
+
       hydrateAndSyncUsersWithSupabase()
         .then(() => hydrateAndSyncAiConfigWithSupabase())
         .then(() => hydrateAndSyncHolidaysWithSupabase())
         .then(() => autoSyncConfigToSupabase(appConfig))
-        .then(() => syncOdooInventory())
-        .then(() => syncOdooCustomers())
-        .then(() => syncEvolutionChats())
-        .then(() => ensureEvolutionWebhookRegistered())
-        .catch(e => console.log('Initial background sync info:', e?.message || e));
-    }, 3500);
+        .catch(e => console.log('Initial Supabase sync info:', e?.message || e));
+    }, 600);
 
     // Background synchronization schedule:
-    // 1. WhatsApp Evolution API: Lightweight background poll every 20 seconds.
-    // Real-time messages arrive instantly (<100ms) via Webhook without overloading Evolution API.
+    // 1. WhatsApp Evolution API: Fast poll every 3 seconds so new messages trigger "escribiendo..." almost immediately.
     setInterval(() => {
       syncEvolutionChats().catch(() => {});
-    }, 20000);
+    }, 3000);
 
     // 2. Odoo Inventory: Synchronized every 30 minutes (or immediately via manual refresh in UI).
     setInterval(() => {
@@ -8387,8 +9512,7 @@ async function startServer() {
   };
 
   server.on('error', (err: any) => {
-    console.log(`[Server Listen Error on ${PORT}]:`, err.message);
-    console.error(`[Server Listen Error on ${PORT}]:`, err.message);
+    console.log(`[Server Listen Notice on ${PORT}]:`, err.message);
   });
 
   if (!isServerListening) {

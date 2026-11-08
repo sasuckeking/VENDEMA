@@ -1,6 +1,6 @@
 {
-  "summary": "Plan de implementación para eliminar el envío múltiple de mensajes a WhatsApp entre múltiples instancias conectadas a Evolution API, evitar reintentos duplicados por timeout HTTP, ignorar frases cortas de cierre/enlaces sin intención comercial y mostrar el espejo exacto de mensajes reales de WhatsApp en el CRM.",
-  "updatedAt": "2026-11-04T17:23:24.661375309Z",
+  "summary": "Corrección de contexto y protección anti-baneo en WhatsApp: El bot ya no envía el catálogo de laptops ante saludos ('Saludos', 'Hola'), respondiendo con un saludo cálido que pregunta qué producto necesita. Se incorporó una cadencia humanizada de escritura (3.5s para saludos, 5.5s para catálogos) y cooldown de 7s para evitar bloqueos de spam de Meta/WhatsApp.",
+  "updatedAt": "2026-11-06T12:37:20.492733197Z",
   "requestFeedback": true,
   "userFacing": true
 }

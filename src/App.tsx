@@ -127,11 +127,16 @@ export default function App() {
   const [orderPrefill, setOrderPrefill] = useState<any>({});
 
   // Smart 1:1 WhatsApp mirror merger: preserves every real WhatsApp message (evolutionMessageId) without hiding duplicates,
+  // Smart 1:1 WhatsApp mirror merger: preserves every real WhatsApp message (evolutionMessageId) without hiding duplicates,
   // while keeping recent optimistic local messages until Evolution API indexes them
-  const mergeMessagesList = (existing: Conversation['messages'] = [], incoming: Conversation['messages'] = []) => {
+  const mergeMessagesList = (
+    existing: Conversation['messages'] = [],
+    incoming: Conversation['messages'] = [],
+    isAuthoritativeFullLoad = false
+  ) => {
     const combined = [...incoming];
     const claimedIncomingIndices = new Set<number>();
-    const isFullIncomingRefresh = incoming.length >= 2;
+    const isFullIncomingRefresh = isAuthoritativeFullLoad || incoming.length >= 2;
     const nowMs = Date.now();
 
     for (const oldMsg of existing) {
@@ -172,8 +177,16 @@ export default function App() {
         if (oldMsg.mediaUrl && !combined[existsIdx].mediaUrl) {
           combined[existsIdx] = { ...combined[existsIdx], mediaUrl: oldMsg.mediaUrl };
         }
+        if (oldMsg.transcription && !combined[existsIdx].transcription) {
+          combined[existsIdx] = { ...combined[existsIdx], transcription: oldMsg.transcription };
+        }
+        if (oldMsg.aiAnalysis && !combined[existsIdx].aiAnalysis) {
+          combined[existsIdx] = { ...combined[existsIdx], aiAnalysis: oldMsg.aiAnalysis };
+        }
       } else {
-        if (oldMsg.evolutionMessageId || !isFullIncomingRefresh || nowMs - oldTime < 20000) {
+        // When incoming is a full authoritative load from /messages, do NOT keep old unmatched evolutionMessageId messages
+        // unless they arrived in the last 25 seconds (e.g., via SSE before Evolution API indexed them)
+        if ((!isAuthoritativeFullLoad && oldMsg.evolutionMessageId) || !isFullIncomingRefresh || nowMs - oldTime < 25000) {
           combined.push(oldMsg);
         }
       }
@@ -231,7 +244,7 @@ export default function App() {
           const phone = c.customerPhone && c.customerPhone.length <= 12 ? c.customerPhone : '';
           const nameKey = !isGenericContactName(c.customerName) ? c.customerName.trim().toLowerCase() : '';
           if (phone && seenPhones.has(phone)) continue;
-          if (nameKey && seenNames.has(nameKey)) continue;
+          if (!phone && nameKey && seenNames.has(nameKey)) continue;
           seenSessions.add(c.sessionId);
           if (phone) seenPhones.add(phone);
           if (nameKey) seenNames.add(nameKey);
@@ -268,24 +281,19 @@ export default function App() {
           if (bySessionDigits) return bySessionDigits;
         }
 
-        // 3. Non-generic customerName match (e.g. "Soporte Todo LAPTO'")
+        // 3. Non-generic customerName match ONLY if they don't have two different real phone numbers
         if (!isGenericContactName(inc.customerName)) {
           const incNorm = inc.customerName.trim().toLowerCase();
-          const byName = prev.find(
-            p => !claimedPrevSessionIds.has(p.sessionId) && !isGenericContactName(p.customerName) && p.customerName.trim().toLowerCase() === incNorm
-          );
+          const incRealPhone = inc.customerPhone && inc.customerPhone.length <= 12 ? inc.customerPhone : '';
+          const byName = prev.find(p => {
+            if (claimedPrevSessionIds.has(p.sessionId)) return false;
+            if (isGenericContactName(p.customerName)) return false;
+            if (p.customerName.trim().toLowerCase() !== incNorm) return false;
+            const pRealPhone = p.customerPhone && p.customerPhone.length <= 12 ? p.customerPhone : '';
+            if (incRealPhone && pRealPhone && incRealPhone !== pRealPhone) return false;
+            return true;
+          });
           if (byName) return byName;
-        }
-
-        // 4. Shared evolutionMessageId in last message
-        const incLastEvoId = inc.messages?.[inc.messages.length - 1]?.evolutionMessageId;
-        if (incLastEvoId) {
-          const byLastMsgId = prev.find(
-            p =>
-              !claimedPrevSessionIds.has(p.sessionId) &&
-              p.messages?.some(m => m.evolutionMessageId === incLastEvoId)
-          );
-          if (byLastMsgId) return byLastMsgId;
         }
 
         return undefined;
@@ -419,7 +427,7 @@ export default function App() {
         const nameKey = !isGenericContactName(c.customerName) ? c.customerName.trim().toLowerCase() : '';
 
         if (phone && seenPhones.has(phone)) continue;
-        if (nameKey && seenNames.has(nameKey)) continue;
+        if (!phone && nameKey && seenNames.has(nameKey)) continue;
 
         seenSessions.add(c.sessionId);
         if (phone) seenPhones.add(phone);
@@ -451,7 +459,8 @@ export default function App() {
       setIsLoadingMessages(true);
     }
     try {
-      let data = await safeFetch(`/api/conversations/${encodeURIComponent(sessionId)}/messages`);
+      const refreshParam = !silent ? '?refresh=true' : '';
+      let data = await safeFetch(`/api/conversations/${encodeURIComponent(sessionId)}/messages${refreshParam}`);
       if (!data) {
         data = await safeFetch(`/api/messages?sessionId=${encodeURIComponent(sessionId)}`);
       }
@@ -467,7 +476,7 @@ export default function App() {
                 c.customerPhone.replace(/\D/g, '') === String(data.customerPhone).replace(/\D/g, ''));
 
             if (isTargetChat) {
-              const mergedMsgs = mergeMessagesList(c.messages, data.messages);
+              const mergedMsgs = mergeMessagesList(c.messages, data.messages, true);
               const isUnchanged =
                 c.messagesLoaded &&
                 c.unreadCount === 0 &&
@@ -536,19 +545,23 @@ export default function App() {
             if (savedAiRaw) {
               const savedAi = JSON.parse(savedAiRaw);
               const serverAi = loadedConfig.aiProvider || {};
-              const needsPushToServer =
-                (savedAi.openaiApiKey && !serverAi.openaiApiKey) ||
-                (savedAi.deepseekApiKey && !serverAi.deepseekApiKey) ||
-                (savedAi.geminiApiKey && !serverAi.geminiApiKey);
+              const needsPushToServer = Boolean(savedAi.openaiApiKey && !serverAi.openaiApiKey);
+
+              const validModels = ['gpt-4o-mini', 'gpt-4o', 'o3-mini'];
+              const resolvedModel = validModels.includes(serverAi.model)
+                ? serverAi.model
+                : validModels.includes(savedAi.model)
+                ? savedAi.model
+                : 'gpt-4o-mini';
 
               const mergedAi = {
                 ...savedAi,
                 ...serverAi,
-                provider: savedAi.provider || serverAi.provider || 'gemini',
-                model: savedAi.model || serverAi.model || 'gemini-3.8-flash',
-                openaiApiKey: (savedAi.openaiApiKey || serverAi.openaiApiKey || '').trim(),
-                deepseekApiKey: (savedAi.deepseekApiKey || serverAi.deepseekApiKey || '').trim(),
-                geminiApiKey: (savedAi.geminiApiKey || serverAi.geminiApiKey || '').trim(),
+                provider: 'openai' as const,
+                model: resolvedModel,
+                openaiApiKey: (serverAi.openaiApiKey || savedAi.openaiApiKey || '').trim(),
+                deepseekApiKey: '',
+                geminiApiKey: '',
               };
               loadedConfig = { ...loadedConfig, aiProvider: mergedAi };
               localStorage.setItem('vendema_ai_provider_config', JSON.stringify(mergedAi));
@@ -641,7 +654,11 @@ export default function App() {
             .then(d => {
               if (d.success && d.products) setProducts(d.products);
             });
-        } else if (payload.type === 'new_message' && payload.sessionId && payload.message) {
+        } else if (
+          (payload.type === 'new_message' || payload.type === 'message_updated') &&
+          payload.sessionId &&
+          payload.message
+        ) {
           setConversations(prev =>
             prev.map(c => {
               if (c.sessionId === payload.sessionId) {
@@ -656,6 +673,8 @@ export default function App() {
               return c;
             })
           );
+        } else if (payload.type === 'whatsapp_statuses_updated' && Array.isArray(payload.payload)) {
+          setConfig(prev => ({ ...prev, activeWhatsAppStatuses: payload.payload }));
         } else if (payload.type === 'conversations_update') {
           fetch('/api/conversations')
             .then(r => r.json())
@@ -676,7 +695,10 @@ export default function App() {
 
     const interval = setInterval(() => {
       loadData(true);
-    }, 8000);
+      if (selectedSessionRef.current) {
+        handleRefreshMessages(selectedSessionRef.current, true);
+      }
+    }, 4000);
 
     return () => {
       eventSource.close();

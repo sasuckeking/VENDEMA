@@ -102,6 +102,21 @@ export interface QuotedMessage {
   type?: string;
   author?: string;
   mediaUrl?: string;
+  mediaBase64?: string;
+  mediaMimeType?: string;
+  aiAnalysis?: string;
+  isStatusReply?: boolean;
+}
+
+export interface WhatsAppStatusItem {
+  id: string;
+  title: string;
+  productName?: string;
+  price?: number | string;
+  description?: string;
+  imageUrl?: string;
+  active: boolean;
+  createdAt?: string;
 }
 
 export interface ChatMessage {
@@ -218,6 +233,7 @@ export interface AppConfig {
   evolution: EvolutionConfig;
   supabase?: SupabaseConfig;
   holidayOverrides?: HolidayOverride[];
+  activeWhatsAppStatuses?: WhatsAppStatusItem[];
 }
 
 export type UserRole = 'super_admin' | 'dueno' | 'empleado';
@@ -265,4 +281,22 @@ export interface BotAuditLogEntry {
   replyText?: string;
   evolutionMessageId?: string;
   durationMs: number;
+}
+
+export type ApiLogService = 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
+
+export interface SystemApiLog {
+  id: string;
+  timestamp: string;
+  service: ApiLogService;
+  action: string;
+  method: string;
+  url?: string;
+  target?: string;
+  statusCode?: number;
+  success: boolean;
+  durationMs: number;
+  requestPreview?: string;
+  responseSnippet?: string;
+  error?: string;
 }

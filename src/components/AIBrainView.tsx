@@ -13,12 +13,14 @@ import {
   Wrench,
   Database,
   CalendarClock,
-  ShieldCheck
+  ShieldCheck,
+  Smartphone
 } from 'lucide-react';
 import type { AILearnedInsight, AppConfig, UserAccount } from '../types';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from '../masterPrompt';
 import { HolidayManagerPanel } from './HolidayManagerPanel';
 import { BotAuditLogPanel } from './BotAuditLogPanel';
+import { WhatsAppStatusManagerPanel } from './WhatsAppStatusManagerPanel';
 
 interface AIBrainViewProps {
   insights: AILearnedInsight[];
@@ -38,8 +40,8 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
   currentUser,
 }) => {
   const isSuperAdmin = currentUser?.role === 'super_admin';
-  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'holidays_rd' | 'learned_tactics' | 'audit_log'>(() => {
-    return isSuperAdmin ? 'master_prompt' : 'holidays_rd';
+  const [activeSubTab, setActiveSubTab] = useState<'master_prompt' | 'whatsapp_statuses' | 'holidays_rd' | 'learned_tactics' | 'audit_log'>(() => {
+    return isSuperAdmin ? 'whatsapp_statuses' : 'whatsapp_statuses';
   });
 
   useEffect(() => {
@@ -206,6 +208,21 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
               <span>Prompt Maestro (36 Reglas)</span>
             </button>
           )}
+
+          <button
+            onClick={() => setActiveSubTab('whatsapp_statuses')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeSubTab === 'whatsapp_statuses'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-emerald-300 hover:text-white bg-emerald-500/10 border border-emerald-500/20'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Estados de WhatsApp & Multimedia</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-950 text-emerald-300">
+              {(config.activeWhatsAppStatuses || []).filter(s => s.active !== false).length}
+            </span>
+          </button>
 
           <button
             onClick={() => setActiveSubTab('holidays_rd')}
@@ -424,6 +441,8 @@ export const AIBrainView: React.FC<AIBrainViewProps> = ({
             </div>
           </div>
         </div>
+      ) : activeSubTab === 'whatsapp_statuses' ? (
+        <WhatsAppStatusManagerPanel config={config} onUpdateConfig={onUpdateConfig} />
       ) : activeSubTab === 'holidays_rd' ? (
         <HolidayManagerPanel config={config} onUpdateConfig={onUpdateConfig} />
       ) : (

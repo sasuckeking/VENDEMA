@@ -21,10 +21,12 @@ import {
   FileCode,
   Terminal,
   ExternalLink,
+  Activity,
   X
 } from 'lucide-react';
 import type { AppConfig, AIProviderType, UserAccount } from '../types';
 import { getSupabaseSchemaSql, testSupabaseConnection } from '../utils/supabaseService';
+import { SystemLogsView } from './SystemLogsView';
 
 interface SettingsViewProps {
   config: AppConfig;
@@ -35,24 +37,22 @@ interface SettingsViewProps {
 
 const AI_MODELS_BY_PROVIDER: Record<AIProviderType, { id: string; label: string; badge: string }[]> = {
   gemini: [
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (Recomendado — Ultra Rápido)', badge: 'Baja Latencia' },
-    { id: 'gemini-flash-latest', label: 'Gemini Flash Latest (Multimodal Estable)', badge: 'Multimodal' },
-    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite (Alta Velocidad)', badge: 'Ultra Rápido' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Rápido para Ventas en WhatsApp)', badge: 'Velocidad' },
   ],
   openai: [
-    { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Rápido para Ventas en WhatsApp)', badge: 'Velocidad' },
-    { id: 'gpt-4o', label: 'GPT-4o Omni (Máxima Capacidad)', badge: 'Flagship' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Recomendado — Rápido para Ventas en WhatsApp)', badge: 'Velocidad' },
+    { id: 'gpt-4o', label: 'GPT-4o Omni (Máxima Capacidad y Visión)', badge: 'Flagship' },
     { id: 'o3-mini', label: 'OpenAI o3-mini (Razonamiento Comercial)', badge: 'Reasoning' },
   ],
   deepseek: [
-    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (Optimizado para Diálogo Comercial)', badge: 'Eficiente' },
-    { id: 'deepseek-reasoner', label: 'DeepSeek R1 Reasoner (Análisis Profundo)', badge: 'R1 Thinking' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Rápido para Ventas en WhatsApp)', badge: 'Velocidad' },
   ],
 };
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConfig, currentUser, onLogout }) => {
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isReadOnly = !isSuperAdmin;
+  const [settingsSubTab, setSettingsSubTab] = useState<'config' | 'logs'>('config');
 
   // Helper to read persisted AI config from localStorage as fallback
   const getSavedLocalAi = (): Partial<NonNullable<AppConfig['aiProvider']>> => {
@@ -65,12 +65,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
 
   const initialLocalAi = getSavedLocalAi();
 
-  // AI Provider state (initialized from config + localStorage fallback so keys are never lost)
-  const [aiProvider, setAiProvider] = useState<AIProviderType>(
-    config.aiProvider?.provider || initialLocalAi.provider || 'gemini'
-  );
+  // AI Provider state (Strictly OpenAI Exclusive)
+  const [aiProvider, setAiProvider] = useState<AIProviderType>('openai');
   const [aiModel, setAiModel] = useState<string>(
-    config.aiProvider?.model || initialLocalAi.model || 'gemini-3.8-flash'
+    config.aiProvider?.model && ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].includes(config.aiProvider.model)
+      ? config.aiProvider.model
+      : initialLocalAi.model && ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].includes(initialLocalAi.model)
+      ? initialLocalAi.model
+      : 'gpt-4o-mini'
   );
   const [aiTemperature, setAiTemperature] = useState<number>(
     config.aiProvider?.temperature ?? initialLocalAi.temperature ?? 0.35
@@ -84,15 +86,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>(
     config.aiProvider?.openaiBaseUrl || initialLocalAi.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions'
   );
-  const [deepseekApiKey, setDeepseekApiKey] = useState<string>(
-    config.aiProvider?.deepseekApiKey || initialLocalAi.deepseekApiKey || ''
-  );
-  const [deepseekBaseUrl, setDeepseekBaseUrl] = useState<string>(
-    config.aiProvider?.deepseekBaseUrl || initialLocalAi.deepseekBaseUrl || 'https://api.deepseek.com/chat/completions'
-  );
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(
-    config.aiProvider?.geminiApiKey || initialLocalAi.geminiApiKey || ''
-  );
   const [isTestingAi, setIsTestingAi] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [aiKeySavedBanner, setAiKeySavedBanner] = useState<string | null>(null);
@@ -100,26 +93,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const isEditingAiInputRef = useRef<boolean>(false);
   const autoSaveTimerRef = useRef< ReturnType<typeof setTimeout> | null>(null);
 
-  const [credentialsTab, setCredentialsTab] = useState<AIProviderType>(
-    config.aiProvider?.provider || initialLocalAi.provider || 'openai'
-  );
-
   useEffect(() => {
     // Never overwrite inputs while the user is actively typing/pasting in the credential fields
     if (isEditingAiInputRef.current) return;
 
     if (config.aiProvider) {
-      if (config.aiProvider.provider) {
-        setAiProvider(config.aiProvider.provider);
+      setAiProvider('openai');
+      if (config.aiProvider.model && ['gpt-4o-mini', 'gpt-4o', 'o3-mini'].includes(config.aiProvider.model)) {
+        setAiModel(config.aiProvider.model);
       }
-      if (config.aiProvider.model) setAiModel(config.aiProvider.model);
       if (config.aiProvider.temperature !== undefined) setAiTemperature(config.aiProvider.temperature);
       if (config.aiProvider.customInstructions !== undefined) setCustomInstructions(config.aiProvider.customInstructions);
       if (config.aiProvider.openaiApiKey) setOpenaiApiKey(config.aiProvider.openaiApiKey);
       if (config.aiProvider.openaiBaseUrl) setOpenaiBaseUrl(config.aiProvider.openaiBaseUrl);
-      if (config.aiProvider.deepseekApiKey) setDeepseekApiKey(config.aiProvider.deepseekApiKey);
-      if (config.aiProvider.deepseekBaseUrl) setDeepseekBaseUrl(config.aiProvider.deepseekBaseUrl);
-      if (config.aiProvider.geminiApiKey) setGeminiApiKey(config.aiProvider.geminiApiKey);
     }
   }, [config.aiProvider]);
 
@@ -307,20 +293,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const syncAiConfigImmediately = async (overrides?: Partial<AppConfig['aiProvider']>) => {
     const nextAiProvider = {
       ...config.aiProvider,
-      provider: aiProvider,
+      provider: 'openai' as AIProviderType,
       model: aiModel,
       temperature: aiTemperature,
       customInstructions,
       openaiApiKey: (overrides?.openaiApiKey !== undefined ? overrides.openaiApiKey : openaiApiKey).trim(),
       openaiBaseUrl: (overrides?.openaiBaseUrl !== undefined ? overrides.openaiBaseUrl : openaiBaseUrl).trim(),
-      deepseekApiKey: (overrides?.deepseekApiKey !== undefined ? overrides.deepseekApiKey : deepseekApiKey).trim(),
-      deepseekBaseUrl: (overrides?.deepseekBaseUrl !== undefined ? overrides.deepseekBaseUrl : deepseekBaseUrl).trim(),
-      geminiApiKey: (overrides?.geminiApiKey !== undefined ? overrides.geminiApiKey : geminiApiKey).trim(),
+      deepseekApiKey: '',
+      deepseekBaseUrl: '',
+      geminiApiKey: '',
       ...overrides,
     };
+    nextAiProvider.provider = 'openai';
     if (nextAiProvider.openaiApiKey) nextAiProvider.openaiApiKey = nextAiProvider.openaiApiKey.trim();
-    if (nextAiProvider.deepseekApiKey) nextAiProvider.deepseekApiKey = nextAiProvider.deepseekApiKey.trim();
-    if (nextAiProvider.geminiApiKey) nextAiProvider.geminiApiKey = nextAiProvider.geminiApiKey.trim();
 
     try {
       localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextAiProvider));
@@ -342,15 +327,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
     isEditingAiInputRef.current = true;
     const nextSnapshot = {
       ...config.aiProvider,
-      provider: aiProvider,
+      provider: 'openai' as AIProviderType,
       model: aiModel,
       temperature: aiTemperature,
       customInstructions,
       openaiApiKey,
       openaiBaseUrl,
-      deepseekApiKey,
-      deepseekBaseUrl,
-      geminiApiKey,
+      deepseekApiKey: '',
+      deepseekBaseUrl: '',
+      geminiApiKey: '',
       ...overrides,
     };
     try {
@@ -362,19 +347,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
     }
     autoSaveTimerRef.current = setTimeout(() => {
       syncAiConfigImmediately(overrides).then(() => {
-        setAiKeySavedBanner('✓ API Key guardada automáticamente en Servidor y Supabase');
+        setAiKeySavedBanner('✓ API Key de OpenAI guardada automáticamente en Servidor y Supabase');
         setTimeout(() => setAiKeySavedBanner(null), 4000);
       });
     }, 450);
-  };
-
-  const handleSelectProvider = async (provider: AIProviderType) => {
-    setAiProvider(provider);
-    setCredentialsTab(provider);
-    const defaultModel = AI_MODELS_BY_PROVIDER[provider][0].id;
-    setAiModel(defaultModel);
-    setAiTestResult(null);
-    await syncAiConfigImmediately({ provider, model: defaultModel });
   };
 
   const handleTestAiProvider = async () => {
@@ -386,15 +362,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider: aiProvider,
+          provider: 'openai',
           model: aiModel,
           temperature: aiTemperature,
           customInstructions,
           openaiApiKey,
           openaiBaseUrl,
-          deepseekApiKey,
-          deepseekBaseUrl,
-          geminiApiKey,
         }),
       });
       const data = await res.json();
@@ -549,15 +522,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       clearTimeout(autoSaveTimerRef.current);
     }
     await syncAiConfigImmediately({
+      provider: 'openai',
       openaiApiKey: openaiApiKey.trim(),
       openaiBaseUrl: openaiBaseUrl.trim(),
-      deepseekApiKey: deepseekApiKey.trim(),
-      deepseekBaseUrl: deepseekBaseUrl.trim(),
-      geminiApiKey: geminiApiKey.trim(),
     });
     setIsSaving(false);
-    setAiKeySavedBanner('✓ API Key guardada permanentemente en Servidor, Navegador y Supabase');
-    setSaveToast('Credenciales de IA (Gemini, OpenAI, DeepSeek) guardadas y activadas con éxito.');
+    setAiKeySavedBanner('✓ API Key de OpenAI guardada permanentemente en Servidor, Navegador y Supabase');
+    setSaveToast('Credenciales exclusivas de OpenAI guardadas y activadas con éxito.');
     setTimeout(() => {
       setSaveToast(null);
       setAiKeySavedBanner(null);
@@ -625,15 +596,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
     isEditingAiInputRef.current = false;
     const nextAi = {
       ...config.aiProvider,
-      provider: aiProvider,
+      provider: 'openai' as AIProviderType,
       model: aiModel,
       temperature: aiTemperature,
       customInstructions,
       openaiApiKey: openaiApiKey.trim(),
       openaiBaseUrl: openaiBaseUrl.trim(),
-      deepseekApiKey: deepseekApiKey.trim(),
-      deepseekBaseUrl: deepseekBaseUrl.trim(),
-      geminiApiKey: geminiApiKey.trim(),
+      deepseekApiKey: '',
+      deepseekBaseUrl: '',
+      geminiApiKey: '',
     };
     try {
       localStorage.setItem('vendema_ai_provider_config', JSON.stringify(nextAi));
@@ -669,8 +640,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       },
     });
     setIsSaving(false);
-    setAiKeySavedBanner('✓ API Key guardada permanentemente en Servidor, Navegador y Supabase');
-    setSaveToast('Configuración de IA, Supabase, Servidor Central y WhatsApp guardada con éxito.');
+    setAiKeySavedBanner('✓ API Key de OpenAI guardada permanentemente en Servidor, Navegador y Supabase');
+    setSaveToast('Configuración de OpenAI, Supabase, Servidor Central y WhatsApp guardada con éxito.');
     setTimeout(() => {
       setSaveToast(null);
       setAiKeySavedBanner(null);
@@ -699,7 +670,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
               {isSuperAdmin
-                ? 'Cambia el motor de IA (Gemini, OpenAI o DeepSeek), vincula tu WhatsApp por Código QR sin salir del CRM y gestiona la sincronización.'
+                ? 'Configura el motor exclusivo de OpenAI (ChatGPT), vincula tu WhatsApp por Código QR sin salir del CRM y gestiona la sincronización.'
                 : 'Verifica el estado de conexión de WhatsApp o escanea el código QR directamente desde el teléfono del negocio.'}
             </p>
           </div>
@@ -713,8 +684,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
         )}
       </div>
 
-      <form onSubmit={handleSave} className="space-y-6">
-        {/* SECTION 1: Multi-Provider AI Selector (Gemini, OpenAI, DeepSeek) — SUPER ADMIN ONLY */}
+      {/* Sub-navigation tabs: Configuración vs System Logs */}
+      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#0F141C] border border-white/[0.07] w-fit shadow-md">
+        <button
+          type="button"
+          onClick={() => setSettingsSubTab('config')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            settingsSubTab === 'config'
+              ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+          }`}
+        >
+          <Settings className="w-4 h-4 text-lime-400" />
+          <span>Configuración & Conexiones</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSettingsSubTab('logs')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            settingsSubTab === 'logs'
+              ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+          }`}
+        >
+          <Activity className="w-4 h-4 text-lime-400" />
+          <span>Registros del Sistema (System Logs)</span>
+        </button>
+      </div>
+
+      {settingsSubTab === 'logs' ? (
+        <SystemLogsView />
+      ) : (
+        <form onSubmit={handleSave} className="space-y-6">
+        {/* SECTION 1: OpenAI Exclusive AI Engine — SUPER ADMIN ONLY */}
         {isSuperAdmin && (
         <div className="p-5 rounded-2xl bg-[#0F141C] border border-white/[0.06] space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-white/[0.06]">
@@ -722,10 +725,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
               <Cpu className="w-4 h-4 text-lime-400" />
               <div>
                 <h2 className="text-sm font-bold text-slate-100">
-                  Motor de Inteligencia Artificial (Selector Multi-Proveedor)
+                  Motor de Inteligencia Artificial Exclusivo: OpenAI (ChatGPT / Whisper / Vision)
                 </h2>
                 <span className="text-[11px] text-slate-400">
-                  Elige con un clic qué inteligencia artificial responde a tus clientes y analiza las ventas
+                  100% de las respuestas comerciales, transcripción de notas de voz y visión de comprobantes operan directamente con OpenAI
                 </span>
               </div>
             </div>
@@ -738,7 +741,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-lime-950/80 hover:bg-lime-900 border border-lime-700/60 text-lime-300 text-xs font-semibold transition-colors disabled:opacity-50"
               >
                 <Sparkles className={`w-3.5 h-3.5 ${isTestingAi ? 'animate-spin' : ''}`} />
-                <span>{isTestingAi ? 'Probando Motor IA...' : 'Probar Motor de IA Seleccionado'}</span>
+                <span>{isTestingAi ? 'Probando OpenAI...' : 'Probar Conexión con OpenAI'}</span>
               </button>
             )}
           </div>
@@ -760,264 +763,100 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
             </div>
           )}
 
-          {/* 3 Provider Cards: Gemini, OpenAI, DeepSeek */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {[
-              {
-                id: 'gemini' as AIProviderType,
-                title: 'Google Gemini',
-                subtitle: 'Gemini 3.8 Flash / 3.1 Pro',
-                desc: 'Nativo multimodelo para texto, transcripción de notas de voz y visión de comprobantes.',
-              },
-              {
-                id: 'openai' as AIProviderType,
-                title: 'OpenAI (ChatGPT)',
-                subtitle: 'GPT-4o / GPT-4o-mini / o3-mini',
-                desc: 'Fluidez conversacional comercial y cierre persuasivo de ventas por WhatsApp.',
-              },
-              {
-                id: 'deepseek' as AIProviderType,
-                title: 'DeepSeek AI',
-                subtitle: 'DeepSeek V3 Chat / R1 Reasoner',
-                desc: 'Alto rendimiento en razonamiento técnico de especificaciones y comparativas de laptops.',
-              },
-            ].map(item => {
-              const active = aiProvider === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => handleSelectProvider(item.id)}
-                  className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between ${
-                    active
-                      ? 'bg-[#131F14] border-lime-500 shadow-lg shadow-lime-500/10'
-                      : 'bg-[#121822] border-white/[0.06] hover:border-white/[0.15]'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-bold text-white">{item.title}</span>
-                      <span
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          active ? 'bg-lime-400 shadow-sm shadow-lime-400' : 'bg-slate-600'
-                        }`}
-                      />
-                    </div>
-                    <span className="text-[11px] font-mono text-lime-400 block mb-2">
-                      {item.subtitle}
-                    </span>
-                    <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
-                  </div>
-
-                  <div className="mt-3 pt-2 border-t border-white/[0.06] flex items-center justify-between text-[11px]">
-                    <span className={active ? 'text-lime-300 font-semibold' : 'text-slate-500'}>
-                      {active ? '✓ Proveedor Seleccionado' : 'Clic para activar'}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Provider Connection Credentials Box */}
-          <div className="p-4 rounded-xl bg-[#121822] border border-white/[0.07] space-y-3 text-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-white/[0.06]">
-              <div className="flex items-center gap-1.5 p-1 bg-black/40 rounded-lg border border-white/[0.05]">
-                <button
-                  type="button"
-                  onClick={() => setCredentialsTab('gemini')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                    credentialsTab === 'gemini'
-                      ? 'bg-lime-500 text-slate-950 font-bold shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>Google Gemini</span>
-                  <span className={`w-2 h-2 rounded-full ${geminiApiKey ? 'bg-cyan-400' : 'bg-emerald-400'}`} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCredentialsTab('openai')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                    credentialsTab === 'openai'
-                      ? 'bg-lime-500 text-slate-950 font-bold shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>OpenAI</span>
-                  <span className={`w-2 h-2 rounded-full ${openaiApiKey ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCredentialsTab('deepseek')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                    credentialsTab === 'deepseek'
-                      ? 'bg-lime-500 text-slate-950 font-bold shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>DeepSeek</span>
-                  <span className={`w-2 h-2 rounded-full ${deepseekApiKey ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                </button>
+          {/* OpenAI Exclusive Banner Card */}
+          <div className="p-4 rounded-xl border bg-[#131F14] border-lime-500/80 shadow-lg shadow-lime-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm font-bold text-white">OpenAI (ChatGPT Oficial)</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-lime-500/20 text-lime-300 border border-lime-500/40">
+                  Motor Único Activo
+                </span>
               </div>
-
-              <span className="text-[11px] font-mono text-slate-400">
-                {credentialsTab === 'gemini'
-                  ? geminiApiKey
-                    ? '✓ Credencial personalizada configurada'
-                    : '✓ Conectado por defecto al entorno de IA (opcional ingresar otra)'
-                  : credentialsTab === 'openai'
-                  ? openaiApiKey
-                    ? openaiApiKey.trim().startsWith('sk-')
-                      ? '✓ Credencial OpenAI guardada (sk-...)'
-                      : '⚠️ Clave incompleta (no inicia con sk-)'
-                    : '⚠️ Sin clave configurada (Respaldo Gemini activo)'
-                  : deepseekApiKey
-                  ? '✓ Credencial DeepSeek guardada'
-                  : '⚠️ Sin clave configurada (Respaldo Gemini activo)'}
+              <span className="text-[11px] font-mono text-lime-400 block mb-1">
+                GPT-4o-mini / GPT-4o / o3-mini + Whisper-1 (Audio)
+              </span>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Google Gemini y DeepSeek han sido eliminados del sistema. Todas las consultas de clientes en WhatsApp se procesan exclusivamente con tu cuenta de OpenAI.
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${
+                openaiApiKey && openaiApiKey.trim().startsWith('sk-')
+                  ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-300'
+                  : 'bg-amber-950/80 border-amber-500/40 text-amber-300'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${
+                  openaiApiKey && openaiApiKey.trim().startsWith('sk-') ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`} />
+                <span>
+                  {openaiApiKey && openaiApiKey.trim().startsWith('sk-')
+                    ? 'Clave sk-... Configurada'
+                    : 'Requiere API Key sk-...'}
+                </span>
               </span>
             </div>
+          </div>
 
-            {credentialsTab === 'openai' && (
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-400 mb-1 font-semibold">
-                      OpenAI API Key / Token de Conexión (debe comenzar con sk-... o sk-proj-...)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="sk-proj-..."
-                      value={openaiApiKey}
-                      onFocus={() => {
-                        isEditingAiInputRef.current = true;
-                      }}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setOpenaiApiKey(val);
-                        handleAiFieldChange({ openaiApiKey: val });
-                      }}
-                      onBlur={e => {
-                        isEditingAiInputRef.current = false;
-                        syncAiConfigImmediately({ openaiApiKey: e.target.value.trim() });
-                      }}
-                      className={`w-full bg-[#090D12] border rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none ${
-                        openaiApiKey && !openaiApiKey.trim().startsWith('sk-')
-                          ? 'border-amber-500/60 focus:border-amber-400'
-                          : 'border-white/[0.08] focus:border-lime-500'
-                      }`}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 mb-1 font-semibold">
-                      Endpoint API de OpenAI
-                    </label>
-                    <input
-                      type="text"
-                      value={openaiBaseUrl}
-                      onFocus={() => {
-                        isEditingAiInputRef.current = true;
-                      }}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setOpenaiBaseUrl(val);
-                        handleAiFieldChange({ openaiBaseUrl: val });
-                      }}
-                      onBlur={e => {
-                        isEditingAiInputRef.current = false;
-                        syncAiConfigImmediately({ openaiBaseUrl: e.target.value.trim() });
-                      }}
-                      className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
-                    />
-                  </div>
-                </div>
-                {openaiApiKey && !openaiApiKey.trim().startsWith('sk-') && (
-                  <div className="p-2.5 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-300 text-[11px] leading-relaxed">
-                    <strong>Nota importante sobre tu clave de OpenAI:</strong> La clave pegada actualmente (<code>{openaiApiKey.slice(0, 12)}...</code>) no comienza con <code>sk-</code> ni <code>sk-proj-</code> (parece haberse cortado la primera parte al copiarla). Mientras pegas la clave completa desde OpenAI, <strong>el Bot de Ventas está respondiendo tus chats de WhatsApp en tiempo real mediante el respaldo automático de Google Gemini</strong> sin ninguna interrupción.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {credentialsTab === 'deepseek' && (
+          {/* OpenAI Connection Credentials Box */}
+          <div className="p-4 rounded-xl bg-[#121822] border border-white/[0.07] space-y-3 text-xs">
+            <div className="space-y-2.5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1 font-semibold">
-                    DeepSeek API Key / Token de Conexión
+                    OpenAI API Key / Token de Conexión (debe comenzar con sk-... o sk-proj-...)
                   </label>
                   <input
                     type="text"
-                    placeholder="sk-..."
-                    value={deepseekApiKey}
+                    placeholder="sk-proj-..."
+                    value={openaiApiKey}
                     onFocus={() => {
                       isEditingAiInputRef.current = true;
                     }}
                     onChange={e => {
                       const val = e.target.value;
-                      setDeepseekApiKey(val);
-                      handleAiFieldChange({ deepseekApiKey: val });
+                      setOpenaiApiKey(val);
+                      handleAiFieldChange({ openaiApiKey: val });
                     }}
                     onBlur={e => {
                       isEditingAiInputRef.current = false;
-                      syncAiConfigImmediately({ deepseekApiKey: e.target.value.trim() });
+                      syncAiConfigImmediately({ openaiApiKey: e.target.value.trim() });
                     }}
-                    className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
+                    className={`w-full bg-[#090D12] border rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none ${
+                      openaiApiKey && !openaiApiKey.trim().startsWith('sk-')
+                        ? 'border-amber-500/60 focus:border-amber-400'
+                        : 'border-white/[0.08] focus:border-lime-500'
+                    }`}
                   />
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1 font-semibold">
-                    Endpoint API de DeepSeek
+                    Endpoint API de OpenAI
                   </label>
                   <input
                     type="text"
-                    value={deepseekBaseUrl}
+                    value={openaiBaseUrl}
                     onFocus={() => {
                       isEditingAiInputRef.current = true;
                     }}
                     onChange={e => {
                       const val = e.target.value;
-                      setDeepseekBaseUrl(val);
-                      handleAiFieldChange({ deepseekBaseUrl: val });
+                      setOpenaiBaseUrl(val);
+                      handleAiFieldChange({ openaiBaseUrl: val });
                     }}
                     onBlur={e => {
                       isEditingAiInputRef.current = false;
-                      syncAiConfigImmediately({ deepseekBaseUrl: e.target.value.trim() });
+                      syncAiConfigImmediately({ openaiBaseUrl: e.target.value.trim() });
                     }}
                     className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
                   />
                 </div>
               </div>
-            )}
-
-            {credentialsTab === 'gemini' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="md:col-span-2">
-                  <label className="block text-slate-400 mb-1 font-semibold">
-                    Google Gemini API Key (Opcional — si se deja vacío usa la conexión integrada del servidor)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="AIzaSy... (Dejar vacío para usar la credencial automática activa)"
-                    value={geminiApiKey}
-                    onFocus={() => {
-                      isEditingAiInputRef.current = true;
-                    }}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setGeminiApiKey(val);
-                      handleAiFieldChange({ geminiApiKey: val });
-                    }}
-                    onBlur={e => {
-                      isEditingAiInputRef.current = false;
-                      syncAiConfigImmediately({ geminiApiKey: e.target.value.trim() });
-                    }}
-                    className="w-full bg-[#090D12] border border-white/[0.08] rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-lime-500"
-                  />
+              {openaiApiKey && !openaiApiKey.trim().startsWith('sk-') && (
+                <div className="p-2.5 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-300 text-[11px] leading-relaxed">
+                  <strong>Atención:</strong> La clave ingresada (<code>{openaiApiKey.slice(0, 12)}...</code>) no comienza con <code>sk-</code> ni <code>sk-proj-</code>. Ingresa una clave válida de OpenAI para que el Bot responda en WhatsApp.
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1028,7 +867,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                   </span>
                 ) : (
                   <span className="text-[11px] text-slate-400">
-                    Las credenciales se guardan automáticamente al pegarlas o con el botón Guardar.
+                    Las credenciales de OpenAI se guardan automáticamente al pegarlas o con el botón Guardar.
                   </span>
                 )}
               </div>
@@ -1040,7 +879,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#65D30F] hover:bg-lime-400 text-slate-950 font-bold text-xs transition-colors disabled:opacity-50"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>Guardar Credenciales de IA</span>
+                  <span>Guardar Credenciales de OpenAI</span>
                 </button>
               )}
             </div>
@@ -1050,7 +889,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 text-xs">
             <div>
               <label className="block text-slate-400 mb-1 font-semibold">
-                Modelo Activo de {aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'openai' ? 'OpenAI' : 'DeepSeek'}
+                Modelo Activo de OpenAI
               </label>
               <select
                 value={aiModel}
@@ -1060,7 +899,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
                 }}
                 className="w-full bg-[#121822] border border-white/[0.07] rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-lime-500"
               >
-                {AI_MODELS_BY_PROVIDER[aiProvider].map(m => (
+                {AI_MODELS_BY_PROVIDER.openai.map(m => (
                   <option key={m.id} value={m.id}>
                     {m.label} [{m.badge}]
                   </option>
@@ -1860,6 +1699,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
           </div>
         )}
       </form>
+      )}
 
       {/* SQL Schema Modal */}
       {showSqlModal && (
