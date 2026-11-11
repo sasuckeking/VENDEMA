@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+.vendema-*.json
+.antigravity/
+.vscode/

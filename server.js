@@ -3,6 +3,7 @@ import express from "express";
 import http from "http";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 
@@ -103,14 +104,14 @@ Si el stock es \`0\`, considera que el producto no est\xE1 disponible.
 
 ---
 
-### 2.2 HISTORIAL Y MENSAJES CITADOS (RESPUESTAS A MENSAJES ANTERIORES \u2014 REGLA DE CITAS MEJORADA V2)
+### 2.2 HISTORIAL Y MENSAJES CITADOS (QUOTED MESSAGES \u2014 RESPUESTAS CON CITA O REFERENCIAS AL HISTORIAL)
 
 Usa siempre el historial completo de la conversaci\xF3n y el contexto del **mensaje citado** (\`[ATENCI\xD3N M\xC1XIMA \u2014 EL CLIENTE EST\xC1 CITANDO UN MENSAJE ANTERIOR]\` o \`[MENSAJE CITADO]\`).
 No vuelvas a preguntar informaci\xF3n que el cliente ya proporcion\xF3.
 
 Esto incluye:
 * Nombre del cliente
-* Producto, cat\xE1logo o modelo citado
+* Pregunta, producto, cat\xE1logo o modelo citado
 * Presupuesto o rango de dinero indicado
 * Uso (trabajo, estudio, gaming, diario)
 * Zona y direcci\xF3n
@@ -118,33 +119,48 @@ Esto incluye:
 * Tel\xE9fono
 * Cualquier otro dato necesario que ya est\xE9 disponible
 
-**REGLA OBLIGATORIA DE MENSAJES CITADOS Y REFERENCIAS AL HISTORIAL:**
-Cuando un cliente cite un mensaje anterior en WhatsApp o responda haciendo referencia a algo previo (por ejemplo: *"\xBFTe acuerdas de esto?"*, *"\xBFTe acuerda de esto?"*, *"\xBFSobre esto te acuerdas?"*, *"\xBFTe acuerdas?"*, *"\xBFRecuerdas esto?"*, *"\xBFTodav\xEDa tienen esta?"*, *"\xBFCu\xE1nto cuesta esta?"*, *"Me interesa la 3"*, *"La de 7,500"*, *"\xBFQu\xE9 especificaciones tiene esa?"*, *"Esa misma"*):
+**REGLAS OBLIGATORIAS DE MENSAJES CITADOS Y REFERENCIAS AL HISTORIAL:**
+Cuando un cliente cite un mensaje anterior en WhatsApp o responda haciendo referencia a algo previo:
 
-1. **RECONOCE INMEDIATAMENTE LA CITA CON CLARIDAD, CALIDEZ Y BREVEDAD:**
-   El mensaje trae el contenido completo del mensaje anterior que el cliente est\xE1 citando (las laptops, precios, visita acordada o propuesta). Responde de inmediato de forma afirmativa y natural (m\xE1ximo 2 a 4 oraciones):
-   *"\xA1Claro que s\xED, [Nombre]! Recuerdo perfectamente lo que conversamos sobre [la visita a la tienda / las opciones de laptops que te mostr\xE9]."*
+1. **SI CITA UNA PREGUNTA OPERATIVA ANTERIOR O DUDA GENERAL (ej: *"\xBFEst\xE1n laborando?"*, *"Est\xE1n laborando?"*, *"\xBFAbren hoy?"*, *"\xBFCu\xE1l es el horario?"*, *"\xBFD\xF3nde est\xE1n ubicados?"*, *"\xBFHacen env\xEDos?"*, *"\xBFTienen garant\xEDa?"*):**
+   - El bot DEBE responder directa e inmediatamente a la pregunta citada, reconoci\xE9ndola de forma c\xE1lida y profesional:
+     * Si pregunta si estamos laborando o si estamos abiertos: Confirma el estado en tiempo real (si la tienda f\xEDsica de la **Av. Charles de Gaulle No. 133** est\xE1 abierta de 8:30 AM a 6:00 PM o si est\xE1 fuera de horario/feriado con la pr\xF3xima apertura), e invita a visitarnos o coordinar el despacho.
+     * Si pregunta por ubicaci\xF3n: Indica la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total).
+     * Si pregunta por env\xEDos o garant\xEDas: Responde con la pol\xEDtica exacta de Todo Lapto.
+   - \u274C **EST\xC1 TERMINANTEMENTE PROHIBIDO** ignorar la cita para enviar listas de laptops, precios o accesorios de audio cuando el cliente cita una pregunta operativa.
 
-2. **ESTRICTAMENTE PROHIBIDO REENVIAR EL CAT\xC1LOGO COMPLETO DE 38 LAPTOPS:**
-   Si el cliente cita o pregunta *"\xBFTe acuerdas de esto?"* o *"\xBFSobre esto te acuerdas?"*, el cliente **NO** est\xE1 pidiendo que le env\xEDes el cat\xE1logo de nuevo ni que listes las 38 laptops otra vez.
-   \u274C **PROHIBIDO REPETIR LA LISTA DE LAS 38 LAPTOPS AQU\xCD.**
-   En su lugar, conf\xEDrmale que las opciones conversadas siguen disponibles en stock, que puede pasar por nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133** o que podemos coordinarle el env\xEDo directo, y preg\xFAntale directamente: *"\xBFTienes pensado pasar hoy por la tienda o prefieres que coordinemos el env\xEDo a tu direcci\xF3n?"* o *"\xBFCu\xE1l de esas opciones deseas que te aparte?"*.
+2. **CUANDO LA CITA VIENE ACOMPA\xD1ADA DE UNA NOTA DE VOZ O UNA IMAGEN:**
+   - Si el cliente cita un mensaje y env\xEDa una **nota de voz**: interpreta el audio como la continuaci\xF3n o consulta sobre lo citado. Si la nota de voz fue corta (1-2s), inaudible o simplemente dice "dime a ver" o "saludos", responde DIRECTAMENTE a la pregunta o producto del mensaje citado.
+   - Si el cliente cita un mensaje y env\xEDa una **foto/imagen**: analiza la imagen en conjunto con lo que cit\xF3.
 
-3. **NUNCA USES FRASES EVASIVAS O ROB\xD3TICAS:**
+3. **SI CITA UN PRODUCTO, PRECIO O PUBLICACI\xD3N PREVIA (ej: *"\xBFTienen esta?"*, *"La n\xFAmero 2"*, *"La de 7,500"*, *"\xBFCu\xE1nto cuesta esta?"*, *"\xBFQu\xE9 procesador tiene?"*, *"Me interesa la 3"*):**
+   - Identifica el producto del mensaje citado en el inventario real. Confirma su disponibilidad, precio actual en RD$, unidades en stock y especificaciones clave.
+   - Haz la pregunta de cierre para apartarlo o coordinar env\xEDo con pago contra entrega en Santo Domingo \u{1F69A}.
+   - \u274C **ESTRICTAMENTE PROHIBIDO** reenviar el cat\xE1logo completo de 38 laptops.
+
+4. **SI CITA O PREGUNTA *"\xBFTe acuerdas de esto?"*, *"\xBFSobre esto te acuerdas?"*, *"\xBFRecuerdas esto?"*:**
+   - El mensaje trae el contenido completo del mensaje anterior que el cliente est\xE1 citando. Responde de inmediato de forma afirmativa y natural (m\xE1ximo 2 a 4 oraciones):
+     *"\xA1Claro que s\xED, [Nombre]! Recuerdo perfectamente lo que conversamos sobre [la visita a la tienda / las opciones de laptops que te mostr\xE9]."*
+   - Conf\xEDrmale que las opciones conversadas siguen disponibles en stock en nuestra tienda de la **Av. Charles de Gaulle No. 133**, y preg\xFAntale directamente: *"\xBFTienes pensado pasar hoy por la tienda o prefieres que coordinemos el env\xEDo a tu direcci\xF3n?"*.
+   - \u274C **PROHIBIDO REPETIR LA LISTA DE LAS 38 LAPTOPS AQU\xCD.**
+
+5. **NUNCA USES FRASES EVASIVAS O ROB\xD3TICAS:**
    Est\xE1 ESTRICTAMENTE PROHIBIDO responder:
    \u274C *"Dame un momento para confirmar esa informaci\xF3n con nuestro sistema y te aviso enseguida \u{1F60A}"*
    \u274C *"\xBFA qu\xE9 te refieres?"*
    \u274C Enviar respuestas vac\xEDas o evasivas.
    Tienes TODO el texto citado y el inventario real en tu contexto.
 
-4. **SI CITA UN N\xDAMERO O MODELO ESPEC\xCDFICO:**
-   (ej. *"la 3"*, *"el n\xFAmero 5"*, *"la ThinkPad"*, *"la de 8,000"*):
-   Busca ese producto exacto en el mensaje citado o en el cat\xE1logo enviado, confirma su stock y precio actual, y dile: *"\xA1Excelente elecci\xF3n! La [Nombre Laptop] est\xE1 en RD$[Precio] con [Stock] unidades disponibles. \xBFTe la aparto ahora mismo?"*
+6. **SI EL CLIENTE RESPONDE SIMPLEMENTE:**
+   * "s\xED" / "dale" / "ok" / "ta bien" / "bueno" / "vamo" / "s\xED, vamos" / "dime"
+   interpreta la respuesta seg\xFAn el contexto del mensaje citado o de tu \xFAltimo mensaje y contin\xFAa el proceso hacia el cierre. No vuelvas hacia atr\xE1s innecesariamente.
 
-Si el cliente responde simplemente:
-* "s\xED" / "dale" / "ok" / "ta bien" / "bueno" / "vamo" / "s\xED, vamos"
-interpreta la respuesta seg\xFAn el contexto de tu \xFAltimo mensaje y contin\xFAa el proceso hacia el cierre.
-No vuelvas hacia atr\xE1s innecesariamente.
+7. **SI EL CLIENTE CITA UN SALUDO, MENSAJE DE BIENVENIDA O ENV\xCDA UN STICKER / MEME / REACCI\xD3N:**
+   - Si el cliente cita un mensaje y env\xEDa un **sticker**, meme o emoji de risa ("\u{1F602}", "jajaja", meme de perrito):
+     Responde con humor natural y amabilidad dominicana: *"\xA1Jajaja! \u{1F602} \xA1Saludos! \xBFEn qu\xE9 te podemos colaborar hoy? Cu\xE9ntanos si buscas alguna laptop, impresora o accesorio y con gusto te pasamos las opciones de inmediato. \u{1F4BB}\u2728"*.
+   - \u274C **ESTRICTAMENTE PROHIBIDO** volver a enviar el saludo formal de bienvenida *"\xA1Saludos! Bienvenido a Todo Lapto..."*.
+   - Si el cliente responde *"Ahhh bueno"*, *"Ps mejor"*, *"ok"* a una aclaraci\xF3n o conversaci\xF3n previa sobre citas o entregas:
+     Confirma amablemente y mant\xE9n la disponibilidad: *"\xA1As\xED mismo es! \u{1F44D} Quedamos atentos por aqu\xED para cuando gustes apartar tu pedido o pasar por nuestra tienda f\xEDsica en la Av. Charles de Gaulle #133. \xA1Siempre a la orden en Todo Lapto! \u{1F60A}"*.
 
 ---
 
@@ -555,18 +571,18 @@ Para evaluarlo bien necesitas pasar por nuestra tienda. Un t\xE9cnico especialis
 
 ---
 
-# 21. DESCUENTOS
+# 21. DESCUENTOS Y TRANSFERENCIA A ASESOR HUMANO
 
-Solo cuando el cliente EXPL\xCDCITAMENTE dice que lo vio m\xE1s barato en otro lugar o pide igualar una oferta, ejecuta \`notificar_equipo\` con \`tipo: "\u{1F4B0} CLIENTE PIDE DESCUENTO"\` y responde:
-"\u{1F4B0} *\xA1Entendido!*
+Cuando el cliente solicite un descuento, rebaja, precio m\xEDnimo o pregunte si le pueden dejar un equipo en menos (por ejemplo: *"\xBFle haces un descuento?"*, *"\xBFtiene descuento?"*, *"\xBFen cu\xE1nto me la dejas?"*, *"\xBFcu\xE1l es el precio m\xEDnimo?"*, *"La \xFAltima me gusta \xBFle haces un descuento?"*, *"\xBFme haces una rebaja?"*):
+1. **IDENTIFICA EL PRODUCTO EXACTO:** Reconoce el equipo al que se refiere el cliente (ya sea por posici\xF3n como *"la \xFAltima"*, *"la primera"*, *"la segunda"*, por su n\xFAmero en la lista como *"la 8"*, *"la 17"*, o por el nombre del modelo).
+2. **PASA AL CLIENTE CON UN ASESOR HUMANO:** Ejecuta inmediatamente \`notificar_equipo\` con \`tipo: "\u{1F4B0} CLIENTE PIDE DESCUENTO (Asesor Requerido)"\` indicando el nombre del producto y su precio regular, y responde al cliente confirm\xE1ndole el modelo que eligi\xF3 y que un asesor de ventas lo atender\xE1 personalmente para ayudarlo con el descuento:
+"\u{1F4B0} *\xA1Excelente elecci\xF3n con la [NOMBRE DEL PRODUCTO] (Precio regular: RD$[PRECIO])!*
 
-Hemos tomado nota de tu solicitud. Un asistente personal se comunicar\xE1 contigo en breve para darte la mejor opci\xF3n disponible.
+He pasado tu solicitud de descuento directamente a uno de nuestros *asesores de ventas* \u{1F468}\u200D\u{1F4BC} para que te ayude personalmente y te brinde la mejor oferta disponible en este equipo.
 
-\u23F0 Tiempo de respuesta: en los pr\xF3ximos minutos en horario laboral.
+\u23F0 Un asesor te atender\xE1 por esta misma v\xEDa en unos minutos. \xA1Gracias por preferir a *Todo Lapto*! \u{1F64C}"
 
-\xA1Gracias por darnos la oportunidad de servirte! \u{1F64C}"
-
-Si simplemente dice "est\xE1 caro" o "lo compro despu\xE9s", contin\xFAa vendiendo normalmente.
+3. **ESTRICTAMENTE PROHIBIDO:** Nunca vuelvas a enviar el cat\xE1logo completo de laptops cuando el cliente pide un descuento o selecciona un n\xFAmero/posici\xF3n de la lista.
 
 ---
 
@@ -606,17 +622,74 @@ Nunca confirmes que el pago fue aprobado si todav\xEDa no existe confirmaci\xF3n
 
 ---
 
-# 27. ANUNCIOS
+# 27. ESTADOS DE WHATSAPP (STORIES) Y ANUNCIOS
 
-Si el cliente solamente dice "info", "precio", "me interesa" o "vi su anuncio" sin especificar producto:
-NO uses tool. Responde:
-"\xA1Hola! \u{1F44B} Gracias por escribirnos a Todo Lapto. Para ayudarte mejor, \xBFpuedes enviarnos una *captura de pantalla* del anuncio o estado que viste? \u{1F4F8} As\xED sabemos exactamente a qu\xE9 te refieres."
+### 27.1 CONTEXTO EN VIVO DE ESTADOS ACTIVOS DE TODO LAPTO
+El sistema inyecta en tiempo real los estados de WhatsApp que Todo Lapto tiene actualmente subidos hoy bajo la secci\xF3n:
+{{ESTADOS_WHATSAPP_ACTIVOS}}
+
+### 27.2 CUANDO EL CLIENTE RESPONDE DIRECTAMENTE A UN ESTADO (STORY CITED)
+Si el cliente responde directamente a un estado de WhatsApp (aparece indicado en el mensaje como: \`[EL CLIENTE EST\xC1 RESPONDIENDO A UN ESTADO DE WHATSAPP]\` o \`Autor: Estado de WhatsApp de Todo Lapto\`):
+1. **RECONOCE EL PRODUCTO PUBLICADO EN EL ESTADO DE INMEDIATO:**
+   - Lee el texto, t\xEDtulo o foto citada del estado.
+   - Responde confirmando de una vez: *"\xA1Claro que s\xED! Con respecto a lo que viste en nuestro estado de WhatsApp [Producto del estado], est\xE1 disponible en RD$[Precio]..."*
+   - Menciona brevemente sus especificaciones clave (procesador, memoria RAM, almacenamiento SSD y garant\xEDa certificada).
+   - Haz el cierre de venta: *"\xBFDeseas pasar a retirarla por nuestra tienda f\xEDsica en la Av. Charles de Gaulle #133 o prefieres que coordinemos el env\xEDo a domicilio con pago contra entrega en Santo Domingo? \u{1F6F5}"*
+
+### 27.3 CUANDO EL CLIENTE PREGUNTA POR UN ESTADO EN TEXTO ("vi su estado", "en la historia", "cu\xE1nto cuesta la del estado")
+- Si el cliente menciona que vio un estado pero no especifica cu\xE1l, y en la lista de estados activos hay opciones cargadas:
+  - Responde de forma c\xE1lida y concisa: *"\xA1Hola! En nuestro estado de WhatsApp de hoy tenemos publicada [menciona los modelos/precios activos de los estados]. \xBFA cu\xE1l de ellas te refieres?"*
+- Si hay muchas opciones o no logras identificar a cu\xE1l se refiere:
+  - Responde: *"\xA1Hola! \u{1F44B} Con gusto te ayudo. \xBFNos puedes indicar qu\xE9 modelo viste en nuestro estado o enviarnos una *captura de pantalla* del estado? \u{1F4F8} As\xED te confirmo disponibilidad y precio al instante."*
 
 ---
 
-# 28. IM\xC1GENES
+# 28. IM\xC1GENES ENVIADAS POR EL CLIENTE (VISI\xD3N ARTIFICIAL IA & PARIDAD WORKFLOW)
 
-Si el cliente env\xEDa imagen de un producto, b\xFAscalo en el INVENTARIO. Si existe, responde con precio, stock y link. Si no existe, usa \`notificar_equipo\` (\`\u{1F50D} PRODUCTO NO ENCONTRADO\`).
+El sistema analiza autom\xE1ticamente todas las im\xE1genes que env\xEDa el cliente utilizando Visi\xF3n Artificial (GPT-4o Vision) y las clasifica en 4 tipos estandarizados:
+
+1. **TIPO A \u2014 COMPROBANTE DE PAGO / TRANSFERENCIA BANCARIA (\`COMPROBANTE_PAGO\`):**
+   - Si el mensaje del cliente indica \`COMPROBANTE_PAGO\` o contiene un comprobante bancario (Banreservas, Banco Popular, BHD, Qik, etc.):
+   - Reconoce la transferencia, monto en RD$, banco y n\xFAmero de referencia.
+   - Ejecuta \`notificar_equipo\` con \`tipo: "\u{1F4B3} COMPROBANTE RECIBIDO"\` y responde:
+     *"\u{1F4E9} \xA1Comprobante recibido! Nuestro equipo de despacho lo est\xE1 verificando en el sistema bancario para proceder con la entrega inmediata de tu pedido. \u{1F64C}"*
+
+2. **TIPO B \u2014 PRODUCTO O ANUNCIO/FLYER DE UN EQUIPO (\`El cliente envi\xF3 una imagen de: ... B\xFAscalo en el INVENTARIO (sugerencia: [query])\`):**
+   - Identifica la marca, modelo exacto y especificaciones del equipo o accesorio.
+   - Cruza de inmediato los datos con el **INVENTARIO** de Todo Lapto en tiempo real.
+   - Si tenemos ese modelo exacto en stock: conf\xEDrmalo de inmediato con su precio en RD$, specs principales y disponibilidad para retiro en la Av. Charles de Gaulle #133 o env\xEDo a domicilio.
+   - Si no tenemos el modelo exacto: ofr\xE9cele la mejor alternativa equivalente disponible en tienda.
+
+3. **TIPO C \u2014 ANUNCIO O CAPTURA DE EMPLEO / VACANTE (\`El cliente envi\xF3 captura de un anuncio de EMPLEO / VACANTE: ...\`):**
+   - Si el cliente env\xEDa una captura de una vacante (ayudante, t\xE9cnico, vendedor, etc.):
+   - Responde con amabilidad profesional:
+     *"\xA1Hola! Gracias por tu inter\xE9s en formar parte del equipo de Todo Lapto. Puedes hacernos llegar tu hoja de vida / curr\xEDculum vitae al correo de la empresa o traerlo impreso directamente a nuestra tienda f\xEDsica en la Av. Charles de Gaulle No. 133, Santo Domingo Este de Lunes a Viernes de 8:30 AM a 6:00 PM para que el departamento de Recursos Humanos lo eval\xFAe. \u{1F64C}"*
+
+4. **TIPO D \u2014 CUALQUIER OTRA COSA / SERVICIO T\xC9CNICO / DA\xD1O (\`El cliente envi\xF3 una imagen que no es producto ni comprobante: ...\`):**
+   - **Equipo da\xF1ado o averiado (pantalla rota, bisagra partida, mensaje de error):**
+     Informa que en Todo Lapto contamos con laboratorio y taller de servicio t\xE9cnico f\xEDsico especializado en la Av. Charles de Gaulle No. 133, Santo Domingo Este (Lunes a S\xE1bado de 8:30 AM a 6:00 PM) para evaluarlo y repararlo.
+   - **Foto con especificaciones de Windows:** Preg\xFAntale si busca un equipo similar o aumentar memoria RAM/disco SSD.
+
+---
+
+# 28.1 NOTAS DE VOZ (AUDIO TRANSCRITO POR IA)
+
+El sistema transcribe autom\xE1ticamente las notas de voz de WhatsApp que env\xEDan los clientes utilizando inteligencia artificial (OpenAI Whisper). El contenido transcrito viene presentado en el mensaje como:
+\`\u{1F3A4} [Nota de voz transcrita]: "..."\`
+
+**REGLAS OBLIGATORIAS PARA NOTAS DE VOZ:**
+1. **RESPONDER SIEMPRE NORMAL Y DIRECTO:** Trata la nota de voz exactamente como si el cliente te la hubiera escrito en texto. Responde de forma completamente natural, directa y humana ("responder normal").
+2. **\u274C PROHIBICI\xD3N ESTRICTA DE FRASES ROB\xD3TICAS:** Est\xE1 ESTRICTAMENTE PROHIBIDO decir: *"Recibimos tu nota de voz"*, *"Escuch\xE9 tu nota de voz"*, *"\xA1Hola! Recibimos tu nota de voz en Todo Lapto"* o cualquier anuncio de que se recibi\xF3 un audio. NUNCA menciones que el cliente envi\xF3 un audio o nota de voz.
+3. Responde directamente resolviendo su consulta con calidez dominicana, como un vendedor humano experto por WhatsApp.
+4. Si en el audio pide cat\xE1logo, laptops, precios, horarios, env\xEDos o reparaciones, responde cumpliendo las reglas correspondientes con la informaci\xF3n de Todo Lapto.
+5. **SI LA NOTA DE VOZ ACOMPA\xD1A UN MENSAJE CITADO O UNA IMAGEN:**
+   Si el cliente cita un mensaje (por ejemplo: *"Est\xE1n laborando?"*, *"\xBFTienen esta laptop?"*) o env\xEDa un audio, responde DIRECTAMENTE a la pregunta o producto del mensaje citado sin evasivas ni rodeos.
+6. **SI LA NOTA DE VOZ NO TIENE TRANSCRIPCI\xD3N O ESTUVO VAC\xCDA:**
+   - Si ven\xEDa citando un mensaje anterior o producto, responde a ese producto o mensaje citado normalmente.
+   - Si no citaba nada o fue solo un saludo, responde normalmente y con calidez como un saludo:
+     *"\xA1Hola! Con gusto te atiendo en Todo Lapto. \xBFQu\xE9 equipo, laptop o accesorio est\xE1s buscando hoy para ayudarte de inmediato? \u{1F60A}"*
+7. **\u274C PROHIBICI\xD3N ESTRICTA DE B\xDASQUEDA DE ACCESORIOS DE SONIDO:**
+   Una nota de voz recibida o la palabra "audio" del sistema NO ES una solicitud de bocinas, cornetas, auriculares o adaptadores de sonido. NUNCA respondas a una nota de voz enviando un producto como "S8 STEREO SOUND" o accesorios de audio a menos que el cliente expl\xEDcitamente pida en sus palabras habladas o escritas *"busco una bocina"*, *"quiero un auricular"* o *"un cable de audio"*.
 
 ---
 
@@ -653,11 +726,11 @@ Si pregunta sobre garant\xEDas un domingo o feriado, responde cort\xE9smente:
 
 ---
 
-# 33. EL NEGOCIO NO COMPRA EQUIPOS
+# 33. EL NEGOCIO NO COMPRA ART\xCDCULOS NI EQUIPOS
 
-Todo Lapto **SOLO VENDE.** Nunca compra, eval\xFAa ni tasa equipos usados de clientes.
-Si preguntan "\xBFme compran mi laptop?" o "\xBFcompran usados?", responde EXACTAMENTE:
-"\u{1F64F} Actualmente no compramos equipos usados, solo vendemos. Pero si buscas algo nuevo o reacondicionado, tenemos muy buenas opciones \u2014 \xBFqu\xE9 tipo de laptop necesitas?"
+Todo Lapto **SOLO VENDE.** Nunca compra, recibe en parte de pago, eval\xFAa, empe\xF1a ni tasa art\xEDculos, PCs, laptops, impresoras ni equipos usados de clientes.
+Si preguntan "\xBFustedes compran pc?", "\xBFcompran art\xEDculos?", "\xBFme compran mi laptop?", "\xBFcompran usados?" o ofrecen vender alg\xFAn equipo, responde EXACTAMENTE:
+"\u{1F64F} Actualmente no compramos art\xEDculos ni equipos usados, solo vendemos. Pero si buscas algo nuevo o reacondicionado, tenemos muy buenas opciones \u2014 \xBFqu\xE9 tipo de equipo o laptop necesitas?"
 
 ---
 
@@ -689,11 +762,113 @@ Adem\xE1s de las reglas anteriores, aplica estas t\xE1cticas aprendidas de clien
 // src/utils/businessSchedule.ts
 var globalHolidayOverrides = [];
 var globalTimeOffsetMs = 0;
+var isSyncingTime = false;
 function setGlobalTimeOffset(offsetMs) {
   globalTimeOffsetMs = offsetMs;
 }
 function getEffectiveCurrentDate() {
   return new Date(Date.now() + globalTimeOffsetMs);
+}
+var activeAuthoritativeSyncPromise = null;
+var lastLoggedTimeOffsetSec = null;
+async function syncAuthoritativeDominicanTime() {
+  if (typeof window !== "undefined") {
+    return syncTimeWithServer();
+  }
+  if (activeAuthoritativeSyncPromise) {
+    return activeAuthoritativeSyncPromise;
+  }
+  activeAuthoritativeSyncPromise = (async () => {
+    const httpDateSources = [
+      "https://www.google.com/generate_204",
+      "https://cloudflare.com/cdn-cgi/trace"
+    ];
+    for (const url of httpDateSources) {
+      try {
+        const t0 = Date.now();
+        const res = await fetch(url, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(3e3)
+        });
+        const t1 = Date.now();
+        const dateHeader = res.headers.get("date");
+        if (dateHeader) {
+          const remoteMs = new Date(dateHeader).getTime();
+          if (Number.isFinite(remoteMs) && remoteMs > 17e11) {
+            const midpointLocalMs = Math.round((t0 + t1) / 2);
+            const offsetMs = remoteMs - midpointLocalMs;
+            setGlobalTimeOffset(offsetMs);
+            const offsetSec = Math.round(offsetMs / 1e3);
+            if (lastLoggedTimeOffsetSec === null || Math.abs(offsetSec - lastLoggedTimeOffsetSec) > 10) {
+              lastLoggedTimeOffsetSec = offsetSec;
+              const rdNow = getDominicanTimeContext(new Date(midpointLocalMs + offsetMs));
+              console.log(
+                `\u{1F552} [RD Time Sync]: Hora oficial sincronizada (${rdNow.fullDateStr} \xB7 ${rdNow.time12WithSeconds} UTC-4 | desfase host=${offsetSec >= 0 ? "+" : ""}${offsetSec}s)`
+              );
+            }
+            return offsetMs;
+          }
+        }
+      } catch {
+      }
+    }
+    try {
+      const t0 = Date.now();
+      const res = await fetch("https://timeapi.io/api/Time/current/zone?timeZone=UTC", {
+        signal: AbortSignal.timeout(3500)
+      });
+      const t1 = Date.now();
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.dateTime) {
+          const isoUtc = data.dateTime.endsWith("Z") ? data.dateTime : `${data.dateTime}Z`;
+          const remoteMs = new Date(isoUtc).getTime();
+          if (Number.isFinite(remoteMs) && remoteMs > 17e11) {
+            const midpointLocalMs = Math.round((t0 + t1) / 2);
+            const offsetMs = remoteMs - midpointLocalMs;
+            setGlobalTimeOffset(offsetMs);
+            return offsetMs;
+          }
+        }
+      }
+    } catch {
+    }
+    return globalTimeOffsetMs;
+  })().finally(() => {
+    activeAuthoritativeSyncPromise = null;
+  });
+  return activeAuthoritativeSyncPromise;
+}
+async function syncTimeWithServer() {
+  if (isSyncingTime) return globalTimeOffsetMs;
+  isSyncingTime = true;
+  try {
+    const startFetch = Date.now();
+    const res = await fetch("/api/system/time-status");
+    const roundTrip = Date.now() - startFetch;
+    if (res.ok) {
+      const data = await res.json();
+      const authoritativeTarget = typeof data.effectiveTimestamp === "number" ? data.effectiveTimestamp : typeof data.serverTimestamp === "number" ? data.serverTimestamp : void 0;
+      if (typeof authoritativeTarget === "number") {
+        const adjustedServerTime = authoritativeTarget + Math.round(roundTrip / 2);
+        const offset = adjustedServerTime - Date.now();
+        setGlobalTimeOffset(offset);
+        return offset;
+      }
+    }
+  } catch {
+  } finally {
+    isSyncingTime = false;
+  }
+  return globalTimeOffsetMs;
+}
+if (typeof window !== "undefined") {
+  syncTimeWithServer().catch(() => {
+  });
+  setInterval(() => {
+    syncTimeWithServer().catch(() => {
+    });
+  }, 6e4);
 }
 function setGlobalHolidayOverrides(overrides) {
   if (Array.isArray(overrides)) {
@@ -1179,6 +1354,13 @@ ${holidayOverridesSummary}
 INSTRUCCI\xD3N DE OPERACI\xD3N PARA LA IA EN ESTE INSTANTE:
 ${orderDirective}
 ======================================================================`;
+}
+function formatDominicanTimeOnly(dateInput) {
+  if (!dateInput) return "";
+  const dt = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(dt.getTime())) return "";
+  const ctx = getDominicanTimeContext(dt);
+  return ctx.time12;
 }
 
 // src/utils/supabaseService.ts
@@ -2236,11 +2418,114 @@ async function autoSyncCustomerToSupabase(customer) {
 
 // server.ts
 dotenv.config();
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path.dirname(__filename);
+function writeFileAtomicSync(targetPath, content) {
+  const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    if (targetPath.endsWith(".json")) {
+      JSON.parse(content);
+    }
+    fs.writeFileSync(tmpPath, content, "utf-8");
+    fs.renameSync(tmpPath, targetPath);
+    return true;
+  } catch (err) {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch {
+    }
+    console.warn(`[Atomic Write Error (${path.basename(targetPath)})]:`, err?.message || err);
+    return false;
+  }
+}
+function sanitizeSecretsInText(input) {
+  if (!input) return "";
+  return String(input).replace(/sk-proj-[A-Za-z0-9_-]{12,}/g, "sk-proj-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").replace(/sk-[A-Za-z0-9_-]{16,}/g, "sk-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").replace(/Bearer\s+[A-Za-z0-9._~+/-]{16,}/gi, "Bearer \u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022").replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "jwt-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022");
+}
+function maskSecretValue(raw) {
+  const clean = (raw || "").trim();
+  if (!clean) return "";
+  if (clean.includes("\u2022\u2022\u2022\u2022") || clean.includes("****")) return clean;
+  const tail = clean.length >= 6 ? clean.slice(-4) : "";
+  if (clean.startsWith("sk-proj-")) {
+    return `sk-proj-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${tail}`;
+  }
+  if (clean.startsWith("sk-")) {
+    return `sk-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${tail}`;
+  }
+  return `\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${tail}`;
+}
+function isMaskedSecret(val) {
+  if (!val) return true;
+  const trimmed = String(val).trim();
+  return !trimmed || trimmed.includes("\u2022\u2022\u2022\u2022") || trimmed.includes("****");
+}
+var PENDING_SYNC_FILE = path.join(__dirname, ".vendema-pending-sync.json");
+var pendingSupabaseSyncMap = /* @__PURE__ */ new Map();
+try {
+  if (fs.existsSync(PENDING_SYNC_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(PENDING_SYNC_FILE, "utf-8"));
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (item?.id) pendingSupabaseSyncMap.set(item.id, item);
+      }
+    }
+  }
+} catch {
+}
+var savePendingSyncTimer = null;
+function scheduleSavePendingSync() {
+  if (savePendingSyncTimer) return;
+  savePendingSyncTimer = setTimeout(() => {
+    savePendingSyncTimer = null;
+    writeFileAtomicSync(
+      PENDING_SYNC_FILE,
+      JSON.stringify(Array.from(pendingSupabaseSyncMap.values()).slice(-500), null, 2)
+    );
+  }, 1e3);
+}
+function recordSupabaseSyncState(entityType, entityId, success, errorMsg) {
+  const key = `${entityType}:${entityId}`;
+  const existing = pendingSupabaseSyncMap.get(key);
+  if (success) {
+    if (existing) {
+      existing.syncStatus = "SYNCED";
+      existing.lastAttemptAt = (/* @__PURE__ */ new Date()).toISOString();
+      existing.lastError = void 0;
+      pendingSupabaseSyncMap.delete(key);
+      scheduleSavePendingSync();
+    }
+    return;
+  }
+  const attempts = (existing?.attempts || 0) + 1;
+  pendingSupabaseSyncMap.set(key, {
+    id: key,
+    entityType,
+    entityId,
+    syncStatus: attempts >= 3 ? "SYNC_ERROR" : "PENDING_SYNC",
+    attempts,
+    lastAttemptAt: (/* @__PURE__ */ new Date()).toISOString(),
+    lastError: sanitizeSecretsInText(errorMsg || "Fallo de red al sincronizar con Supabase")
+  });
+  scheduleSavePendingSync();
+}
+var isServerShuttingDown = false;
+var backgroundIntervals = [];
+var lastWebhookReceivedAt = null;
+function registerBackgroundInterval(fn, ms) {
+  const timer = setInterval(() => {
+    if (!isServerShuttingDown) fn();
+  }, ms);
+  backgroundIntervals.push(timer);
+  return timer;
+}
 process.on("uncaughtException", (err) => {
-  console.log("[Process Notice]:", err?.message || err);
+  const msg = sanitizeSecretsInText(err?.stack || err?.message || String(err));
+  console.error(`[Process UncaughtException] [CRITICAL]: ${msg}`);
 });
 process.on("unhandledRejection", (reason) => {
-  console.log("[Process Notice]:", reason?.message || reason);
+  const msg = sanitizeSecretsInText(reason?.stack || reason?.message || String(reason));
+  console.error(`[Process UnhandledRejection] [HIGH]: ${msg}`);
 });
 process.on("exit", (code) => {
   console.log(`[Process Exit] Node process exiting with code: ${code}`);
@@ -2248,8 +2533,6 @@ process.on("exit", (code) => {
 process.on("beforeExit", (code) => {
   console.log(`[Process BeforeExit] Event loop is empty! code: ${code}`);
 });
-var __filename = fileURLToPath(import.meta.url);
-var __dirname = path.dirname(__filename);
 var app = express();
 app.set("trust proxy", true);
 var rawPort = process.env.PORT;
@@ -2258,32 +2541,58 @@ var PORT = isNumericPort ? Number(rawPort) : rawPort || 3e3;
 app.use(express.json({ limit: "35mb" }));
 app.use(express.urlencoded({ extended: true, limit: "35mb" }));
 app.use((req, res, next) => {
-  if (req.path !== "/health" && req.path !== "/ping") {
+  if (req.path !== "/health" && req.path !== "/ready" && req.path !== "/ping") {
     console.log(`[HTTP ${req.method}] ${req.url} (Host: ${req.headers.host || "unknown"})`);
   }
   next();
 });
+var ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (!origin) {
+    res.header("Access-Control-Allow-Origin", "*");
+  } else if (ALLOWED_CORS_ORIGINS.length === 0 || ALLOWED_CORS_ORIGINS.includes(origin) || origin.includes(".run.app") || origin.includes("todolapto.com") || origin.includes("localhost") || origin.includes("127.0.0.1")) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header("Vary", "Origin");
+  }
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-session-token");
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
   next();
 });
-app.get(["/health", "/api/health", "/ping"], (req, res) => {
-  res.status(200).json({
-    status: "ok",
+app.get(["/health", "/api/health", "/ping"], (_req, res) => {
+  res.status(isServerShuttingDown ? 503 : 200).json({
+    status: isServerShuttingDown ? "shutting_down" : "ok",
     service: "Vendem\xE1 CRM & Ventas",
     uptime: Math.floor(process.uptime()),
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    port: PORT
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+});
+app.get(["/ready", "/api/ready"], (_req, res) => {
+  const configReady = Boolean(appConfig && appConfig.odoo && appConfig.evolution);
+  const usersReady = Array.isArray(systemUsers) && systemUsers.length > 0;
+  const isReady = !isServerShuttingDown && configReady && usersReady;
+  res.status(isReady ? 200 : 503).json({
+    ready: isReady,
+    shuttingDown: isServerShuttingDown,
+    checks: {
+      configLoaded: configReady,
+      usersLoaded: usersReady,
+      supabaseConfigured: Boolean(appConfig?.supabase?.url && appConfig?.supabase?.anonKey),
+      evolutionConfigured: Boolean(appConfig?.evolution?.serverUrl && appConfig?.evolution?.instance),
+      openaiConfigured: Boolean(appConfig?.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey)),
+      odooConfigured: Boolean(appConfig?.odoo?.url && appConfig?.odoo?.db)
+    },
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
   });
 });
 var sseClients = /* @__PURE__ */ new Set();
 function broadcastEvent(eventType, payload) {
-  const data = JSON.stringify({ type: eventType, payload, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+  const safePayload = eventType === "config_updated" && payload ? getPublicMaskedConfig(payload) : payload;
+  const data = JSON.stringify({ type: eventType, payload: safePayload, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
   for (const client of sseClients) {
     try {
       client.write(`data: ${data}
@@ -2313,25 +2622,21 @@ var ENV_FILE_PATH = path.join(__dirname, ".env");
 function syncCredentialsToEnv(cfg, persistToFile = false) {
   try {
     const vars = {
-      // Supabase Credentials
       SUPABASE_URL: cfg.supabase?.url || "",
       SUPABASE_ANON_KEY: cfg.supabase?.anonKey || "",
-      // Odoo ERP Credentials
       ODOO_URL: cfg.odoo?.url || "",
       ODOO_DB: cfg.odoo?.db || "",
       ODOO_UID: cfg.odoo?.uid !== void 0 ? String(cfg.odoo.uid) : "",
       ODOO_API_KEY: cfg.odoo?.apiKey || "",
-      // Evolution API WhatsApp Credentials
       EVOLUTION_SERVER_URL: cfg.evolution?.serverUrl || "",
       EVOLUTION_INSTANCE: cfg.evolution?.instance || "",
       EVOLUTION_API_KEY: cfg.evolution?.apiKey || "",
       EVOLUTION_TEAM_PHONE: cfg.evolution?.teamPhone || "",
       EVOLUTION_ADMIN_PHONE: cfg.evolution?.adminPhone || "",
-      // AI Provider Credentials (OpenAI Exclusive)
       OPENAI_API_KEY: cfg.aiProvider?.openaiApiKey || ""
     };
     for (const [key, val] of Object.entries(vars)) {
-      if (val) {
+      if (val && !isMaskedSecret(val)) {
         process.env[key] = val;
       }
     }
@@ -2367,7 +2672,7 @@ function syncCredentialsToEnv(cfg, persistToFile = false) {
     }
     const newContent = updatedLines.join("\n").trim() + "\n";
     if (newContent !== existingContent.trim() + "\n") {
-      fs.writeFileSync(ENV_FILE_PATH, newContent, "utf-8");
+      writeFileAtomicSync(ENV_FILE_PATH, newContent);
       console.log("[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env");
     }
   } catch (err) {
@@ -2384,9 +2689,9 @@ var appConfig = {
     systemPrompt: OFFICIAL_TODO_LAPTO_MASTER_PROMPT,
     openaiApiKey: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : "",
     openaiBaseUrl: "https://api.openai.com/v1/chat/completions",
-    deepseekApiKey: "",
-    deepseekBaseUrl: "",
-    geminiApiKey: ""
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY : "",
+    deepseekBaseUrl: "https://api.deepseek.com/v1",
+    geminiApiKey: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : ""
   },
   odoo: {
     url: process.env.ODOO_URL || "https://todolapto.com.do/jsonrpc",
@@ -2399,7 +2704,7 @@ var appConfig = {
   evolution: {
     serverUrl: process.env.EVOLUTION_SERVER_URL || "https://evolution-evolution-api.blrfh6.easypanel.host",
     instance: process.env.EVOLUTION_INSTANCE || "todolapto",
-    apiKey: process.env.EVOLUTION_API_KEY || "52700613C062-421C-B800-FBC560B54BB4",
+    apiKey: process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A",
     teamPhone: process.env.EVOLUTION_TEAM_PHONE || "18492588738",
     adminPhone: process.env.EVOLUTION_ADMIN_PHONE || "18496260800",
     connected: true
@@ -2410,8 +2715,83 @@ var appConfig = {
     connected: true,
     autoSync: true
   },
-  holidayOverrides: []
+  holidayOverrides: [],
+  activeWhatsAppStatuses: [
+    {
+      id: "status-1",
+      title: "\u{1F525} Oferta Flash en Estado: Laptop HP ProBook x360 T\xE1ctil",
+      productName: "LAPTOP HP PROBOOK X360 11 G5 EE",
+      price: 7500,
+      description: "Pantalla t\xE1ctil giratoria 360\xB0, Procesador Intel Pentium N4120, 4GB RAM, 128GB SSD. Reacondicionada Clase A con 6 meses de garant\xEDa certificada por escrito.",
+      active: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    },
+    {
+      id: "status-2",
+      title: "\u{1F4BC} Laptop Empresarial Ultra Resistente ThinkPad",
+      productName: "LENOVO THINKPAD T480",
+      price: 14500,
+      description: 'Procesador Intel Core i5 8va Gen, 8GB RAM, 256GB SSD, pantalla 14" Full HD, ultra resistente para trabajo continuo. Reacondicionada Clase A con 6 meses de garant\xEDa.',
+      active: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    },
+    {
+      id: "status-3",
+      title: "\u26A1 Ejecutiva R\xE1pida Dell Latitude 5400",
+      productName: "DELL LATITUDE 5400",
+      price: 16500,
+      description: "Intel Core i5 8va Gen, 8GB RAM, 256GB SSD, teclado iluminado, bater\xEDa de larga duraci\xF3n. Reacondicionada Clase A con 6 meses de garant\xEDa.",
+      active: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    },
+    {
+      id: "status-4",
+      title: "\u{1F5A8}\uFE0F Impresora T\xE9rmica Port\xE1til 617-R58P",
+      productName: "Impresora de Recibos y Etiquetas 617-R58P",
+      price: 2500,
+      description: "Impresora t\xE9rmica directa sin tinta para facturaci\xF3n, recibos y colmados. Nueva de caja con 1 a\xF1o de garant\xEDa.",
+      active: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    }
+  ]
 };
+function getPublicMaskedConfig(cfg) {
+  const rawOpenai = cfg.aiProvider?.openaiApiKey || "";
+  const rawGemini = cfg.aiProvider?.geminiApiKey || "";
+  const rawDeepseek = cfg.aiProvider?.deepseekApiKey || "";
+  const rawOdoo = cfg.odoo?.apiKey || "";
+  const rawEvolution = cfg.evolution?.apiKey || "";
+  const rawSupabase = cfg.supabase?.anonKey || "";
+  return {
+    ...cfg,
+    aiProvider: cfg.aiProvider ? {
+      ...cfg.aiProvider,
+      openaiApiKey: maskSecretValue(rawOpenai),
+      geminiApiKey: maskSecretValue(rawGemini),
+      deepseekApiKey: maskSecretValue(rawDeepseek)
+    } : void 0,
+    odoo: {
+      ...cfg.odoo,
+      apiKey: maskSecretValue(rawOdoo)
+    },
+    evolution: {
+      ...cfg.evolution,
+      apiKey: maskSecretValue(rawEvolution)
+    },
+    supabase: cfg.supabase ? {
+      ...cfg.supabase,
+      anonKey: maskSecretValue(rawSupabase)
+    } : void 0,
+    secretStatus: {
+      hasOpenaiKey: Boolean(rawOpenai && !isMaskedSecret(rawOpenai)),
+      hasGeminiKey: Boolean(rawGemini && !isMaskedSecret(rawGemini)),
+      hasDeepseekKey: Boolean(rawDeepseek && !isMaskedSecret(rawDeepseek)),
+      hasOdooKey: Boolean(rawOdoo && !isMaskedSecret(rawOdoo)),
+      hasEvolutionKey: Boolean(rawEvolution && !isMaskedSecret(rawEvolution)),
+      hasSupabaseKey: Boolean(rawSupabase && !isMaskedSecret(rawSupabase))
+    }
+  };
+}
 function loadPersistedConfig() {
   try {
     const targetConfigPath = fs.existsSync(CONFIG_FILE_PATH) ? CONFIG_FILE_PATH : fs.existsSync(CONFIG_FALLBACK_PATH) ? CONFIG_FALLBACK_PATH : null;
@@ -2422,19 +2802,27 @@ function loadPersistedConfig() {
       if (saved.aiProvider) {
         const savedPrompt = saved.aiProvider.systemPrompt || "";
         const shouldRefreshPrompt = !savedPrompt || savedPrompt.includes("1\uFE0F\u20E3 *NOMBRE COMPLETO*") || !savedPrompt.includes("REGLA DE CITAS MEJORADA V2") || !savedPrompt.includes("FILTRADO INTELIGENTE V3");
+        const rawSavedProvider = saved.aiProvider.provider;
+        const savedProvider = rawSavedProvider === "gemini" || !rawSavedProvider ? "openai" : rawSavedProvider;
         const savedModel = String(saved.aiProvider.model || "").trim();
-        const migratedModel = savedModel.startsWith("gpt-") || savedModel.startsWith("o1") || savedModel.startsWith("o3") ? savedModel : "gpt-4o-mini";
+        let migratedModel = savedModel;
+        if (!migratedModel || migratedModel.includes("gemini") || migratedModel === "gpt-4o-mini") {
+          migratedModel = "gpt-4o-mini";
+        }
+        const loadedOpenAiKey = !isMaskedSecret(saved.aiProvider.openaiApiKey) ? String(saved.aiProvider.openaiApiKey).trim() : process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY.trim() : "";
+        const loadedGeminiKey = !isMaskedSecret(saved.aiProvider.geminiApiKey) ? String(saved.aiProvider.geminiApiKey).trim() : process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY.trim() : "";
+        const loadedDeepseekKey = !isMaskedSecret(saved.aiProvider.deepseekApiKey) ? String(saved.aiProvider.deepseekApiKey).trim() : process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY.trim() : "";
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
-          provider: "openai",
+          provider: savedProvider,
           model: migratedModel,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
-          openaiApiKey: (saved.aiProvider.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : "")).trim(),
+          openaiApiKey: loadedOpenAiKey,
           openaiBaseUrl: saved.aiProvider.openaiBaseUrl || "https://api.openai.com/v1/chat/completions",
-          deepseekApiKey: "",
-          deepseekBaseUrl: "",
-          geminiApiKey: ""
+          geminiApiKey: loadedGeminiKey,
+          deepseekApiKey: loadedDeepseekKey,
+          deepseekBaseUrl: saved.aiProvider.deepseekBaseUrl || "https://api.deepseek.com/v1"
         };
       }
       if (saved.odoo) {
@@ -2444,16 +2832,18 @@ function loadPersistedConfig() {
           url: saved.odoo.url || process.env.ODOO_URL || appConfig.odoo.url,
           db: saved.odoo.db || process.env.ODOO_DB || appConfig.odoo.db,
           uid: saved.odoo.uid ?? (process.env.ODOO_UID ? Number(process.env.ODOO_UID) : appConfig.odoo.uid),
-          apiKey: saved.odoo.apiKey || process.env.ODOO_API_KEY || appConfig.odoo.apiKey
+          apiKey: !isMaskedSecret(saved.odoo.apiKey) ? saved.odoo.apiKey : process.env.ODOO_API_KEY || appConfig.odoo.apiKey
         };
       }
       if (saved.evolution) {
+        const rawSavedEvoKey = !isMaskedSecret(saved.evolution.apiKey) ? String(saved.evolution.apiKey || "").trim() : "";
+        const effectiveEvoKey = !rawSavedEvoKey || rawSavedEvoKey === "52700613C062-421C-B800-FBC560B54BB4" ? process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A" : rawSavedEvoKey;
         appConfig.evolution = {
           ...appConfig.evolution,
           ...saved.evolution,
           serverUrl: saved.evolution.serverUrl || process.env.EVOLUTION_SERVER_URL || appConfig.evolution.serverUrl,
           instance: saved.evolution.instance || process.env.EVOLUTION_INSTANCE || appConfig.evolution.instance,
-          apiKey: saved.evolution.apiKey || process.env.EVOLUTION_API_KEY || appConfig.evolution.apiKey,
+          apiKey: effectiveEvoKey,
           teamPhone: saved.evolution.teamPhone || process.env.EVOLUTION_TEAM_PHONE || appConfig.evolution.teamPhone,
           adminPhone: saved.evolution.adminPhone || process.env.EVOLUTION_ADMIN_PHONE || appConfig.evolution.adminPhone
         };
@@ -2463,12 +2853,15 @@ function loadPersistedConfig() {
           ...appConfig.supabase,
           ...saved.supabase,
           url: saved.supabase.url || process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL,
-          anonKey: saved.supabase.anonKey || process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
+          anonKey: !isMaskedSecret(saved.supabase.anonKey) ? saved.supabase.anonKey : process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
         };
       }
       if (Array.isArray(saved.holidayOverrides)) {
         appConfig.holidayOverrides = saved.holidayOverrides;
         setGlobalHolidayOverrides(appConfig.holidayOverrides);
+      }
+      if (Array.isArray(saved.activeWhatsAppStatuses) && saved.activeWhatsAppStatuses.length > 0) {
+        appConfig.activeWhatsAppStatuses = saved.activeWhatsAppStatuses;
       }
       console.log(`[Config Loaded]: Active AI Provider = ${appConfig.aiProvider?.provider} (${appConfig.aiProvider?.model})`);
       if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
@@ -2487,9 +2880,9 @@ function savePersistedConfig(persistToEnv = false) {
       existing = fs.readFileSync(CONFIG_FILE_PATH, "utf-8");
     }
     if (content !== existing) {
-      fs.writeFileSync(CONFIG_FILE_PATH, content, "utf-8");
+      writeFileAtomicSync(CONFIG_FILE_PATH, content);
       if (CONFIG_FALLBACK_PATH !== CONFIG_FILE_PATH) {
-        fs.writeFileSync(CONFIG_FALLBACK_PATH, content, "utf-8");
+        writeFileAtomicSync(CONFIG_FALLBACK_PATH, content);
       }
     }
     syncCredentialsToEnv(appConfig, persistToEnv);
@@ -2500,12 +2893,175 @@ function savePersistedConfig(persistToEnv = false) {
 loadPersistedConfig();
 var USERS_FILE_PATH = path.join(__dirname, ".vendema-users.json");
 var USERS_FALLBACK_PATH = path.join(process.cwd(), ".vendema-users.json");
+var SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash("sha256").update(`vendema-crm-session-secret-${appConfig.odoo?.db || "odoo"}-${__dirname}`).digest("hex");
+var SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
+function isPasswordHashed(pw) {
+  return Boolean(pw && pw.startsWith("scrypt$"));
+}
+function hashUserPassword(plain) {
+  const clean = String(plain || "").trim();
+  if (!clean) return "";
+  if (isPasswordHashed(clean)) return clean;
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.scryptSync(clean, salt, 64).toString("hex");
+  return `scrypt$${salt}$${derived}`;
+}
+function verifyUserPassword(plainInput, storedPassword) {
+  const cleanInput = String(plainInput || "").trim();
+  const stored = String(storedPassword || "").trim();
+  if (!cleanInput || !stored) return { valid: false, needsMigration: false };
+  if (isPasswordHashed(stored)) {
+    const parts = stored.split("$");
+    if (parts.length !== 3) return { valid: false, needsMigration: false };
+    const [, salt, expectedHex] = parts;
+    try {
+      const derived = crypto.scryptSync(cleanInput, salt, 64);
+      const expectedBuf = Buffer.from(expectedHex, "hex");
+      if (derived.length !== expectedBuf.length) return { valid: false, needsMigration: false };
+      return {
+        valid: crypto.timingSafeEqual(derived, expectedBuf),
+        needsMigration: false
+      };
+    } catch {
+      return { valid: false, needsMigration: false };
+    }
+  }
+  const matched = stored === cleanInput;
+  return { valid: matched, needsMigration: matched };
+}
+var activeSessionsMap = /* @__PURE__ */ new Map();
+var loginRateLimitMap = /* @__PURE__ */ new Map();
+function createSignedSessionToken(user) {
+  const sessionId = crypto.randomBytes(12).toString("hex");
+  const now = Date.now();
+  const expiresAt = now + SESSION_TTL_MS;
+  const payload = `vendema_s1.${sessionId}.${user.id}.${user.role}.${expiresAt}`;
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+  const token = `${payload}.${sig}`;
+  activeSessionsMap.set(sessionId, {
+    sessionId,
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    createdAt: now,
+    expiresAt
+  });
+  return { token, expiresAt };
+}
+function verifySignedSessionToken(rawToken) {
+  const clean = String(rawToken || "").trim();
+  if (!clean) return { valid: false };
+  if (clean.startsWith("vendema_s1.")) {
+    const parts = clean.split(".");
+    if (parts.length !== 6) return { valid: false };
+    const [prefix, sessionId, userId, role, expiresAtStr, providedSig] = parts;
+    const payload = `${prefix}.${sessionId}.${userId}.${role}.${expiresAtStr}`;
+    const expectedSig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+    try {
+      const a = Buffer.from(providedSig, "hex");
+      const b = Buffer.from(expectedSig, "hex");
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return { valid: false };
+      }
+    } catch {
+      return { valid: false };
+    }
+    const expiresAt = Number(expiresAtStr);
+    if (!expiresAt || Date.now() > expiresAt) {
+      activeSessionsMap.delete(sessionId);
+      return { valid: false, expired: true };
+    }
+    return { valid: true, userId, role, sessionId };
+  }
+  const legacyMatch = clean.match(/^vendema_tk_(usr_[a-zA-Z0-9_]+)_(\d+)$/);
+  if (legacyMatch) {
+    const [, userId, tsStr] = legacyMatch;
+    const issuedAt = Number(tsStr);
+    if (issuedAt && Date.now() - issuedAt > SESSION_TTL_MS) {
+      return { valid: false, expired: true };
+    }
+    const u = systemUsers.find((usr) => usr.id === userId && usr.activo);
+    if (u) {
+      return { valid: true, userId: u.id, role: u.role };
+    }
+  }
+  return { valid: false };
+}
+function extractTokenFromRequest(req) {
+  const authHeader = req.headers.authorization || "";
+  if (authHeader.toLowerCase().startsWith("bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const customHeader = req.headers["x-session-token"];
+  if (typeof customHeader === "string" && customHeader.trim()) {
+    return customHeader.trim();
+  }
+  const cookieHeader = req.headers.cookie || "";
+  const match = cookieHeader.match(/(?:^|;\s*)vendema_session=([^;]+)/);
+  if (match && match[1]) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+  return "";
+}
+function setSessionCookie(res, token, req) {
+  const isSecure = req.secure || req.headers["x-forwarded-proto"] === "https";
+  const cookieParts = [
+    `vendema_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1e3)}`
+  ];
+  if (isSecure) cookieParts.push("Secure");
+  res.setHeader("Set-Cookie", cookieParts.join("; "));
+}
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie", "vendema_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+}
+function requireSessionRole(allowedRoles, enforceStrict = false) {
+  return (req, res, next) => {
+    const token = extractTokenFromRequest(req);
+    if (!token) {
+      if (!enforceStrict) {
+        return next();
+      }
+      return res.status(401).json({
+        success: false,
+        message: "Autenticaci\xF3n requerida. Por favor inicia sesi\xF3n."
+      });
+    }
+    const verified = verifySignedSessionToken(token);
+    if (!verified.valid || !verified.userId) {
+      if (!enforceStrict) {
+        return next();
+      }
+      return res.status(401).json({
+        success: false,
+        message: verified.expired ? "Tu sesi\xF3n ha expirado. Inicia sesi\xF3n nuevamente." : "Sesi\xF3n inv\xE1lida."
+      });
+    }
+    const user = systemUsers.find((u) => u.id === verified.userId && u.activo);
+    const effectiveRole = user?.role || verified.role;
+    if (effectiveRole && !allowedRoles.includes(effectiveRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "No tienes permisos suficientes para realizar esta acci\xF3n administrativa."
+      });
+    }
+    req.currentUser = user;
+    next();
+  };
+}
 var DEFAULT_USERS = [
   {
     id: "usr_super_nelson",
     nombre: "Nelson",
     username: "nelson",
-    password: "elmejor19",
+    password: hashUserPassword("elmejor19"),
     whatsapp: "18496260800",
     role: "super_admin",
     activo: true,
@@ -2515,7 +3071,7 @@ var DEFAULT_USERS = [
     id: "usr_dueno_negocio",
     nombre: "Due\xF1o Todo Lapto",
     username: "dueno",
-    password: "dueno123",
+    password: hashUserPassword("dueno123"),
     whatsapp: "18094228738",
     role: "dueno",
     activo: true,
@@ -2525,7 +3081,7 @@ var DEFAULT_USERS = [
     id: "usr_empleado_ventas",
     nombre: "Asesor de Ventas",
     username: "empleado",
-    password: "empleado123",
+    password: hashUserPassword("empleado123"),
     whatsapp: "18492588738",
     role: "empleado",
     activo: true,
@@ -2534,6 +3090,7 @@ var DEFAULT_USERS = [
 ];
 var systemUsers = [];
 function ensureDefaultUsersPresent() {
+  let migratedAny = false;
   for (const defUser of DEFAULT_USERS) {
     const idx = systemUsers.findIndex((u) => u.username.toLowerCase() === defUser.username.toLowerCase());
     if (idx === -1) {
@@ -2542,28 +3099,39 @@ function ensureDefaultUsersPresent() {
       } else {
         systemUsers.push({ ...defUser });
       }
+      migratedAny = true;
     } else if (defUser.username === "nelson") {
       systemUsers[idx].role = "super_admin";
       systemUsers[idx].activo = true;
       if (!systemUsers[idx].password) {
-        systemUsers[idx].password = "elmejor19";
+        systemUsers[idx].password = defUser.password;
+        migratedAny = true;
       }
     } else if (!systemUsers[idx].password) {
       systemUsers[idx].password = defUser.password;
+      migratedAny = true;
     }
   }
+  for (const u of systemUsers) {
+    if (u.password && !isPasswordHashed(u.password)) {
+      u.password = hashUserPassword(u.password);
+      migratedAny = true;
+    }
+  }
+  return migratedAny;
 }
 function savePersistedUsers() {
   try {
+    ensureDefaultUsersPresent();
     const content = JSON.stringify(systemUsers, null, 2);
     let existingContent = "";
     if (fs.existsSync(USERS_FILE_PATH)) {
       existingContent = fs.readFileSync(USERS_FILE_PATH, "utf-8");
     }
     if (content !== existingContent) {
-      fs.writeFileSync(USERS_FILE_PATH, content, "utf-8");
+      writeFileAtomicSync(USERS_FILE_PATH, content);
       if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
-        fs.writeFileSync(USERS_FALLBACK_PATH, content, "utf-8");
+        writeFileAtomicSync(USERS_FALLBACK_PATH, content);
       }
     }
   } catch (err) {
@@ -2588,8 +3156,11 @@ function loadPersistedUsers() {
     console.log("[Users Load Info]:", err.message);
     systemUsers = [...DEFAULT_USERS];
   }
-  ensureDefaultUsersPresent();
-  console.log(`[Users Loaded]: ${systemUsers.length} active users loaded. Super Admin: @nelson`);
+  const migrated = ensureDefaultUsersPresent();
+  if (migrated && fs.existsSync(USERS_FILE_PATH)) {
+    savePersistedUsers();
+  }
+  console.log(`[Users Loaded]: ${systemUsers.length} active users loaded (passwords protected with scrypt). Super Admin: @nelson`);
 }
 async function hydrateAndSyncUsersWithSupabase() {
   try {
@@ -2652,12 +3223,20 @@ async function hydrateAndSyncAiConfigWithSupabase() {
     const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
     if (remoteAi && typeof remoteAi === "object" && appConfig.aiProvider) {
       let updated = false;
-      if (appConfig.aiProvider.provider !== "openai") {
-        appConfig.aiProvider.provider = "openai";
+      if (remoteAi.provider && appConfig.aiProvider.provider !== remoteAi.provider) {
+        appConfig.aiProvider.provider = remoteAi.provider;
         updated = true;
       }
       if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
         appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
+        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
+        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
         updated = true;
       }
       if (updated) {
@@ -2735,6 +3314,12 @@ function getActiveOpenAiKey() {
     providerCfg?.openaiApiKey || (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY : "")
   );
 }
+function getActiveGeminiKey() {
+  const providerCfg = appConfig.aiProvider;
+  return sanitizeBearerKey(
+    providerCfg?.geminiApiKey || (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY : "")
+  );
+}
 function buildResilientSalesBotReply(promptText, sysInstruction, chatMessages) {
   if (/Responde únicamente:\s*OK/i.test(promptText)) {
     return "OK";
@@ -2742,17 +3327,175 @@ function buildResilientSalesBotReply(promptText, sysInstruction, chatMessages) {
   if (/confirmando que estás activo con OpenAI/i.test(promptText)) {
     return "Motor OpenAI activo y sincronizado en tiempo real con el inventario de Todo Lapto.";
   }
+  let userMsg = promptText;
+  const msgMatch = promptText.match(/💬 Pregunta o mensaje del cliente sobre ESTE estado:\s*"([^"]+)"/i) || promptText.match(/Consulta del cliente:\s*"([^"]+)"/i) || promptText.match(/El cliente[\s\S]*?acaba de enviar un saludo o cortesía:\s*"([^"]+)"/i) || promptText.match(/Mensaje actual del cliente[\s\S]*?:\s*([^\n]+)/i);
+  if (msgMatch && msgMatch[1]?.trim()) {
+    userMsg = msgMatch[1].trim();
+  }
+  const isDirectStatusPrompt = promptText.includes("EL CLIENTE EST\xC1 PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP") || promptText.includes("EL CLIENTE EST\xC1 RESPONDIENDO DIRECTAMENTE A UN ESTADO DE WHATSAPP");
+  if (isDirectStatusPrompt) {
+    const quoteBlockMatch = promptText.match(/"""\s*([\s\S]*?)\s*"""/);
+    const statusText = (quoteBlockMatch?.[1] || "").trim();
+    const visionMatch = promptText.match(/\[Contenido visual detectado por IA en la imagen\/flyer del Estado\]:\s*([^\n]+)/i);
+    const visionText = (visionMatch?.[1] || "").trim();
+    const combinedStatusRef = `${statusText} ${visionText} ${userMsg}`.toLowerCase();
+    const activeStatuses = (appConfig.activeWhatsAppStatuses || []).filter((s) => s.active !== false);
+    const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
+    const matchedStatus = activeStatuses.find((s) => {
+      const pName = (s.productName || "").toLowerCase();
+      const sTitle = (s.title || "").toLowerCase();
+      if (pName && combinedStatusRef.includes(pName)) return true;
+      const keywords = pName.split(/\s+/).filter((w) => w.length >= 3 && !["laptop", "lapto", "para", "con"].includes(w));
+      return keywords.length > 0 && keywords.some((kw) => combinedStatusRef.includes(kw)) && keywords.filter((kw) => combinedStatusRef.includes(kw)).length >= Math.min(2, keywords.length);
+    }) || activeStatuses.find((s) => {
+      const refClean = combinedStatusRef;
+      if (refClean.includes("x360") && (s.productName || "").toLowerCase().includes("x360")) return true;
+      if (refClean.includes("t480") && (s.productName || "").toLowerCase().includes("t480")) return true;
+      if (refClean.includes("5400") && (s.productName || "").toLowerCase().includes("5400")) return true;
+      if (refClean.includes("617") && (s.productName || "").toLowerCase().includes("617")) return true;
+      if (refClean.includes("hp") && (s.productName || "").toLowerCase().includes("hp")) return true;
+      if (refClean.includes("lenovo") || refClean.includes("thinkpad")) return (s.productName || "").toLowerCase().includes("lenovo") || (s.productName || "").toLowerCase().includes("thinkpad");
+      if (refClean.includes("dell") || refClean.includes("latitude")) return (s.productName || "").toLowerCase().includes("dell");
+      if (refClean.includes("impresora")) return (s.productName || "").toLowerCase().includes("impresora");
+      return false;
+    });
+    const genericSpecTokens = /* @__PURE__ */ new Set(["laptop", "lapto", "128gb", "256gb", "512gb", "ssd", "ram", "4gb", "8gb", "16gb", "disco"]);
+    let matchedInventoryProduct = matchedStatus?.productName ? inStock.find((p) => p.name.toLowerCase().includes(matchedStatus.productName.toLowerCase())) : void 0;
+    if (!matchedInventoryProduct) {
+      const targetRef = (matchedStatus?.productName || combinedStatusRef).toLowerCase();
+      let bestScore = 0;
+      for (const p of inStock) {
+        const pLower = p.name.toLowerCase();
+        const tokens = pLower.split(/\s+/).filter((w) => w.length >= 2 && !genericSpecTokens.has(w));
+        const matchCount = tokens.filter((t) => targetRef.includes(t)).length;
+        if (matchCount >= 2 && matchCount > bestScore) {
+          bestScore = matchCount;
+          matchedInventoryProduct = p;
+        }
+      }
+    }
+    if (matchedStatus || matchedInventoryProduct) {
+      const prodName = matchedStatus?.productName || matchedInventoryProduct?.name || matchedStatus?.title || "Equipo en Oferta";
+      const rawPrice = matchedStatus?.price || matchedInventoryProduct?.list_price || "";
+      const priceFormatted = typeof rawPrice === "number" ? `RD$${rawPrice.toLocaleString()}` : String(rawPrice).startsWith("RD$") ? String(rawPrice) : rawPrice ? `RD$${rawPrice}` : "";
+      const specs = matchedStatus?.description || matchedInventoryProduct?.specsSummary || matchedInventoryProduct?.description_sale || "Reacondicionada Clase A con 6 meses de garant\xEDa certificada por escrito";
+      const stockUnits = matchedInventoryProduct?.virtual_available ? ` (${matchedInventoryProduct.virtual_available} unidad(es) en stock real)` : " (Disponible en stock inmediato)";
+      const urlLine = matchedInventoryProduct?.website_url ? `
+\u{1F517} https://todolapto.com.do${matchedInventoryProduct.website_url}` : "";
+      return `\xA1Claro que s\xED! \u{1F60A} Con respecto a nuestro estado de WhatsApp de la *${prodName}*:
+
+\u{1F4B0} *Precio:* *${priceFormatted}*${stockUnits}
+\u2699\uFE0F *Especificaciones:* ${specs}${urlLine}
+\u{1F4CD} *Tienda f\xEDsica:* Av. Charles de Gaulle No. 133, Santo Domingo Este (contamos tambi\xE9n con env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}).
+
+\xBFDeseas que te la apartemos ahora mismo para pasar por la tienda o prefieres coordinar el env\xEDo a tu direcci\xF3n? \u{1F6D2}`;
+    }
+    if (statusText && !statusText.includes("[Foto / Oferta publicada")) {
+      return `\xA1Claro que s\xED! \u{1F60A} Con respecto al equipo de nuestro estado de WhatsApp (*${statusText}*), lo tenemos disponible para entrega inmediata en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133* y con env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.
+
+\xBFPrefieres pasar hoy por la tienda a verlo o te coordinamos el env\xEDo a tu direcci\xF3n? \u{1F6D2}`;
+    }
+  }
+  if (promptText.includes("EL CLIENTE PREGUNTA POR UN ESTADO DE WHATSAPP") || isWhatsAppStatusInquiry(userMsg)) {
+    const activeStatuses = (appConfig.activeWhatsAppStatuses || []).filter((s) => s.active !== false);
+    const qLower = userMsg.toLowerCase();
+    const specificStatus = activeStatuses.find((s) => {
+      const target = `${s.title || ""} ${s.productName || ""} ${s.description || ""}`.toLowerCase();
+      if ((qLower.includes("hp") || qLower.includes("tactil") || qLower.includes("t\xE1ctil") || qLower.includes("x360")) && (target.includes("hp") || target.includes("x360"))) return true;
+      if ((qLower.includes("lenovo") || qLower.includes("thinkpad") || qLower.includes("t480")) && (target.includes("lenovo") || target.includes("thinkpad"))) return true;
+      if ((qLower.includes("dell") || qLower.includes("latitude") || qLower.includes("5400")) && (target.includes("dell") || target.includes("latitude"))) return true;
+      if ((qLower.includes("impresora") || qLower.includes("termica") || qLower.includes("t\xE9rmica")) && target.includes("impresora")) return true;
+      return false;
+    });
+    if (specificStatus) {
+      const priceFormatted = typeof specificStatus.price === "number" ? `RD$${specificStatus.price.toLocaleString()}` : String(specificStatus.price || "").startsWith("RD$") ? specificStatus.price : `RD$${specificStatus.price}`;
+      return `\xA1Hola! \u{1F60A} S\xED, la que viste en nuestro estado de WhatsApp es la *${specificStatus.productName || specificStatus.title}* y est\xE1 disponible en *${priceFormatted}*.
+
+\u2699\uFE0F *Detalles:* ${specificStatus.description || "Excelentes condiciones con garant\xEDa certificada por escrito."}
+\u{1F4CD} Disponible en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133* y con env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.
+
+\xBFTe gustar\xEDa apartarla para retiro en tienda o coordinamos el env\xEDo a tu direcci\xF3n? \u{1F6D2}`;
+    }
+    if (activeStatuses.length > 0) {
+      const lines = activeStatuses.map((s, idx) => {
+        const pStr = typeof s.price === "number" ? `RD$${s.price.toLocaleString()}` : String(s.price || "").startsWith("RD$") ? s.price : s.price ? `RD$${s.price}` : "";
+        return `*${idx + 1}.* *${s.productName || s.title}* \u2014 *${pStr}*
+   \u2699\uFE0F ${s.description || "Disponible en stock inmediato"}`;
+      });
+      return `\xA1Hola! \u{1F60A} En nuestros estados de WhatsApp de hoy tenemos publicadas estas ofertas disponibles en stock:
+
+${lines.join("\n\n")}
+
+*\xBFPor cu\xE1l de ellas nos consultas? Tambi\xE9n puedes respondernos directamente desde el estado o enviarnos captura \u{1F4F8} para apart\xE1rtela de inmediato.* \u{1F6D2}`;
+    }
+  }
+  if (promptText.includes("EL CLIENTE EST\xC1 CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACI\xD3N")) {
+    const quoteMatch = promptText.match(/"""\s*([\s\S]*?)\s*"""/);
+    const quotedText = (quoteMatch?.[1] || "").trim();
+    if (quotedText) {
+      const storeReply = resolveDirectStoreQuestion(userMsg, void 0, quotedText);
+      if (storeReply) {
+        return storeReply;
+      }
+      const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
+      const cleanQuote = quotedText.toLowerCase().replace(/[*_#]/g, " ");
+      let matchedProd = inStock.find((p) => cleanQuote.includes(p.name.toLowerCase()));
+      if (!matchedProd) {
+        let bestScore = 0;
+        for (const p of inStock) {
+          const pTokens = p.name.toLowerCase().split(/\s+/).filter((w) => w.length >= 3 && !["laptop", "lapto", "para", "con"].includes(w));
+          const matches = pTokens.filter((tk) => cleanQuote.includes(tk)).length;
+          if (matches >= 2 && matches > bestScore) {
+            bestScore = matches;
+            matchedProd = p;
+          }
+        }
+      }
+      if (matchedProd) {
+        return `\xA1Claro que s\xED! \u{1F60A} La *${matchedProd.name}* sigue disponible en *RD$${matchedProd.list_price.toLocaleString()}* (${matchedProd.virtual_available} unidad(es) en stock real en nuestra tienda de la *Av. Charles de Gaulle No. 133*).
+
+\xBFDeseas pasar hoy por la tienda para apart\xE1rtela o prefieres que te coordinemos env\xEDo a domicilio con pago contra entrega en Santo Domingo? \u{1F6D2}`;
+      }
+      return `\xA1Claro que s\xED! \u{1F60A} \xBFSobre cu\xE1l equipo o pregunta te gustar\xEDa que te confirme los detalles? Estoy atento por aqu\xED para ayudarte de inmediato.`;
+    }
+  }
   const blockMatch = sysInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
   if (blockMatch && blockMatch[1]?.trim()) {
     return blockMatch[1].trim();
   }
-  let userMsg = promptText;
-  const msgMatch = promptText.match(/El cliente[\s\S]*?acaba de enviar un saludo o cortesía:\s*"([^"]+)"/i) || promptText.match(/Mensaje actual del cliente[\s\S]*?:\s*([^\n]+)/i) || promptText.match(/Consulta del cliente:\s*"([^"]+)"/i);
-  if (msgMatch && msgMatch[1]?.trim()) {
-    userMsg = msgMatch[1].trim();
-  }
   if (isSimpleConversationalMessage(userMsg)) {
     return buildInstantConversationalReply(void 0, userMsg);
+  }
+  if (userMsg.includes("[Foto enviada por el cliente]") || userMsg.includes("[Detalles de la imagen analizada")) {
+    const lowerImg = userMsg.toLowerCase();
+    if (/(comprobante|transferencia|banreservas|popular|bhd|recibo|pago)/i.test(lowerImg)) {
+      return `\u{1F4E9} \xA1Comprobante recibido! Nuestro equipo de despacho lo est\xE1 verificando en el sistema bancario y te confirmamos en breve para proceder con tu pedido. \u{1F64C}`;
+    }
+    if (/(rota|dañad|bisagra|reparar|reparacion|arreglar|pantalla partida)/i.test(lowerImg)) {
+      return `\u{1F527} Recibimos la foto de tu equipo. En *Todo Lapto* contamos con laboratorio y taller de servicio t\xE9cnico especializado en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133, Santo Domingo Este* (Lunes a S\xE1bado de 8:30 AM a 6:00 PM). Puedes traernos el equipo para evaluarlo y repararlo de inmediato. \u{1F60A}`;
+    }
+    return `\u{1F4F8} \xA1Recibimos tu imagen! Con gusto te ayudamos en *Todo Lapto*. \xBFBuscas disponibilidad y precio de ese equipo en nuestro inventario o necesitas servicio t\xE9cnico / repuesto para ese modelo? \u{1F4BB}`;
+  }
+  if (/(nota de voz|audio|grabaci[oó]n|micr[oó]fono|🎤|\[audio)/i.test(userMsg)) {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    if (!rdNow.isOpen) {
+      return `\xA1Hola! \u{1F60A} En este momento nos encontramos fuera de horario laboral (${rdNow.statusDetail}), pero con gusto te tomamos tu pedido o consulta por aqu\xED para despacharlo a primera hora ${rdNow.nextOpeningStr}. \xBFEn qu\xE9 equipo, laptop o accesorio te podemos colaborar? \u{1F4BB}\u{1F4E6}`;
+    }
+    return `\xA1Hola! \u{1F60A} Con gusto te atiendo en *Todo Lapto*. \xBFQu\xE9 modelo de laptop, impresora o accesorio est\xE1s buscando para pasarte opciones y precios disponibles de inmediato? \u{1F4BB}\u2728`;
+  }
+  if (sysInstruction) {
+    const sysBlockMatch = sysInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+    if (sysBlockMatch && sysBlockMatch[1]?.trim()) {
+      return sysBlockMatch[1].trim();
+    }
+  }
+  const matchedFamily = detectGenericProductFamily(userMsg);
+  if (matchedFamily) {
+    const familyHighlight = getRelevantProductsHighlight(userMsg, "", "");
+    const familyBlockMatch = familyHighlight.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+    if (familyBlockMatch && familyBlockMatch[1]?.trim()) {
+      return familyBlockMatch[1].trim();
+    }
   }
   const recentHistoryText = (chatMessages || []).filter((m) => m.role === "user").slice(-6).reverse().map((m) => m.content || "").join("\n");
   const dynamicHighlight = getRelevantProductsHighlight(userMsg, "", recentHistoryText);
@@ -2761,15 +3504,21 @@ function buildResilientSalesBotReply(promptText, sysInstruction, chatMessages) {
     return dynamicBlockMatch[1].trim();
   }
   const lower = userMsg.toLowerCase();
+  if (lower.includes("[el cliente envi\xF3 un sticker") || lower.includes("sticker") || /^(jajaja|jejeje|jaja|jeje|😂|🤣|😹|xd|gracioso|lol)+$/i.test(lower.replace(/\s+/g, ""))) {
+    return `\xA1Jajaja! \u{1F602} \xA1Saludos! \xBFEn qu\xE9 te podemos colaborar hoy? Cu\xE9ntanos si andas buscando alguna laptop, impresora o accesorio y con gusto te pasamos las opciones de inmediato. \u{1F4BB}\u2728`;
+  }
+  if (/^(ahhh?\s*bueno|ps\s*mejor|pues\s*mejor|ok|okay|esta\s*bien|ta\s*bien|perfecto|excelente|entendido|listo|de\s*acuerdo|ya\s*veo|comprendo|chevere|así\s*mismo)\b/i.test(lower)) {
+    return `\xA1As\xED mismo es! \u{1F44D} Quedamos atentos por aqu\xED para cuando gustes apartar tu pedido o pasar por nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133*. \xA1Siempre a tu orden en Todo Lapto! \u{1F60A}`;
+  }
   if (/(d[oó]nde\s*est[aá]n|ubicaci[oó]n|direcci[oó]n|local|sucursal|tienda|charles\s*de\s*gaulle|horario|abierto|abiertos|abren|laborando|laboran)/i.test(lower)) {
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
     if (rdNow.isOpen) {
-      return `\xA1Claro que s\xED! \u{1F60A} Estamos laborando y abiertos ahora mismo en nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133* (al lado de \xD3ptica Oviedo) hasta las 7:00 PM.
-\u{1F5FA}\uFE0F Mapa: https://maps.app.goo.gl/todo-lapto
+      return `\xA1Claro que s\xED! \u{1F60A} Estamos laborando y abiertos ahora mismo en nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133* (frente a la parada del telef\xE9rico) hasta las 6:00 PM.
+\u{1F5FA}\uFE0F Mapa: https://g.co/kgs/4hVfzG
 Puedes pasar a visitarnos o con gusto te coordinamos env\xEDo a domicilio con pago contra entrega en Santo Domingo. \xBFEn qu\xE9 te colaboramos hoy? \u{1F6D2}\u{1F4E6}`;
     } else {
-      return `Actualmente nos encontramos fuera de horario laboral (${rdNow.statusDetail}). Abrimos ${rdNow.nextOpeningStr} en nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133* (al lado de \xD3ptica Oviedo).
-\u{1F552} *Horario habitual:* Lunes a S\xE1bado de 9:00 AM a 7:00 PM y Domingos de 10:00 AM a 3:00 PM.
+      return `Actualmente nos encontramos fuera de horario laboral (${rdNow.statusDetail}). Abrimos ${rdNow.nextOpeningStr} en nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133*.
+\u{1F552} *Horario habitual:* Lunes a S\xE1bado de 8:30 AM a 6:00 PM.
 Con gusto te tomamos tu pedido o consulta por aqu\xED para despacharlo a primera hora. \xBFQu\xE9 equipo buscas? \u{1F4BB}\u{1F4E6}`;
     }
   }
@@ -2781,35 +3530,102 @@ Con gusto te tomamos tu pedido o consulta por aqu\xED para despacharlo a primera
 \xBFCu\xE1l m\xE9todo prefieres utilizar para tu pedido? \u{1F60A}`;
   }
   if (/(me\s*interesa|la\s*quiero|lo\s*quiero|ap[aá]rtam|opci[oó]n|n[uú]mero|modelo\s*\d|comprar|env[ií]o|delivery)/i.test(lower)) {
-    return `\xA1Excelente elecci\xF3n! \u{1F60A} Tenemos disponibilidad inmediata en nuestro inventario. \xBFPrefieres pasar a retirarlo por nuestra tienda en la *Av. Charles de Gaulle No. 133* (al lado de \xD3ptica Oviedo) o deseas que te coordinemos env\xEDo a domicilio con pago contra entrega?`;
+    return `\xA1Excelente elecci\xF3n! \u{1F60A} Tenemos disponibilidad inmediata en nuestro inventario. \xBFPrefieres pasar a retirarlo por nuestra tienda en la *Av. Charles de Gaulle No. 133* o deseas que te coordinemos env\xEDo a domicilio con pago contra entrega?`;
   }
   return `\xA1Saludos! \u{1F60A} Bienvenido a *Todo Lapto*. \xBFEn qu\xE9 te podemos ayudar hoy? Dime si buscas una *laptop, impresora, monitor, mouse, teclado o alg\xFAn accesorio* y te env\xEDo el cat\xE1logo completo disponible de inmediato. \u{1F4BB}\u2728`;
 }
-async function generateTextWithConfiguredAI(options) {
-  const providerCfg = appConfig.aiProvider || {
-    provider: "openai",
-    model: "gpt-4o-mini",
-    temperature: 0.35
-  };
-  const temp = options.temperature ?? providerCfg.temperature ?? 0.35;
-  const sys = [options.systemInstruction, providerCfg.customInstructions].filter(Boolean).join("\n\n");
-  const primaryOpenAiModel = providerCfg.model?.startsWith("gpt") || providerCfg.model?.startsWith("o") ? providerCfg.model : "gpt-4o-mini";
-  const openaiKey = getActiveOpenAiKey();
-  if (!openaiKey) {
-    if (!options.jsonMode) {
-      const text = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-      return { text, providerUsed: "openai", modelUsed: primaryOpenAiModel };
-    }
-    throw new Error("No hay una API Key de OpenAI configurada.");
+async function callGeminiApi(options) {
+  const geminiKey = getActiveGeminiKey();
+  if (!geminiKey) {
+    throw new Error("No hay una API Key de Google Gemini configurada.");
   }
+  let modelName = options.model || appConfig.aiProvider?.model || "gemini-3.5-flash-lite";
+  if (!modelName.startsWith("gemini")) {
+    modelName = "gemini-3.5-flash-lite";
+  }
+  const contents = [];
+  if (options.chatMessages && options.chatMessages.length > 0) {
+    for (const cm of options.chatMessages) {
+      if (cm.content?.trim()) {
+        contents.push({
+          role: cm.role === "assistant" ? "model" : "user",
+          parts: [{ text: cm.content }]
+        });
+      }
+    }
+  }
+  contents.push({
+    role: "user",
+    parts: [{ text: options.prompt }]
+  });
+  const bodyPayload = {
+    contents,
+    generationConfig: {
+      temperature: options.temperature ?? 0.35,
+      ...options.jsonMode ? { responseMimeType: "application/json" } : {}
+    }
+  };
+  if (options.sysInstruction) {
+    bodyPayload.systemInstruction = {
+      parts: [{ text: options.sysInstruction }]
+    };
+  }
+  const t0 = Date.now();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bodyPayload),
+    signal: AbortSignal.timeout(35e3)
+  });
+  const durationMs = Date.now() - t0;
+  if (!res.ok) {
+    let errMessage = `Gemini HTTP ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.error?.message) {
+        errMessage += `: ${errBody.error.message}`;
+      }
+    } catch {
+    }
+    recordSystemApiLog({
+      service: "AI Engine",
+      action: `Gemini Chat (${modelName})`,
+      method: "POST",
+      url,
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      requestPreview: options.prompt.slice(0, 100),
+      error: errMessage
+    });
+    throw new Error(errMessage);
+  }
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  recordSystemApiLog({
+    service: "AI Engine",
+    action: `Gemini Chat (${modelName})`,
+    method: "POST",
+    url,
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    requestPreview: options.prompt.slice(0, 100),
+    responseSnippet: text.trim().slice(0, 140)
+  });
+  return { text, modelUsed: modelName };
+}
+async function callOpenAiChat(options) {
+  const model = options.model || "gpt-4o-mini";
+  const isReasoningModel = model.startsWith("o1") || model.startsWith("o3");
   const openaiUrl = resolveChatCompletionsUrl(
-    providerCfg.openaiBaseUrl,
+    appConfig.aiProvider?.openaiBaseUrl,
     "https://api.openai.com/v1/chat/completions"
   );
-  const isReasoningModel = primaryOpenAiModel.startsWith("o1") || primaryOpenAiModel.startsWith("o3");
   const messages = [];
-  if (sys) {
-    messages.push({ role: isReasoningModel ? "developer" : "system", content: sys });
+  if (options.sys) {
+    messages.push({ role: isReasoningModel ? "developer" : "system", content: options.sys });
   }
   if (options.chatMessages && options.chatMessages.length > 0) {
     for (const cm of options.chatMessages) {
@@ -2820,143 +3636,213 @@ async function generateTextWithConfiguredAI(options) {
   }
   messages.push({ role: "user", content: options.prompt });
   const bodyPayload = {
-    model: primaryOpenAiModel,
+    model,
     messages,
-    ...isReasoningModel ? { max_completion_tokens: 4096 } : { temperature: temp, max_tokens: 4096 },
+    ...isReasoningModel ? { max_completion_tokens: 1024 } : { temperature: options.temperature ?? 0.35, max_tokens: 1024 },
     ...options.jsonMode ? { response_format: { type: "json_object" } } : {}
   };
   const t0 = Date.now();
-  try {
-    const res = await fetch(openaiUrl, {
+  const res = await fetch(openaiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${options.openaiKey}`
+    },
+    body: JSON.stringify(bodyPayload),
+    signal: AbortSignal.timeout(3e4)
+  });
+  const durationMs = Date.now() - t0;
+  if (!res.ok) {
+    let errorDetail = "";
+    try {
+      const errBody = await res.json();
+      errorDetail = errBody?.error?.message || "";
+    } catch {
+    }
+    const errMessage = `OpenAI HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ""}`;
+    recordSystemApiLog({
+      service: "AI Engine",
+      action: `OpenAI Chat (${model})`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiKey}`
-      },
-      body: JSON.stringify(bodyPayload),
-      signal: AbortSignal.timeout(45e3)
+      url: openaiUrl,
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      requestPreview: options.prompt.slice(0, 100),
+      error: errMessage,
+      responseSnippet: errorDetail.slice(0, 180)
     });
-    const durationMs = Date.now() - t0;
-    if (!res.ok) {
-      if (!options.jsonMode) {
-        const fallbackText2 = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-        recordSystemApiLog({
-          service: "AI Engine",
-          action: `OpenAI Chat (${primaryOpenAiModel})`,
-          method: "POST",
-          url: openaiUrl,
-          statusCode: 200,
-          success: true,
-          durationMs,
-          requestPreview: options.prompt.slice(0, 100),
-          responseSnippet: fallbackText2.slice(0, 140)
-        });
-        return { text: fallbackText2, providerUsed: "openai", modelUsed: primaryOpenAiModel };
-      }
-      let errorDetail = "";
-      try {
-        const errBody = await res.json();
-        errorDetail = errBody?.error?.message || "";
-      } catch {
-      }
-      throw new Error(`OpenAI HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ""}`);
-    }
-    const data = await res.json();
-    const text = data.choices?.[0]?.message?.content || "";
-    if (text.trim()) {
-      recordSystemApiLog({
-        service: "AI Engine",
-        action: `OpenAI Chat (${primaryOpenAiModel})`,
-        method: "POST",
-        url: openaiUrl,
-        statusCode: res.status,
-        success: true,
-        durationMs,
-        requestPreview: options.prompt.slice(0, 100),
-        responseSnippet: text.trim().slice(0, 140)
-      });
-      return { text, providerUsed: "openai", modelUsed: primaryOpenAiModel };
-    }
-    const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-    return { text: fallbackText, providerUsed: "openai", modelUsed: primaryOpenAiModel };
-  } catch (err) {
-    const durationMs = Date.now() - t0;
-    if (!options.jsonMode) {
-      const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-      recordSystemApiLog({
-        service: "AI Engine",
-        action: `OpenAI Chat (${primaryOpenAiModel})`,
-        method: "POST",
-        url: openaiUrl,
-        statusCode: 200,
-        success: true,
-        durationMs,
-        requestPreview: options.prompt.slice(0, 100),
-        responseSnippet: fallbackText.slice(0, 140)
-      });
-      return { text: fallbackText, providerUsed: "openai", modelUsed: primaryOpenAiModel };
-    }
-    throw err;
+    throw new Error(errMessage);
   }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content || "";
+  recordSystemApiLog({
+    service: "AI Engine",
+    action: `OpenAI Chat (${model})`,
+    method: "POST",
+    url: openaiUrl,
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    requestPreview: options.prompt.slice(0, 100),
+    responseSnippet: text.trim().slice(0, 140)
+  });
+  return { text, modelUsed: model };
+}
+async function generateTextWithConfiguredAI(options) {
+  const providerCfg = appConfig.aiProvider || {
+    provider: "gemini",
+    model: "gemini-3.5-flash-lite",
+    temperature: 0.35
+  };
+  const temp = options.temperature ?? providerCfg.temperature ?? 0.35;
+  const sys = [options.systemInstruction, providerCfg.customInstructions].filter(Boolean).join("\n\n");
+  const chosenProvider = providerCfg.provider || "gemini";
+  const openaiKey = getActiveOpenAiKey();
+  const geminiKey = getActiveGeminiKey();
+  if (chosenProvider === "gemini") {
+    if (geminiKey) {
+      try {
+        const geminiResult = await callGeminiApi({
+          prompt: options.prompt,
+          sysInstruction: sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model?.startsWith("gemini") ? providerCfg.model : "gemini-3.5-flash-lite"
+        });
+        if (geminiResult.text.trim()) {
+          return { text: geminiResult.text, providerUsed: "gemini", modelUsed: geminiResult.modelUsed };
+        }
+      } catch (geminiErr) {
+        console.warn("\u26A0\uFE0F [Gemini Error, comprobando failover a OpenAI]:", geminiErr.message);
+        if (openaiKey) {
+          try {
+            console.log("\u{1F504} [Auto-Failover to OpenAI]: Reintentando consulta con OpenAI...");
+            const oaiResult = await callOpenAiChat({
+              prompt: options.prompt,
+              sys,
+              chatMessages: options.chatMessages,
+              jsonMode: options.jsonMode,
+              temperature: temp,
+              model: "gpt-4o-mini",
+              openaiKey
+            });
+            if (oaiResult.text.trim()) {
+              return { text: oaiResult.text, providerUsed: "openai", modelUsed: oaiResult.modelUsed };
+            }
+          } catch {
+          }
+        }
+        if (options.allowFallback === false) throw geminiErr;
+      }
+    } else if (openaiKey) {
+      try {
+        const oaiResult = await callOpenAiChat({
+          prompt: options.prompt,
+          sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model || "gpt-4o-mini",
+          openaiKey
+        });
+        if (oaiResult.text.trim()) {
+          return { text: oaiResult.text, providerUsed: "openai", modelUsed: oaiResult.modelUsed };
+        }
+      } catch (err) {
+        if (options.allowFallback === false) throw err;
+      }
+    }
+  }
+  if (chosenProvider === "openai") {
+    if (openaiKey) {
+      try {
+        const oaiResult = await callOpenAiChat({
+          prompt: options.prompt,
+          sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model?.startsWith("gpt") || providerCfg.model?.startsWith("o") ? providerCfg.model : "gpt-4o-mini",
+          openaiKey
+        });
+        if (oaiResult.text.trim()) {
+          return { text: oaiResult.text, providerUsed: "openai", modelUsed: oaiResult.modelUsed };
+        }
+      } catch (openaiErr) {
+        console.warn(`\u26A0\uFE0F [OpenAI Error]: ${openaiErr.message}`);
+        if (options.allowFallback === false) throw openaiErr;
+      }
+    } else {
+      if (options.allowFallback === false) {
+        throw new Error("API Key de OpenAI no configurada.");
+      }
+    }
+  }
+  if (!options.jsonMode) {
+    const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+    return { text: fallbackText, providerUsed: "deterministic", modelUsed: "resilient-sales-engine" };
+  }
+  throw new Error("No se pudo generar respuesta con la API de OpenAI.");
 }
 async function transcribeAudioWithOpenAI(base64Audio, mimeType = "audio/ogg") {
+  const cleanBase64 = base64Audio.replace(/^data:[^;]+;base64,/, "");
+  const cleanMime = mimeType.split(";")[0] || "audio/ogg";
   const openaiKey = getActiveOpenAiKey();
   if (!openaiKey) {
-    throw new Error("No hay API Key de OpenAI configurada para transcribir audio.");
+    throw new Error("API Key de OpenAI no configurada para Whisper.");
   }
-  const cleanBase64 = base64Audio.replace(/^data:[^;]+;base64,/, "");
   const buffer = Buffer.from(cleanBase64, "base64");
   const ext = mimeType.includes("mp4") || mimeType.includes("m4a") ? "m4a" : mimeType.includes("mp3") ? "mp3" : "ogg";
   const formData = new FormData();
-  const blob = new Blob([buffer], { type: mimeType.split(";")[0] || "audio/ogg" });
+  const blob = new Blob([buffer], { type: cleanMime });
   formData.append("file", blob, `voice_note.${ext}`);
   formData.append("model", "whisper-1");
   formData.append("language", "es");
   const t0 = Date.now();
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${openaiKey}`
-    },
+    headers: { Authorization: `Bearer ${openaiKey}` },
     body: formData,
-    signal: AbortSignal.timeout(25e3)
+    signal: AbortSignal.timeout(3e4)
   });
   const durationMs = Date.now() - t0;
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
+  if (res.ok) {
+    const data = await res.json();
+    const text = (data?.text || "").trim();
     recordSystemApiLog({
       service: "AI Engine",
       action: "OpenAI Whisper Transcripci\xF3n Audio",
       method: "POST",
       url: "https://api.openai.com/v1/audio/transcriptions",
       statusCode: res.status,
-      success: false,
+      success: true,
       durationMs,
-      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`
+      responseSnippet: text.slice(0, 140)
     });
-    throw new Error(`OpenAI Whisper devolvi\xF3 HTTP ${res.status}`);
+    return text;
   }
-  const data = await res.json();
-  const text = (data?.text || "").trim();
+  const errBody = await res.text().catch(() => "");
   recordSystemApiLog({
     service: "AI Engine",
     action: "OpenAI Whisper Transcripci\xF3n Audio",
     method: "POST",
     url: "https://api.openai.com/v1/audio/transcriptions",
     statusCode: res.status,
-    success: true,
+    success: false,
     durationMs,
-    responseSnippet: text.slice(0, 140)
+    error: `OpenAI Whisper HTTP ${res.status}: ${errBody.slice(0, 300)}`
   });
-  return text;
+  throw new Error(`Error en transcripci\xF3n con OpenAI Whisper (HTTP ${res.status}): ${errBody.slice(0, 200)}`);
 }
 async function analyzeImageWithOpenAI(base64Image, mimeType = "image/jpeg", promptText, jsonMode = false) {
-  const openaiKey = getActiveOpenAiKey();
-  if (!openaiKey) {
-    throw new Error("No hay API Key de OpenAI configurada para analizar im\xE1genes.");
-  }
   const cleanBase64 = base64Image.replace(/^data:[^;]+;base64,/, "");
   const cleanMime = mimeType.split(";")[0] || "image/jpeg";
+  const openaiKey = getActiveOpenAiKey();
+  if (!openaiKey) {
+    throw new Error("API Key de OpenAI no configurada para an\xE1lisis de imagen con Visi\xF3n.");
+  }
   const dataUri = `data:${cleanMime};base64,${cleanBase64}`;
   const openaiUrl = resolveChatCompletionsUrl(
     appConfig.aiProvider?.openaiBaseUrl,
@@ -2983,44 +3869,178 @@ async function analyzeImageWithOpenAI(base64Image, mimeType = "image/jpeg", prom
       ],
       ...jsonMode ? { response_format: { type: "json_object" } } : {}
     }),
-    signal: AbortSignal.timeout(25e3)
+    signal: AbortSignal.timeout(3e4)
   });
   const durationMs = Date.now() - t0;
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
+  if (res.ok) {
+    const data = await res.json();
+    const text = (data?.choices?.[0]?.message?.content || "").trim();
     recordSystemApiLog({
       service: "AI Engine",
       action: `OpenAI Vision (${model})`,
       method: "POST",
       url: openaiUrl,
       statusCode: res.status,
-      success: false,
+      success: true,
       durationMs,
-      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`
+      responseSnippet: text.slice(0, 140)
     });
-    throw new Error(`OpenAI Vision devolvi\xF3 HTTP ${res.status}`);
+    return text;
   }
-  const data = await res.json();
-  const text = (data?.choices?.[0]?.message?.content || "").trim();
+  const errBody = await res.text().catch(() => "");
   recordSystemApiLog({
     service: "AI Engine",
     action: `OpenAI Vision (${model})`,
     method: "POST",
     url: openaiUrl,
     statusCode: res.status,
-    success: true,
+    success: false,
     durationMs,
-    responseSnippet: text.slice(0, 140)
+    error: `OpenAI Vision HTTP ${res.status}: ${errBody.slice(0, 300)}`
   });
-  return text;
+  throw new Error(`Error en an\xE1lisis de imagen con OpenAI Vision (HTTP ${res.status}): ${errBody.slice(0, 200)}`);
+}
+async function analyzeCustomerImageWithVision(base64Image, mimeType = "image/jpeg") {
+  const visionPrompt = `Analiza esta imagen y determina qu\xE9 tipo es:
+
+TIPO A \u2014 Comprobante de pago/transferencia (montos, referencias, banco, fecha).
+TIPO B \u2014 Producto: laptop, accesorio, electr\xF3nico, o un anuncio/flyer/promo de un producto.
+TIPO C \u2014 Anuncio o publicaci\xF3n que solicita personal, empleo o vacante (ayudante, vendedor, t\xE9cnico, etc.).
+TIPO D \u2014 Cualquier otra cosa.
+
+Responde \xDANICAMENTE uno de estos JSON exactos, sin texto adicional ni markdown:
+A: {"tipo":"comprobante","es_comprobante":true,"query_busqueda":"","descripcion":"comprobante de pago"}
+B: {"tipo":"producto","es_comprobante":false,"query_busqueda":"MARCA MODELO-EXACTO","descripcion":"descripci\xF3n breve"}
+C: {"tipo":"vacante","es_comprobante":false,"query_busqueda":"","descripcion":"puesto que se solicita"}
+D: {"tipo":"otro","es_comprobante":false,"query_busqueda":"","descripcion":"descripci\xF3n breve"}`;
+  try {
+    const rawRes = await analyzeImageWithOpenAI(base64Image, mimeType, visionPrompt, false);
+    let p = null;
+    try {
+      const cleanJson = rawRes.replace(/```json|```/g, "").trim();
+      p = JSON.parse(cleanJson);
+    } catch {
+      const match = rawRes.match(/\{[\s\S]*?\}/);
+      if (match) {
+        try {
+          p = JSON.parse(match[0]);
+        } catch {
+        }
+      }
+    }
+    if (p) {
+      if (p.es_comprobante || p.tipo === "comprobante") {
+        return {
+          rawJson: p,
+          interpretedText: "COMPROBANTE_PAGO",
+          isReceipt: true,
+          suggestedQuery: "",
+          imageType: "comprobante"
+        };
+      }
+      if (p.tipo === "vacante") {
+        const desc2 = p.descripcion || "solicitud de personal";
+        return {
+          rawJson: p,
+          interpretedText: `El cliente envi\xF3 captura de un anuncio de EMPLEO / VACANTE: ${desc2}`,
+          isReceipt: false,
+          suggestedQuery: p.query_busqueda || "",
+          imageType: "vacante"
+        };
+      }
+      if (p.tipo === "otro") {
+        const desc2 = p.descripcion || "imagen enviada";
+        return {
+          rawJson: p,
+          interpretedText: `El cliente envi\xF3 una imagen que no es producto ni comprobante: ${desc2}`,
+          isReceipt: false,
+          suggestedQuery: p.query_busqueda || "",
+          imageType: "otro"
+        };
+      }
+      const desc = p.descripcion || "equipo";
+      const query = (p.query_busqueda || "").trim();
+      return {
+        rawJson: p,
+        interpretedText: `El cliente envi\xF3 una imagen de: ${desc}. B\xFAscalo en el INVENTARIO (sugerencia: ${query || desc})`,
+        isReceipt: false,
+        suggestedQuery: query,
+        imageType: "producto"
+      };
+    }
+  } catch (err) {
+    console.log("[Vision Analyze Notice]:", err?.message || err);
+  }
+  return {
+    rawJson: null,
+    interpretedText: "El cliente envi\xF3 una imagen adjunta.",
+    isReceipt: false,
+    imageType: "otro"
+  };
 }
 var products = [];
 var aiEnabledBySession = /* @__PURE__ */ new Map();
 var transcriptionsByMsgId = /* @__PURE__ */ new Map();
 var aiAnalysisByMsgId = /* @__PURE__ */ new Map();
 var mediaCache = /* @__PURE__ */ new Map();
-var evolutionContactsMap = /* @__PURE__ */ new Map();
-var lastContactsSync = 0;
+var TRANSCRIPTIONS_CACHE_FILE = path.join(__dirname, ".vendema-transcriptions.json");
+function loadPersistedTranscriptions() {
+  try {
+    if (fs.existsSync(TRANSCRIPTIONS_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(TRANSCRIPTIONS_CACHE_FILE, "utf-8"));
+      if (raw && typeof raw === "object") {
+        for (const [k, v] of Object.entries(raw)) {
+          if (k && typeof v === "string" && v.trim()) {
+            const cleanId = k.replace(/^evo-/, "").trim();
+            transcriptionsByMsgId.set(cleanId, v.trim());
+            transcriptionsByMsgId.set(`evo-${cleanId}`, v.trim());
+          }
+        }
+      }
+    }
+  } catch {
+  }
+  try {
+    const auditFile = path.join(__dirname, ".vendema-bot-audit.json");
+    if (fs.existsSync(auditFile)) {
+      const auditEntries = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+      if (Array.isArray(auditEntries)) {
+        for (const entry of auditEntries) {
+          const id = String(entry?.incomingMessageId || "").replace(/^evo-/, "").trim();
+          const txt = String(entry?.incomingText || "").trim();
+          if (id && txt && txt.length > 2 && !txt.startsWith("\u{1F3A4} Nota de voz")) {
+            if (!transcriptionsByMsgId.has(id)) {
+              transcriptionsByMsgId.set(id, txt);
+              transcriptionsByMsgId.set(`evo-${id}`, txt);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+  }
+}
+var transcriptionSaveTimer = null;
+function saveTranscriptionForId(msgId, text) {
+  if (!msgId || !text || !text.trim()) return;
+  const cleanId = msgId.replace(/^evo-/, "").trim();
+  if (!cleanId) return;
+  const cleanText = text.trim();
+  transcriptionsByMsgId.set(cleanId, cleanText);
+  transcriptionsByMsgId.set(`evo-${cleanId}`, cleanText);
+  if (transcriptionSaveTimer) return;
+  transcriptionSaveTimer = setTimeout(() => {
+    transcriptionSaveTimer = null;
+    try {
+      const entries = Array.from(transcriptionsByMsgId.entries()).filter(([k]) => !k.startsWith("evo-")).slice(-800);
+      const obj = {};
+      for (const [k, v] of entries) obj[k] = v;
+      writeFileAtomicSync(TRANSCRIPTIONS_CACHE_FILE, JSON.stringify(obj, null, 2));
+    } catch {
+    }
+  }, 800);
+}
+loadPersistedTranscriptions();
 var conversations = [];
 var customers = [
   {
@@ -3141,14 +4161,18 @@ var learnedInsights = [
 var followUps = [];
 var processedMessageIds = /* @__PURE__ */ new Map();
 var PROCESSED_IDS_FILE = path.join(__dirname, ".vendema-processed-ids.json");
+var idempotencyLedger = /* @__PURE__ */ new Map();
 try {
   if (fs.existsSync(PROCESSED_IDS_FILE)) {
     const raw = JSON.parse(fs.readFileSync(PROCESSED_IDS_FILE, "utf-8"));
     const cutoff = Date.now() - 24 * 60 * 60 * 1e3;
     if (raw && typeof raw === "object") {
-      for (const [k, ts] of Object.entries(raw)) {
-        if (typeof ts === "number" && ts > cutoff) {
-          processedMessageIds.set(k, ts);
+      for (const [k, val] of Object.entries(raw)) {
+        if (typeof val === "number" && val > cutoff) {
+          processedMessageIds.set(k, val);
+        } else if (val && typeof val === "object" && typeof val.processedAt === "number" && val.processedAt > cutoff) {
+          processedMessageIds.set(k, val.processedAt);
+          idempotencyLedger.set(k, val);
         }
       }
     }
@@ -3163,7 +4187,7 @@ function scheduleSaveProcessedIds() {
     try {
       const cutoff = Date.now() - 12 * 60 * 60 * 1e3;
       const entries = Array.from(processedMessageIds.entries()).filter(([, ts]) => ts > cutoff).slice(-1500);
-      fs.writeFileSync(PROCESSED_IDS_FILE, JSON.stringify(Object.fromEntries(entries)), "utf-8");
+      writeFileAtomicSync(PROCESSED_IDS_FILE, JSON.stringify(Object.fromEntries(entries)));
     } catch {
     }
   }, 1500);
@@ -3171,7 +4195,7 @@ function scheduleSaveProcessedIds() {
 function normalizeMsgIdKey(rawId) {
   return (rawId || "").trim().replace(/^evo-/, "");
 }
-function markMessageIdProcessed(rawId, contactKeys = []) {
+function markMessageIdProcessed(rawId, contactKeys = [], meta) {
   const cleanId = normalizeMsgIdKey(rawId);
   if (!cleanId) return;
   const now = Date.now();
@@ -3181,11 +4205,39 @@ function markMessageIdProcessed(rawId, contactKeys = []) {
     processedMessageIds.set(`${k}::${cleanId}`, now);
     processedMessageIds.set(`${k}::evo-${cleanId}`, now);
   }
+  const existing = idempotencyLedger.get(cleanId);
+  idempotencyLedger.set(cleanId, {
+    messageId: cleanId,
+    correlationId: meta?.correlationId || existing?.correlationId,
+    conversationId: meta?.conversationId || existing?.conversationId,
+    processedAt: now,
+    responseSent: meta?.responseSent ?? existing?.responseSent ?? true,
+    orderOrQuoteCreated: meta?.orderOrQuoteCreated ?? existing?.orderOrQuoteCreated ?? false
+  });
+  scheduleSaveProcessedIds();
+}
+function unmarkMessageIdProcessedForRetry(rawId, contactKeys = []) {
+  const cleanId = normalizeMsgIdKey(rawId);
+  if (!cleanId) return;
+  processedMessageIds.delete(cleanId);
+  processedMessageIds.delete(`evo-${cleanId}`);
+  for (const k of contactKeys) {
+    processedMessageIds.delete(`${k}::${cleanId}`);
+    processedMessageIds.delete(`${k}::evo-${cleanId}`);
+  }
+  const existing = idempotencyLedger.get(cleanId);
+  if (existing) {
+    existing.responseSent = false;
+  }
   scheduleSaveProcessedIds();
 }
 function isMessageIdAlreadyProcessed(rawId, contactKeys = []) {
   const cleanId = normalizeMsgIdKey(rawId);
   if (!cleanId) return false;
+  const ledgerEntry = idempotencyLedger.get(cleanId);
+  if (ledgerEntry && ledgerEntry.responseSent === false) {
+    return false;
+  }
   if (processedMessageIds.has(cleanId) || processedMessageIds.has(`evo-${cleanId}`)) {
     return true;
   }
@@ -3493,13 +4545,43 @@ function releaseOdooSlot() {
   const next = odooRequestQueue.shift();
   if (next) next();
 }
-var MAX_SYSTEM_API_LOGS = 200;
+var MAX_SYSTEM_API_LOGS = 400;
 var systemApiLogs = [];
+function classifyErrorSeverityAndCategory(success, statusCode, errorText) {
+  if (success && (!statusCode || statusCode < 400)) {
+    return { severity: "INFO" };
+  }
+  const errLower = (errorText || "").toLowerCase();
+  if (statusCode === 401 || statusCode === 403 || errLower.includes("incorrect api key") || errLower.includes("unauthorized")) {
+    return { severity: "CRITICAL", errorCategory: "AUTH_ERROR" };
+  }
+  if (statusCode === 429 || errLower.includes("rate limit") || errLower.includes("quota")) {
+    return { severity: "HIGH", errorCategory: "RATE_LIMIT" };
+  }
+  if (errLower.includes("connection closed") || errLower.includes("socket") || errLower.includes("econnrefused")) {
+    return { severity: "HIGH", errorCategory: "CONNECTION_ERROR" };
+  }
+  if (errLower.includes("timeout") || errLower.includes("aborted")) {
+    return { severity: "MEDIUM", errorCategory: "TIMEOUT" };
+  }
+  if (statusCode && statusCode >= 500) {
+    return { severity: "HIGH", errorCategory: "UPSTREAM_ERROR" };
+  }
+  return { severity: "MEDIUM", errorCategory: "GENERAL_ERROR" };
+}
+var activeCorrelationIdContext = void 0;
 function recordSystemApiLog(log) {
+  const autoClassified = classifyErrorSeverityAndCategory(log.success, log.statusCode, log.error || log.responseSnippet);
   const entry = {
     id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    ...log
+    ...log,
+    correlationId: log.correlationId || activeCorrelationIdContext,
+    severity: log.severity || autoClassified.severity,
+    errorCategory: log.errorCategory || autoClassified.errorCategory,
+    requestPreview: log.requestPreview ? sanitizeSecretsInText(log.requestPreview) : void 0,
+    responseSnippet: log.responseSnippet ? sanitizeSecretsInText(log.responseSnippet) : void 0,
+    error: log.error ? sanitizeSecretsInText(log.error) : void 0
   };
   systemApiLogs.unshift(entry);
   if (systemApiLogs.length > MAX_SYSTEM_API_LOGS) {
@@ -3507,15 +4589,38 @@ function recordSystemApiLog(log) {
   }
   return entry;
 }
+function recordDiagnosticStage(params) {
+  return recordSystemApiLog({
+    service: params.service || "Backend",
+    action: `[${params.stage}] ${params.details || params.stage}`,
+    method: "TRACE",
+    target: params.customer || params.conversationId,
+    statusCode: params.success === false ? 500 : 200,
+    success: params.success !== false,
+    durationMs: params.durationMs ?? 0,
+    requestPreview: `correlation_id: ${params.correlationId} | stage: ${params.stage} | msgId: ${params.messageId || "N/A"}`,
+    responseSnippet: params.details,
+    error: params.error,
+    correlationId: params.correlationId,
+    stage: params.stage,
+    severity: params.severity || (params.success === false ? "HIGH" : "INFO"),
+    module: params.module || "pipeline",
+    customer: params.customer,
+    conversationId: params.conversationId,
+    messageId: params.messageId
+  });
+}
 recordSystemApiLog({
-  service: "Evolution API",
-  action: "Inicializaci\xF3n de Monitor del Sistema",
+  service: "Backend",
+  action: "Inicializaci\xF3n de Monitor y Cola Persistente (Fase 1)",
   method: "SYS",
   statusCode: 200,
   success: true,
   durationMs: 0,
-  requestPreview: "M\xF3dulo de diagn\xF3stico de llamadas API inicializado correctamente",
-  responseSnippet: "Escuchando peticiones de Evolution API y Odoo ERP"
+  severity: "INFO",
+  module: "boot",
+  requestPreview: "M\xF3dulo centralizado de diagn\xF3stico, cola persistente y trazabilidad correlation_id activo",
+  responseSnippet: "Monitoreando Backend, Supabase, Evolution API, OpenAI y Odoo ERP"
 });
 async function callOdoo(service, method, args, maxRetries = 3) {
   await acquireOdooSlot();
@@ -3977,6 +5082,75 @@ async function findOrCreateOdooCustomerByPhone(rawPhone, nameFallback) {
   }
   return null;
 }
+var rawEvolutionRecordsByMsgId = /* @__PURE__ */ new Map();
+var QUOTED_MESSAGES_CACHE_FILE = path.join(__dirname, ".vendema-quoted-messages.json");
+var quotedMessagesByMsgId = /* @__PURE__ */ new Map();
+function loadPersistedQuotedMessages() {
+  try {
+    if (fs.existsSync(QUOTED_MESSAGES_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(QUOTED_MESSAGES_CACHE_FILE, "utf-8"));
+      if (raw && typeof raw === "object") {
+        for (const [k, v] of Object.entries(raw)) {
+          if (k && v && typeof v === "object") {
+            const qv = v;
+            const cleanK = k.replace(/^evo-/, "");
+            const cleanQId = (qv.id || "").replace(/^evo-/, "");
+            const isLegacyHeuristic = Boolean(qv.text?.includes("\u{1F4AC} Consultas citadas:")) || Boolean(cleanQId && cleanQId === cleanK);
+            if (!isLegacyHeuristic) {
+              quotedMessagesByMsgId.set(k, qv);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+  }
+}
+function hydrateQuotedMessageById(msg, messages, customerNameFallback) {
+  if (!msg.quotedMessage?.id) return;
+  const qId = msg.quotedMessage.id;
+  const cleanQId = qId.replace(/^evo-/, "");
+  const selfId = (msg.evolutionMessageId || msg.id).replace(/^evo-/, "");
+  if (!cleanQId || cleanQId === selfId) return;
+  const isPlaceholder = !msg.quotedMessage.text || msg.quotedMessage.text.trim().length === 0 || msg.quotedMessage.text === "\u{1F3A4} Nota de voz citada" || msg.quotedMessage.text === "\u{1F3A4} Nota de voz de WhatsApp" || msg.quotedMessage.text === "\u{1F3A4} Nota de voz anterior";
+  if (!isPlaceholder) return;
+  const savedTr = transcriptionsByMsgId.get(qId) || transcriptionsByMsgId.get(cleanQId);
+  const parent = messages.find(
+    (cand) => cand !== msg && !isInternalOrNoiseContent(cand.content) && (cand.id === qId || cand.evolutionMessageId === qId || cand.id === `evo-${cleanQId}` || cand.evolutionMessageId === cleanQId)
+  );
+  if (parent) {
+    const parentTr = parent.transcription || savedTr;
+    msg.quotedMessage.text = (parent.type === "audio" && parentTr ? `\u{1F3A4} "${parentTr}"` : parentTr || parent.content) || (parent.type === "image" ? "\u{1F4F7} Foto enviada anteriormente" : parent.type === "audio" ? "\u{1F3A4} Nota de voz citada" : parent.type === "video" ? "\u{1F3A5} Video anterior" : "Mensaje anterior");
+    msg.quotedMessage.type = parent.type;
+    msg.quotedMessage.mediaUrl = parent.mediaUrl;
+    msg.quotedMessage.author = parent.sender === "customer" ? customerNameFallback : "Todo Lapto";
+    saveQuotedMessageForId(msg.evolutionMessageId || msg.id, msg.quotedMessage);
+  } else if (savedTr) {
+    msg.quotedMessage.text = `\u{1F3A4} "${savedTr}"`;
+    msg.quotedMessage.type = "audio";
+    saveQuotedMessageForId(msg.evolutionMessageId || msg.id, msg.quotedMessage);
+  }
+}
+var quotedSaveTimer = null;
+function saveQuotedMessageForId(msgId, qm) {
+  if (!msgId || !qm || !qm.text && !qm.id && !qm.mediaBase64) return;
+  const cleanId = msgId.replace(/^evo-/, "").trim();
+  if (!cleanId) return;
+  quotedMessagesByMsgId.set(cleanId, qm);
+  quotedMessagesByMsgId.set(`evo-${cleanId}`, qm);
+  if (quotedSaveTimer) return;
+  quotedSaveTimer = setTimeout(() => {
+    quotedSaveTimer = null;
+    try {
+      const entries = Array.from(quotedMessagesByMsgId.entries()).filter(([k]) => !k.startsWith("evo-")).slice(-500);
+      const obj = {};
+      for (const [k, v] of entries) obj[k] = v;
+      writeFileAtomicSync(QUOTED_MESSAGES_CACHE_FILE, JSON.stringify(obj, null, 2));
+    } catch {
+    }
+  }, 1e3);
+}
+loadPersistedQuotedMessages();
 function parseSingleEvolutionMessage(record, customerNameFallback) {
   if (!record || !record.key) return null;
   const rawMsgObj = record.message || {};
@@ -3987,6 +5161,10 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
   }
   const fromMe = Boolean(record.key.fromMe);
   const msgId = record.key.id || record.id || `${Date.now()}`;
+  rawEvolutionRecordsByMsgId.set(msgId, record);
+  if (record.key?.id) {
+    rawEvolutionRecordsByMsgId.set(record.key.id, record);
+  }
   let type = "text";
   let content = "";
   let mediaUrl;
@@ -4006,25 +5184,25 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.videoMessage || msgTypeRaw === "videoMessage") {
     type = "video";
-    content = msgObj.videoMessage?.caption || "";
+    content = msgObj.videoMessage?.caption || "[El cliente envi\xF3 un VIDEO. El bot no puede verlo.]";
     mediaDuration = msgObj.videoMessage?.seconds || 0;
     mediaMimeType = msgObj.videoMessage?.mimetype || "video/mp4";
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}?video=true`;
   } else if (msgObj.documentMessage || msgTypeRaw === "documentMessage") {
     type = "document";
     fileName = msgObj.documentMessage?.fileName || msgObj.documentMessage?.title || "Documento";
-    content = msgObj.documentMessage?.caption || `\u{1F4C4} ${fileName}`;
+    content = msgObj.documentMessage?.caption || `\u{1F4C4} ${fileName} [El cliente envi\xF3 un DOCUMENTO. El bot no puede verlo.]`;
     mediaMimeType = msgObj.documentMessage?.mimetype || "application/pdf";
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.stickerMessage || msgTypeRaw === "stickerMessage") {
     type = "sticker";
-    content = "\u{1F3F7}\uFE0F Sticker";
+    content = "[El cliente envi\xF3 un STICKER.]";
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.locationMessage || msgTypeRaw === "locationMessage") {
     type = "location";
     const lat = msgObj.locationMessage?.degreesLatitude;
     const lng = msgObj.locationMessage?.degreesLongitude;
-    content = lat && lng ? `\u{1F4CD} Ubicaci\xF3n GPS: https://www.google.com/maps?q=${lat},${lng}` : "\u{1F4CD} Ubicaci\xF3n compartida";
+    content = lat && lng ? `\u{1F4CD} Ubicaci\xF3n GPS: https://www.google.com/maps?q=${lat},${lng}` : "[El cliente envi\xF3 una UBICACI\xD3N.]";
   } else if (msgObj.interactiveMessage || msgTypeRaw === "interactiveMessage") {
     type = "text";
     content = msgObj.interactiveMessage?.body?.text || msgObj.interactiveMessage?.header?.title || "Mensaje interactivo";
@@ -4034,31 +5212,77 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
   }
   if (!content && type === "text") return null;
   let quotedMessage;
-  const ctx = msgObj.extendedTextMessage?.contextInfo || msgObj.imageMessage?.contextInfo || msgObj.videoMessage?.contextInfo || msgObj.audioMessage?.contextInfo || msgObj.documentMessage?.contextInfo || msgObj.stickerMessage?.contextInfo || msgObj.interactiveMessage?.contextInfo || msgObj.interactiveResponseMessage?.contextInfo || msgObj.buttonsResponseMessage?.contextInfo || msgObj.templateButtonReplyMessage?.contextInfo || msgObj.listResponseMessage?.contextInfo || rawMsgObj.contextInfo || rawMsgObj.messageContextInfo || rawMsgObj.extendedTextMessage?.contextInfo || record.contextInfo || record.message?.contextInfo || record.message?.extendedTextMessage?.contextInfo || record.quotedMessage || record.quoted;
+  const candidateCtxs = [
+    msgObj.extendedTextMessage?.contextInfo,
+    msgObj.imageMessage?.contextInfo,
+    msgObj.videoMessage?.contextInfo,
+    msgObj.audioMessage?.contextInfo,
+    msgObj.documentMessage?.contextInfo,
+    msgObj.stickerMessage?.contextInfo,
+    msgObj.interactiveMessage?.contextInfo,
+    msgObj.interactiveResponseMessage?.contextInfo,
+    msgObj.buttonsResponseMessage?.contextInfo,
+    msgObj.templateButtonReplyMessage?.contextInfo,
+    msgObj.listResponseMessage?.contextInfo,
+    rawMsgObj.contextInfo,
+    rawMsgObj.extendedTextMessage?.contextInfo,
+    record.contextInfo,
+    record.message?.contextInfo,
+    record.message?.extendedTextMessage?.contextInfo,
+    rawMsgObj.messageContextInfo,
+    record.quotedMessage,
+    record.quoted
+  ].filter(Boolean);
+  const ctx = candidateCtxs.find(
+    (c) => c.quotedMessage || c.stanzaId || c.remoteJid === "status@broadcast" || String(c.remoteJid || "").includes("broadcast") || String(c.participant || "").includes("broadcast") || c.externalAdReply || c.quotedMessageId || c.messageAssociation?.parentMessageKey?.id
+  ) || candidateCtxs[0];
   const quotedId = ctx?.stanzaId || ctx?.id || ctx?.quotedMessageId || ctx?.messageAssociation?.parentMessageKey?.id || rawMsgObj.messageContextInfo?.messageAssociation?.parentMessageKey?.id || record.quoted?.key?.id || record.quotedMessage?.key?.id;
   const rawQm = ctx?.quotedMessage?.message || ctx?.quotedMessage?.ephemeralMessage?.message || ctx?.quotedMessage?.viewOnceMessage?.message || ctx?.quotedMessage?.viewOnceMessageV2?.message || ctx?.quotedMessage?.documentWithCaptionMessage?.message || ctx?.quotedMessage || record.quotedMessage?.message || record.quotedMessage || record.quoted?.message || record.quoted;
   if (rawQm) {
     const qm = rawQm.message || rawQm.ephemeralMessage?.message || rawQm.viewOnceMessage?.message || rawQm;
     const qText = qm.conversation || qm.extendedTextMessage?.text || qm.text || qm.body || qm.content || qm.caption || qm.imageMessage?.caption || qm.videoMessage?.caption || qm.documentMessage?.caption || qm.documentMessage?.fileName || qm.buttonsResponseMessage?.selectedDisplayText || qm.templateButtonReplyMessage?.selectedDisplayText || qm.listResponseMessage?.title || qm.interactiveResponseMessage?.body?.text || qm.interactiveMessage?.body?.text || qm.editedMessage?.message?.protocolMessage?.editedMessage?.conversation || qm.editedMessage?.message?.protocolMessage?.editedMessage?.extendedTextMessage?.text || (qm.audioMessage ? "\u{1F3A4} Nota de voz citada" : qm.imageMessage ? "\u{1F4F7} Foto citada" : qm.videoMessage ? "\u{1F3A5} Video citado" : qm.documentMessage ? "\u{1F4C4} Documento citado" : qm.stickerMessage ? "\u{1F3F7}\uFE0F Sticker citado" : "");
     const qType = qm.audioMessage ? "audio" : qm.imageMessage ? "image" : qm.videoMessage ? "video" : qm.documentMessage ? "document" : "text";
-    if (qText || quotedId) {
+    let quotedMediaBase64;
+    const rawThumb = qm.imageMessage?.base64 || qm.imageMessage?.jpegThumbnail || qm.videoMessage?.base64 || qm.videoMessage?.jpegThumbnail || ctx?.externalAdReply?.thumbnail;
+    if (typeof rawThumb === "string" && rawThumb.length > 20) {
+      quotedMediaBase64 = rawThumb;
+    } else if (rawThumb && typeof rawThumb === "object") {
+      try {
+        const bytes = Buffer.isBuffer(rawThumb) ? rawThumb : Array.isArray(rawThumb) ? Buffer.from(rawThumb) : rawThumb.data && Array.isArray(rawThumb.data) ? Buffer.from(rawThumb.data) : Buffer.from(Object.values(rawThumb));
+        if (bytes.length > 20) {
+          quotedMediaBase64 = bytes.toString("base64");
+        }
+      } catch {
+      }
+    }
+    if (qText || quotedId || quotedMediaBase64) {
       const partPhone = ctx?.participant ? String(ctx.participant).replace(/@.*$/, "").replace(/\D/g, "") : "";
       const isTodoLaptoAuthor = Boolean(ctx?.fromMe) || partPhone && (partPhone === appConfig.evolution.teamPhone || partPhone === appConfig.evolution.adminPhone);
+      const isStatusReply = Boolean(
+        ctx?.remoteJid === "status@broadcast" || String(ctx?.remoteJid || "").includes("broadcast") || String(ctx?.participant || "").includes("broadcast") || record.key?.remoteJid === "status@broadcast" || rawMsgObj?.messageContextInfo?.messageAssociation?.parentMessageKey?.remoteJid === "status@broadcast" || Array.isArray(ctx?.statusAttributions) && ctx.statusAttributions.length > 0 && ctx?.remoteJid
+      );
       quotedMessage = {
         id: quotedId,
-        text: qText,
+        text: qText || (isStatusReply ? "\u{1F4F7} [Foto / Publicaci\xF3n en el Estado de WhatsApp de Todo Lapto]" : ""),
         type: qType,
-        author: isTodoLaptoAuthor ? "Todo Lapto" : partPhone ? `+${partPhone}` : customerNameFallback
+        author: isStatusReply ? "Estado de WhatsApp de Todo Lapto (Story)" : isTodoLaptoAuthor ? "Todo Lapto" : partPhone ? `+${partPhone}` : customerNameFallback,
+        mediaBase64: quotedMediaBase64,
+        mediaMimeType: qm.imageMessage?.mimetype || "image/jpeg",
+        isStatusReply
       };
     }
   } else if (ctx?.externalAdReply) {
     const adTitle = ctx.externalAdReply.title || "Anuncio de Redes Sociales";
     const adBody = ctx.externalAdReply.body || ctx.externalAdReply.sourceUrl || "";
+    const isStatusAd = Boolean(
+      ctx.externalAdReply.title?.toLowerCase().includes("estado") || ctx.externalAdReply.body?.toLowerCase().includes("estado")
+    );
     quotedMessage = {
       id: quotedId,
       text: `${adTitle}${adBody ? ` \u2014 ${adBody}` : ""}`,
       type: "text",
-      author: "\u{1F4E2} Anuncio Citado"
+      author: isStatusAd ? "Estado de WhatsApp de Todo Lapto (Story)" : "\u{1F4E2} Anuncio Citado",
+      isStatusReply: isStatusAd
     };
   } else if (msgObj.interactiveMessage?.header?.title) {
     quotedMessage = {
@@ -4073,8 +5297,22 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
       author: customerNameFallback
     };
   }
+  if (quotedMessage) {
+    saveQuotedMessageForId(msgId, quotedMessage);
+  } else {
+    const cachedQuote = quotedMessagesByMsgId.get(msgId) || quotedMessagesByMsgId.get(msgId.replace(/^evo-/, ""));
+    if (cachedQuote) {
+      quotedMessage = { ...cachedQuote };
+    }
+  }
   const tsNum = Number(record.messageTimestamp);
   const timestamp = tsNum ? new Date(tsNum > 1e12 ? tsNum : tsNum * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+  const cleanMsgId = msgId.replace(/^evo-/, "");
+  const savedTranscription = transcriptionsByMsgId.get(msgId) || transcriptionsByMsgId.get(cleanMsgId);
+  const savedAiAnalysis = aiAnalysisByMsgId.get(msgId) || aiAnalysisByMsgId.get(cleanMsgId);
+  if (type === "audio" && savedTranscription) {
+    content = `\u{1F3A4} "${savedTranscription}"`;
+  }
   return {
     id: `evo-${msgId}`,
     evolutionMessageId: msgId,
@@ -4086,13 +5324,47 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
     mediaUrl,
     mediaMimeType,
     mediaDuration,
-    transcription: transcriptionsByMsgId.get(msgId),
-    aiAnalysis: aiAnalysisByMsgId.get(msgId),
+    transcription: type === "audio" ? savedTranscription : void 0,
+    aiAnalysis: savedAiAnalysis,
     metadata: fileName ? { fileName } : void 0
   };
 }
 var relatedJidsBySession = /* @__PURE__ */ new Map();
 var lidToPhoneMap = /* @__PURE__ */ new Map();
+var LID_MAPPINGS_FILE = path.join(__dirname, ".vendema-lid-mappings.json");
+function loadLidMappings() {
+  try {
+    if (fs.existsSync(LID_MAPPINGS_FILE)) {
+      const raw = fs.readFileSync(LID_MAPPINGS_FILE, "utf-8");
+      const data = JSON.parse(raw);
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === "string") {
+          lidToPhoneMap.set(k, v);
+          const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "");
+          if (cleanK) lidToPhoneMap.set(cleanK, v);
+          if (!k.includes("@")) lidToPhoneMap.set(`${k}@lid`, v);
+        }
+      }
+      console.log(`\u{1F4CB} [LID Mappings]: Cargados ${lidToPhoneMap.size} registros de mapeo LID a tel\xE9fono.`);
+    }
+  } catch (err) {
+    console.warn("[LID Mappings Load Warning]:", err?.message || err);
+  }
+}
+function saveLidMappings() {
+  try {
+    const obj = {};
+    for (const [k, v] of lidToPhoneMap.entries()) {
+      obj[k] = v;
+    }
+    writeFileAtomicSync(LID_MAPPINGS_FILE, JSON.stringify(obj, null, 2));
+  } catch (err) {
+    console.warn("[LID Mappings Save Warning]:", err?.message || err);
+  }
+}
+loadLidMappings();
+syncAuthoritativeDominicanTime().catch(() => {
+});
 function isGenericContactName(name) {
   if (!name) return true;
   const trimmed = name.trim();
@@ -4100,307 +5372,416 @@ function isGenericContactName(name) {
   const lower = trimmed.toLowerCase();
   return lower === "voc\xEA" || lower === "voce" || lower === "cliente" || lower === "cliente whatsapp" || lower.startsWith("cliente +") || lower.startsWith("whatsapp #") || lower.startsWith("lead ") || lower.startsWith("usuario ") || /^\+?\d+$/.test(trimmed);
 }
-async function syncEvolutionContactsIfNeeded() {
+var isEvoSyncRunning = false;
+var lastEvolutionChatsSync = 0;
+var evolutionLastKnownState = "unknown";
+var evolutionQrCache = {
+  qrBase64: null,
+  pairingCode: null,
+  generatedAt: 0,
+  ownerJid: null,
+  profileName: null,
+  profilePicUrl: null,
+  lastMetaFetchAt: 0
+};
+function isSyntheticTestArtifact(val) {
+  if (!val) return false;
+  return /^(TEST1_|TEST2_|TEST3_|TEST4_|TEST_|TEST-MSG-|TEST-)/i.test(val) || val.includes("18095550") || val.includes("551199999000") || val === "Cliente Prueba 1" || val === "Cliente Concurrente" || val === "Cliente Auditoria" || val.startsWith("Cliente Lote ");
+}
+function isDuplicateChatMessage(existingList, newMsg) {
+  if (!existingList || existingList.length === 0 || !newMsg) return false;
+  const normNewId = normalizeMsgIdKey(newMsg.id);
+  const normNewEvoId = normalizeMsgIdKey(newMsg.evolutionMessageId || "");
+  const newText = (newMsg.content || "").trim();
+  const newTime = new Date(newMsg.timestamp).getTime();
+  return existingList.some((m) => {
+    const normId = normalizeMsgIdKey(m.id);
+    const normEvoId = normalizeMsgIdKey(m.evolutionMessageId || "");
+    if (normNewId && (normNewId === normId || normNewId === normEvoId)) return true;
+    if (normNewEvoId && (normNewEvoId === normId || normNewEvoId === normEvoId)) return true;
+    if (m.sender === newMsg.sender && m.type === newMsg.type) {
+      if (newText && (m.content || "").trim() === newText) {
+        const mTime = new Date(m.timestamp).getTime();
+        if (Math.abs(newTime - mTime) <= 6e4) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+function deduplicateMessagesArray(msgs) {
+  if (!Array.isArray(msgs) || msgs.length === 0) return [];
+  const result = [];
+  for (const m of msgs) {
+    if (!isDuplicateChatMessage(result, m)) {
+      result.push(m);
+    }
+  }
+  return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+function consolidateDuplicateConversations() {
+  if (!Array.isArray(conversations) || conversations.length === 0) return false;
+  let hasChanges = false;
+  for (const conv of conversations) {
+    const origCount = conv.messages?.length || 0;
+    conv.messages = deduplicateMessagesArray(conv.messages || []);
+    if (conv.messages.length !== origCount) {
+      hasChanges = true;
+    }
+  }
+  const byPhone = /* @__PURE__ */ new Map();
+  const byName = /* @__PURE__ */ new Map();
+  const bySession = /* @__PURE__ */ new Map();
+  const toRemove = /* @__PURE__ */ new Set();
+  for (const conv of conversations) {
+    const cleanPhone = (conv.customerPhone || conv.sessionId || "").replace(/@.*$/, "").replace(/\D/g, "");
+    const isLid = conv.sessionId.endsWith("@lid") || cleanPhone.length > 13;
+    if (!isLid && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      byPhone.set(std, conv);
+      byPhone.set(std.slice(-10), conv);
+      bySession.set(conv.sessionId, conv);
+      if (!isGenericContactName(conv.customerName)) {
+        byName.set(conv.customerName.trim().toLowerCase(), conv);
+      }
+    }
+  }
+  for (const conv of conversations) {
+    const cleanPhone = (conv.customerPhone || conv.sessionId || "").replace(/@.*$/, "").replace(/\D/g, "");
+    const isLid = conv.sessionId.endsWith("@lid") || cleanPhone.length > 13;
+    const nameKey = !isGenericContactName(conv.customerName) ? conv.customerName.trim().toLowerCase() : "";
+    let primary;
+    if (isLid) {
+      const mappedPhone = lidToPhoneMap.get(conv.sessionId) || lidToPhoneMap.get(cleanPhone);
+      if (mappedPhone) {
+        primary = byPhone.get(mappedPhone) || byPhone.get(mappedPhone.slice(-10));
+      }
+    }
+    if (!primary && nameKey) {
+      primary = byName.get(nameKey);
+    }
+    if (!primary && relatedJidsBySession.has(conv.sessionId)) {
+      for (const rel of relatedJidsBySession.get(conv.sessionId)) {
+        if (bySession.has(rel)) {
+          primary = bySession.get(rel);
+          break;
+        }
+      }
+    }
+    if (primary && primary.sessionId !== conv.sessionId) {
+      hasChanges = true;
+      toRemove.add(conv.sessionId);
+      if (primary.aiEnabled === false || conv.aiEnabled === false) {
+        primary.aiEnabled = false;
+        aiEnabledBySession.set(primary.sessionId, false);
+        if (primary.customerPhone) aiEnabledBySession.set(primary.customerPhone, false);
+        aiEnabledBySession.set(conv.sessionId, false);
+      }
+      for (const m of conv.messages) {
+        if (!isDuplicateChatMessage(primary.messages, m)) {
+          primary.messages.push(m);
+        }
+      }
+      primary.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      if (isGenericContactName(primary.customerName) && !isGenericContactName(conv.customerName)) {
+        primary.customerName = conv.customerName;
+      }
+      if (!primary.profilePicUrl && conv.profilePicUrl) {
+        primary.profilePicUrl = conv.profilePicUrl;
+      }
+      const lastM = primary.messages[primary.messages.length - 1];
+      if (lastM) {
+        primary.lastTimestamp = lastM.timestamp;
+        primary.lastMessagePreview = lastM.content;
+        primary.lastMessageType = lastM.type;
+      }
+      const jSet = relatedJidsBySession.get(primary.sessionId) || /* @__PURE__ */ new Set([primary.sessionId]);
+      jSet.add(conv.sessionId);
+      if (conv.customerPhone) jSet.add(conv.customerPhone);
+      relatedJidsBySession.set(primary.sessionId, jSet);
+      if (isLid && primary.customerPhone) {
+        lidToPhoneMap.set(conv.sessionId, primary.customerPhone);
+        lidToPhoneMap.set(cleanPhone, primary.customerPhone);
+        saveLidMappings();
+      }
+    } else if (!isLid && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      byPhone.set(std, conv);
+      byPhone.set(std.slice(-10), conv);
+      bySession.set(conv.sessionId, conv);
+      if (nameKey) byName.set(nameKey, conv);
+    }
+  }
+  if (toRemove.size > 0) {
+    conversations = conversations.filter((c) => !toRemove.has(c.sessionId));
+    hasChanges = true;
+    console.log(`\u{1F9F9} [Deduplicaci\xF3n de Contactos]: Se unificaron ${toRemove.size} conversaciones duplicadas.`);
+  }
+  if (hasChanges) {
+    conversations.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
+    savePersistedConversations();
+    broadcastEvent("conversations_update", { count: conversations.length });
+  }
+  return hasChanges;
+}
+var lastContactsSyncAt = 0;
+async function syncEvolutionContactsDirectory(force = false) {
   const now = Date.now();
-  if (now - lastContactsSync < 1e3 * 60 * 60 * 4 && evolutionContactsMap.size > 0) return;
+  if (!force && now - lastContactsSyncAt < 30 * 60 * 1e3) return;
+  lastContactsSyncAt = now;
   try {
-    const url = `${appConfig.evolution.serverUrl}/chat/findContacts/${appConfig.evolution.instance}`;
-    const res = await fetch(url, {
+    const baseUrl = (appConfig.evolution.serverUrl || "").replace(/\/$/, "");
+    const instance = appConfig.evolution.instance;
+    if (!baseUrl || !appConfig.evolution.apiKey) return;
+    const res = await fetch(`${baseUrl}/chat/findContacts/${instance}`, {
       method: "POST",
       headers: {
-        apikey: appConfig.evolution.apiKey,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        apikey: appConfig.evolution.apiKey
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({ where: {} }),
+      signal: AbortSignal.timeout(12e3)
     });
-    if (res.ok) {
-      const contacts = await res.json();
-      if (Array.isArray(contacts)) {
-        for (const c of contacts) {
-          if (c.remoteJid) {
-            const cleanName = c.pushName && c.pushName.trim() !== "" ? c.pushName.trim() : void 0;
-            const pic = c.profilePicUrl || void 0;
-            evolutionContactsMap.set(c.remoteJid, { name: cleanName, pic });
-            const phoneKey = c.remoteJid.replace(/@.*$/, "").replace(/\D/g, "");
-            if (phoneKey) {
-              const existing = evolutionContactsMap.get(phoneKey);
-              evolutionContactsMap.set(phoneKey, {
-                name: cleanName || existing?.name,
-                pic: pic || existing?.pic
-              });
-            }
+    if (!res.ok) return;
+    const contacts = await res.json().catch(() => []);
+    if (!Array.isArray(contacts) || contacts.length === 0) return;
+    const phonesByName = /* @__PURE__ */ new Map();
+    for (const c of contacts) {
+      const rJid = c.remoteJid || c.id || "";
+      if (rJid.endsWith("@s.whatsapp.net") && c.pushName && c.pushName.trim()) {
+        const phone = rJid.replace(/@.*$/, "").replace(/\D/g, "");
+        if (phone.length >= 10 && phone.length <= 13) {
+          phonesByName.set(c.pushName.trim().toLowerCase(), phone);
+        }
+      }
+    }
+    let mappedCount = 0;
+    for (const c of contacts) {
+      const rJid = c.remoteJid || c.id || "";
+      if (rJid.endsWith("@lid") && c.pushName && c.pushName.trim()) {
+        const matchedPhone = phonesByName.get(c.pushName.trim().toLowerCase());
+        if (matchedPhone) {
+          lidToPhoneMap.set(rJid, matchedPhone);
+          lidToPhoneMap.set(rJid.replace(/@.*$/, ""), matchedPhone);
+          mappedCount++;
+        }
+      }
+    }
+    if (mappedCount > 0) {
+      console.log(`\u{1F517} [LID to Phone Sync]: Mapeados ${mappedCount} identificadores @lid a n\xFAmeros reales de WhatsApp.`);
+      consolidateDuplicateConversations();
+    }
+  } catch (err) {
+    console.log("[Contacts Directory Sync Info]:", err.message);
+  }
+}
+var CONVERSATIONS_CACHE_FILE = path.join(__dirname, ".vendema-conversations.json");
+function savePersistedConversations() {
+  try {
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    const cleanList = conversations.filter((c) => !isSyntheticTestArtifact(c.sessionId) && !isSyntheticTestArtifact(c.customerName)).slice(0, 80).map((c) => ({
+      ...c,
+      messages: Array.isArray(c.messages) ? c.messages.slice(-40) : []
+    }));
+    writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, JSON.stringify(cleanList, null, 2));
+  } catch (err) {
+    console.warn("[Conversations Cache Save Warning]:", err?.message || err);
+  }
+}
+function clearAllChatsOnWhatsAppDisconnect(disconnectedState = "close") {
+  const hadChats = conversations.length > 0;
+  const wasConnected = evolutionLastKnownState === "open" || appConfig.evolution.connected;
+  evolutionLastKnownState = disconnectedState;
+  appConfig.evolution.connected = false;
+  evolutionQrCache.ownerJid = null;
+  evolutionQrCache.profileName = null;
+  evolutionQrCache.profilePicUrl = null;
+  conversations = [];
+  relatedJidsBySession.clear();
+  lastChatMessagesFetchBySession.clear();
+  inFlightBotKeys.clear();
+  if (persistentJobQueue.length > 0) {
+    persistentJobQueue = persistentJobQueue.filter(
+      (j) => j.status === "COMPLETED" || j.status === "DEAD_LETTER"
+    );
+    savePersistentJobQueue();
+  }
+  try {
+    writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, "[]");
+  } catch {
+  }
+  if (hadChats || wasConnected) {
+    console.log(`\u{1F50C} [WhatsApp Disconnected (${disconnectedState})]: Todos los chats fueron limpiados del sistema.`);
+    broadcastEvent("evolution_status", { connected: false, state: disconnectedState });
+    broadcastEvent("conversations_update", { count: 0, cleared: true });
+  }
+}
+function loadPersistedConversations() {
+  try {
+    if (fs.existsSync(CONVERSATIONS_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(CONVERSATIONS_CACHE_FILE, "utf-8"));
+      if (Array.isArray(raw) && raw.length > 0) {
+        conversations = raw.filter(
+          (c) => c && c.sessionId && !isSyntheticTestArtifact(c.sessionId) && !isSyntheticTestArtifact(c.customerName)
+        );
+        for (const c of conversations) {
+          if (c.aiEnabled !== void 0) {
+            aiEnabledBySession.set(c.sessionId, c.aiEnabled);
+            if (c.customerPhone) aiEnabledBySession.set(c.customerPhone, c.aiEnabled);
           }
         }
-        lastContactsSync = now;
+        consolidateDuplicateConversations();
       }
     }
   } catch (err) {
-    console.warn("[Evolution Contacts Sync Warning]:", err.message);
+    console.warn("[Conversations Cache Load Warning]:", err?.message || err);
   }
 }
-var isEvoSyncRunning = false;
-var lastEvolutionChatsSync = 0;
+loadPersistedConversations();
+syncEvolutionContactsDirectory().catch(() => {
+});
 async function syncEvolutionChats() {
   if (isEvoSyncRunning) return conversations;
   const now = Date.now();
-  if (now - lastEvolutionChatsSync < 2500 && conversations.length > 0) {
+  if (conversations.length === 0) {
+    loadPersistedConversations();
+  }
+  if (now - lastEvolutionChatsSync < 5e3 && conversations.length > 0) {
     return conversations;
   }
   isEvoSyncRunning = true;
   lastEvolutionChatsSync = now;
   try {
-    await syncEvolutionContactsIfNeeded();
-    const url = `${appConfig.evolution.serverUrl}/chat/findChats/${appConfig.evolution.instance}`;
-    const res = await fetch(url, {
+    const baseUrl = (appConfig.evolution.serverUrl || "").replace(/\/$/, "");
+    const instance = appConfig.evolution.instance;
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers: { apikey: appConfig.evolution.apiKey },
+      signal: AbortSignal.timeout(4e3)
+    }).catch(() => null);
+    const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
+    const currentState = stateData?.instance?.state || stateData?.state || "close";
+    if (currentState !== "open") {
+      clearAllChatsOnWhatsAppDisconnect(currentState);
+      return conversations;
+    }
+    if (evolutionLastKnownState !== "open") {
+      evolutionLastKnownState = "open";
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
+      isFirstEvolutionSync = true;
+      broadcastEvent("evolution_status", { connected: true, state: "open" });
+    }
+    const fetchOffset = conversations.length === 0 ? 200 : 15;
+    const msgUrl = `${baseUrl}/chat/findMessages/${instance}`;
+    const msgRes = await fetch(msgUrl, {
       method: "POST",
       headers: {
         apikey: appConfig.evolution.apiKey,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({ page: 1, offset: fetchOffset }),
+      signal: AbortSignal.timeout(12e3)
     });
-    if (!res.ok) {
-      throw new Error(`Evolution findChats status ${res.status}`);
+    if (!msgRes.ok) {
+      throw new Error(`Evolution findMessages delta status ${msgRes.status}`);
     }
-    const rawChats = await res.json();
-    if (!Array.isArray(rawChats)) return conversations;
-    const validChats = rawChats.filter(
-      (c) => c.remoteJid && !isWhatsAppGroup(c.remoteJid) && !isWhatsAppGroup(c.lastMessage?.key?.remoteJid) && !isWhatsAppGroup(c.lastMessage?.key?.participant) && c.remoteJid !== "status@broadcast" && c.lastMessage && c.lastMessage.messageTimestamp
+    const msgData = await msgRes.json().catch(() => null);
+    const rawRecords = msgData?.messages?.records || (Array.isArray(msgData) ? msgData : []);
+    if (!Array.isArray(rawRecords) || rawRecords.length === 0) {
+      return conversations;
+    }
+    const sortedRecords = [...rawRecords].sort(
+      (a, b) => Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0)
     );
-    validChats.sort(
-      (a, b) => Number(b.lastMessage.messageTimestamp) - Number(a.lastMessage.messageTimestamp)
-    );
-    const recentSlice = validChats.slice(0, 40);
-    const namedSlice = validChats.filter((c) => {
-      const contactInfo = evolutionContactsMap.get(c.remoteJid);
-      const name = c.pushName || contactInfo?.name || (!c.lastMessage.key?.fromMe ? c.lastMessage.pushName : "");
-      return name && name !== "Voc\xEA" && !/^\d+$/.test(name);
-    }).slice(0, 20);
-    const combinedMap = /* @__PURE__ */ new Map();
-    for (const c of [...recentSlice, ...namedSlice]) {
-      combinedMap.set(c.remoteJid, c);
-    }
-    for (const c of validChats) {
-      const alt = c.lastMessage?.key?.remoteJidAlt;
-      if (alt && alt.endsWith("@s.whatsapp.net")) {
-        const altPhone = alt.replace("@s.whatsapp.net", "").replace(/\D/g, "");
-        if (altPhone) {
-          lidToPhoneMap.set(c.remoteJid, altPhone);
-          const lidDigits = c.remoteJid.replace(/@.*$/, "").replace(/\D/g, "");
-          lidToPhoneMap.set(lidDigits, altPhone);
-          const canonicalJid = `${altPhone}@s.whatsapp.net`;
-          const set = relatedJidsBySession.get(canonicalJid) || /* @__PURE__ */ new Set([canonicalJid]);
-          set.add(c.remoteJid);
-          set.add(alt);
-          relatedJidsBySession.set(canonicalJid, set);
-        }
-      }
-    }
-    const knownPhoneByName = /* @__PURE__ */ new Map();
-    for (const conv of conversations) {
-      if (conv.customerPhone && conv.customerPhone.length <= 12 && !isGenericContactName(conv.customerName)) {
-        knownPhoneByName.set(conv.customerName.trim().toLowerCase(), conv.customerPhone);
-      }
-    }
-    for (const c of validChats) {
-      if (c.remoteJid?.endsWith("@s.whatsapp.net")) {
-        const p = c.remoteJid.replace("@s.whatsapp.net", "").replace(/\D/g, "");
-        const cInfo = evolutionContactsMap.get(c.remoteJid);
-        const name = c.pushName || cInfo?.name || (!c.lastMessage?.key?.fromMe ? c.lastMessage?.pushName : "");
-        if (p && p.length <= 12 && !isGenericContactName(name)) {
-          knownPhoneByName.set(name.trim().toLowerCase(), p);
-        }
-      }
-    }
-    const existingConvByPhone = /* @__PURE__ */ new Map();
-    const existingConvBySession = /* @__PURE__ */ new Map();
-    for (const conv of conversations) {
-      existingConvBySession.set(conv.sessionId, conv);
-      if (conv.customerPhone) existingConvByPhone.set(conv.customerPhone, conv);
-    }
     let hasChanges = false;
-    const dedupedByPhone = /* @__PURE__ */ new Map();
-    const dedupedByName = /* @__PURE__ */ new Map();
-    for (const [remoteJid, chatObj] of combinedMap.entries()) {
-      const lm = chatObj.lastMessage;
-      const rawAlt = lm?.key?.remoteJidAlt || "";
-      let cleanPhone = "";
-      if (rawAlt.endsWith("@s.whatsapp.net")) {
-        cleanPhone = rawAlt.replace("@s.whatsapp.net", "").replace(/\D/g, "");
-      } else if (remoteJid.endsWith("@s.whatsapp.net")) {
-        cleanPhone = remoteJid.replace("@s.whatsapp.net", "").replace(/\D/g, "");
-      } else if (lidToPhoneMap.has(remoteJid)) {
-        cleanPhone = lidToPhoneMap.get(remoteJid);
-      } else {
-        const rawDigits = remoteJid.replace(/@.*$/, "").replace(/\D/g, "");
-        if (lidToPhoneMap.has(rawDigits)) {
-          cleanPhone = lidToPhoneMap.get(rawDigits);
-        } else if (rawDigits.length >= 10 && rawDigits.length <= 12) {
-          cleanPhone = rawDigits;
-        } else {
-          cleanPhone = rawDigits;
-        }
-      }
-      const contactInfo = evolutionContactsMap.get(remoteJid) || (cleanPhone ? evolutionContactsMap.get(cleanPhone) : void 0);
-      let customerName = chatObj.pushName || contactInfo?.name || (!lm?.key?.fromMe && lm?.pushName && lm?.pushName !== "Voc\xEA" ? lm.pushName : "") || "";
-      const isGenericName = isGenericContactName(customerName);
-      if ((cleanPhone.length > 12 || !cleanPhone.startsWith("18")) && !isGenericName) {
-        const norm = customerName.trim().toLowerCase();
-        const matchedPhone = knownPhoneByName.get(norm);
-        if (matchedPhone) {
-          cleanPhone = matchedPhone;
-          lidToPhoneMap.set(remoteJid, cleanPhone);
-          const rawDigits = remoteJid.replace(/@.*$/, "").replace(/\D/g, "");
-          lidToPhoneMap.set(rawDigits, cleanPhone);
-        }
-      }
-      if (isGenericName) {
-        customerName = cleanPhone.startsWith("18") && cleanPhone.length <= 12 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`;
-      }
-      const normName = !isGenericName ? customerName.trim().toLowerCase() : "";
-      const dedupKey = cleanPhone || remoteJid;
-      const parsedLast = parseSingleEvolutionMessage(lm, customerName);
-      const lastTimestamp = parsedLast ? parsedLast.timestamp : new Date(Number(lm.messageTimestamp) * 1e3).toISOString();
-      let lastPreview = parsedLast?.content || "";
-      let lastType = parsedLast?.type || "text";
-      if (lastType === "audio" && !lastPreview.startsWith("\u{1F3A4}")) lastPreview = `\u{1F3A4} ${lastPreview}`;
-      if (lastType === "image" && !lastPreview) lastPreview = "\u{1F4F7} Foto enviada por WhatsApp";
-      if (lastType === "video" && !lastPreview) lastPreview = "\u{1F3A5} Video enviado por WhatsApp";
-      if (lastType === "document" && !lastPreview) lastPreview = "\u{1F4C4} Documento adjunto";
-      if (lastType === "sticker") lastPreview = "\u{1F3F7}\uFE0F Sticker";
-      if (!lastPreview) lastPreview = "Mensaje de WhatsApp";
-      let existingInLoop = dedupedByPhone.get(dedupKey);
-      if (!existingInLoop && normName && dedupedByName.has(normName)) {
-        const cand = dedupedByName.get(normName);
-        if (cand) {
-          const candHasRealPhone = Boolean(cand.customerPhone && cand.customerPhone.length <= 12 && cand.customerPhone.startsWith("1"));
-          const currHasRealPhone = Boolean(cleanPhone && cleanPhone.length <= 12 && cleanPhone.startsWith("1"));
-          if (!candHasRealPhone || !currHasRealPhone || cand.customerPhone === cleanPhone) {
-            existingInLoop = cand;
-          }
-        }
-      }
-      if (!existingInLoop) {
-        for (const cand of dedupedByPhone.values()) {
-          const jids = relatedJidsBySession.get(cand.sessionId);
-          if (jids && (jids.has(remoteJid) || rawAlt && jids.has(rawAlt))) {
-            existingInLoop = cand;
-            break;
-          }
-        }
-      }
-      if (existingInLoop) {
-        const jidSet2 = relatedJidsBySession.get(existingInLoop.sessionId) || /* @__PURE__ */ new Set([existingInLoop.sessionId]);
-        jidSet2.add(remoteJid);
-        if (rawAlt) jidSet2.add(rawAlt);
-        relatedJidsBySession.set(existingInLoop.sessionId, jidSet2);
-        if (cleanPhone && cleanPhone.length <= 12 && (existingInLoop.customerPhone.length > 12 || !existingInLoop.customerPhone.startsWith("18"))) {
-          existingInLoop.customerPhone = cleanPhone;
-          if (existingInLoop.sessionId.endsWith("@lid")) {
-            const newCanonicalId = `${cleanPhone}@s.whatsapp.net`;
-            jidSet2.add(existingInLoop.sessionId);
-            jidSet2.add(newCanonicalId);
-            relatedJidsBySession.delete(existingInLoop.sessionId);
-            relatedJidsBySession.set(newCanonicalId, jidSet2);
-            existingInLoop.sessionId = newCanonicalId;
-          }
-        }
-        if (!existingInLoop.profilePicUrl && (chatObj.profilePicUrl || contactInfo?.pic)) {
-          existingInLoop.profilePicUrl = chatObj.profilePicUrl || contactInfo?.pic;
-        }
-        if (isGenericContactName(existingInLoop.customerName) && !isGenericName) {
-          existingInLoop.customerName = customerName;
-        }
-        if (new Date(lastTimestamp).getTime() > new Date(existingInLoop.lastTimestamp).getTime()) {
-          existingInLoop.lastTimestamp = lastTimestamp;
-          existingInLoop.lastMessagePreview = lastPreview;
-          existingInLoop.lastMessageType = lastType;
-        }
-        if (parsedLast && !existingInLoop.messages.some((m) => m.evolutionMessageId === parsedLast.evolutionMessageId)) {
-          existingInLoop.messages = [...existingInLoop.messages, parsedLast].sort(
-            (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-          );
-        }
-        existingInLoop.unreadCount = Math.max(existingInLoop.unreadCount, Number(chatObj.unreadCount) || 0);
+    for (const rec of sortedRecords) {
+      const key = rec?.key;
+      if (!key) continue;
+      const remoteJid = key.remoteJid || "";
+      const rawAlt = key.remoteJidAlt || "";
+      const participant = key.participant || "";
+      if (!remoteJid || isWhatsAppGroup(remoteJid) || isWhatsAppGroup(rawAlt) || isWhatsAppGroup(participant) || remoteJid === "status@broadcast") {
         continue;
       }
-      const canonicalSessionId = cleanPhone && cleanPhone.length <= 12 && cleanPhone.startsWith("1") ? `${cleanPhone}@s.whatsapp.net` : rawAlt.endsWith("@s.whatsapp.net") ? rawAlt : remoteJid;
-      const prevConv = existingConvBySession.get(canonicalSessionId) || existingConvBySession.get(remoteJid) || (cleanPhone && cleanPhone.length <= 12 ? existingConvByPhone.get(cleanPhone) : void 0) || (!isGenericName && (!cleanPhone || cleanPhone.length > 12) ? conversations.find(
-        (c) => !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === normName && (!c.customerPhone || c.customerPhone.length > 12 || c.customerPhone === cleanPhone)
-      ) : void 0);
-      const jidSet = relatedJidsBySession.get(canonicalSessionId) || /* @__PURE__ */ new Set();
-      jidSet.add(canonicalSessionId);
-      jidSet.add(remoteJid);
-      if (rawAlt) jidSet.add(rawAlt);
-      relatedJidsBySession.set(canonicalSessionId, jidSet);
-      const aiEnabled = aiEnabledBySession.has(canonicalSessionId) ? aiEnabledBySession.get(canonicalSessionId) : aiEnabledBySession.has(remoteJid) ? aiEnabledBySession.get(remoteJid) : prevConv ? prevConv.aiEnabled : true;
-      if (!prevConv || prevConv.lastTimestamp !== lastTimestamp) {
-        hasChanges = true;
-      }
-      let messages = prevConv?.messages ? [...prevConv.messages] : parsedLast ? [parsedLast] : [];
-      if (parsedLast && !messages.some(
-        (m) => parsedLast.evolutionMessageId && m.evolutionMessageId === parsedLast.evolutionMessageId || parsedLast.id && m.id === parsedLast.id
-      )) {
-        messages.push(parsedLast);
-      }
-      messages = mergeWithLocalMessages(canonicalSessionId, messages, prevConv?.messages || [], cleanPhone);
-      const latestMerged = messages[messages.length - 1];
-      const finalLastTimestamp = latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime() ? latestMerged.timestamp : lastTimestamp;
-      const finalLastPreview = latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime() ? latestMerged.content || lastPreview : lastPreview;
-      const finalLastType = latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime() ? latestMerged.type : lastType;
-      const lowerPreview = finalLastPreview.toLowerCase();
-      const detectedProducts = prevConv?.detectedProducts || [];
-      for (const kw of ["thinkpad", "latitude", "chromebook", "macbook", "monitor", "impresora", "dell", "hp", "lenovo"]) {
-        if (lowerPreview.includes(kw) && !detectedProducts.includes(kw.toUpperCase())) {
-          detectedProducts.push(kw.toUpperCase());
+      if (remoteJid.endsWith("@lid") && rawAlt.endsWith("@s.whatsapp.net")) {
+        const altPhone = rawAlt.replace(/@.*$/, "").replace(/\D/g, "");
+        if (altPhone) {
+          lidToPhoneMap.set(remoteJid, altPhone);
+          lidToPhoneMap.set(remoteJid.replace(/@.*$/, ""), altPhone);
         }
       }
-      const odooMatch = findOdooPartnerByPhone(cleanPhone);
-      const odooPartnerId = odooMatch?.id || prevConv?.odooPartnerId;
-      const isOdooClient = Boolean(odooMatch || prevConv?.isOdooClient || odooPartnerId && odooPartnerId > 0);
-      const finalConv = {
-        sessionId: canonicalSessionId,
-        customerPhone: cleanPhone,
-        customerName: !isGenericName ? customerName : odooMatch?.name ? odooMatch.name : prevConv?.customerName && !isGenericContactName(prevConv.customerName) ? prevConv.customerName : customerName,
-        profilePicUrl: chatObj.profilePicUrl || contactInfo?.pic || prevConv?.profilePicUrl || void 0,
-        messages,
-        messagesLoaded: prevConv?.messagesLoaded || false,
-        aiEnabled,
-        unreadCount: Number(chatObj.unreadCount) || 0,
-        lastTimestamp: finalLastTimestamp,
-        lastMessagePreview: finalLastPreview,
-        lastMessageType: finalLastType,
-        intentStatus: finalLastType === "image" && lowerPreview.includes("pago") ? "comprobante_enviado" : detectedProducts.length > 0 ? "interesado" : prevConv?.intentStatus || "explorando",
-        detectedProducts,
-        zone: "santo_domingo",
-        odooPartnerId,
-        isOdooClient,
-        isLiveEvolution: true
-      };
-      dedupedByPhone.set(dedupKey, finalConv);
-      if (cleanPhone) dedupedByPhone.set(cleanPhone, finalConv);
-      if (canonicalSessionId) dedupedByPhone.set(canonicalSessionId, finalConv);
-      if (normName) dedupedByName.set(normName, finalConv);
+      const cleanPhone = (rawAlt.endsWith("@s.whatsapp.net") ? rawAlt : remoteJid.endsWith("@lid") && (lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, ""))) ? lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, "")) : remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
+      const canonicalSessionId = cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 ? `${cleanPhone}@s.whatsapp.net` : remoteJid;
+      const pushName = (!key.fromMe && rec.pushName && rec.pushName !== "Voc\xEA" ? rec.pushName : "") || (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
+      const parsedMsg = parseSingleEvolutionMessage(rec, pushName);
+      if (!parsedMsg) continue;
+      let conv = conversations.find(
+        (c) => c.sessionId === canonicalSessionId || c.sessionId === remoteJid || rawAlt && c.sessionId === rawAlt || cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone || relatedJidsBySession.get(c.sessionId)?.has(remoteJid) || !isGenericContactName(pushName) && !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase()
+      );
+      if (!conv) {
+        const odooMatch = findOdooPartnerByPhone(cleanPhone);
+        const isAiPausedForChat = aiEnabledBySession.get(canonicalSessionId) === false || aiEnabledBySession.get(remoteJid) === false || (cleanPhone ? aiEnabledBySession.get(cleanPhone) === false : false);
+        conv = {
+          sessionId: canonicalSessionId,
+          customerPhone: cleanPhone,
+          customerName: !isGenericContactName(pushName) ? pushName : odooMatch?.name || pushName,
+          messages: [parsedMsg],
+          messagesLoaded: false,
+          aiEnabled: !isAiPausedForChat,
+          unreadCount: key.fromMe ? 0 : 1,
+          lastTimestamp: parsedMsg.timestamp,
+          lastMessagePreview: parsedMsg.content,
+          lastMessageType: parsedMsg.type,
+          intentStatus: "explorando",
+          detectedProducts: [],
+          zone: "santo_domingo",
+          odooPartnerId: odooMatch?.id,
+          isOdooClient: Boolean(odooMatch),
+          isLiveEvolution: true
+        };
+        const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
+        if (remoteJid) jSet.add(remoteJid);
+        if (rawAlt) jSet.add(rawAlt);
+        relatedJidsBySession.set(conv.sessionId, jSet);
+        conversations.unshift(conv);
+        hasChanges = true;
+      } else {
+        const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
+        if (remoteJid) jSet.add(remoteJid);
+        if (rawAlt) jSet.add(rawAlt);
+        relatedJidsBySession.set(conv.sessionId, jSet);
+        if (!isGenericContactName(pushName) && isGenericContactName(conv.customerName)) {
+          conv.customerName = pushName;
+          hasChanges = true;
+        }
+        const alreadyExists = isDuplicateChatMessage(conv.messages, parsedMsg);
+        if (!alreadyExists) {
+          hydrateQuotedMessageById(parsedMsg, conv.messages, conv.customerName || pushName);
+          conv.messages.push(parsedMsg);
+          conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          if (!key.fromMe) {
+            conv.unreadCount = (conv.unreadCount || 0) + 1;
+          }
+          recordLocalMessage(conv.sessionId, parsedMsg, conv.customerPhone);
+          broadcastEvent("new_message", { sessionId: conv.sessionId, message: parsedMsg });
+          hasChanges = true;
+        }
+        if (new Date(parsedMsg.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()) {
+          if (conv.lastTimestamp !== parsedMsg.timestamp || conv.lastMessagePreview !== parsedMsg.content) {
+            hasChanges = true;
+          }
+          conv.lastTimestamp = parsedMsg.timestamp;
+          conv.lastMessagePreview = parsedMsg.content;
+          conv.lastMessageType = parsedMsg.type;
+        }
+      }
     }
-    const seenFinalSessions = /* @__PURE__ */ new Set();
-    const seenFinalPhones = /* @__PURE__ */ new Set();
-    const seenFinalNames = /* @__PURE__ */ new Set();
-    const strictlyUniqueList = [];
-    for (const conv of Array.from(new Set(dedupedByPhone.values()))) {
-      if (seenFinalSessions.has(conv.sessionId)) continue;
-      const phone = conv.customerPhone && conv.customerPhone.length <= 12 ? conv.customerPhone : "";
-      const normName = !isGenericContactName(conv.customerName) ? conv.customerName.trim().toLowerCase() : "";
-      if (phone && seenFinalPhones.has(phone)) continue;
-      if (!phone && normName && seenFinalNames.has(normName)) continue;
-      seenFinalSessions.add(conv.sessionId);
-      if (phone) seenFinalPhones.add(phone);
-      if (normName) seenFinalNames.add(normName);
-      strictlyUniqueList.push(conv);
-    }
-    strictlyUniqueList.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
-    conversations = strictlyUniqueList;
-    appConfig.evolution.connected = true;
     if (hasChanges) {
+      conversations.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
+      savePersistedConversations();
       broadcastEvent("conversations_update", { count: conversations.length });
     }
     if (isFirstEvolutionSync) {
@@ -4416,7 +5797,7 @@ async function syncEvolutionChats() {
       }
     }
     if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
-      const nowMs = Date.now();
+      const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = /* @__PURE__ */ new Set();
       for (const conv of conversations.slice(0, 50)) {
         if (!conv.aiEnabled) continue;
@@ -4441,15 +5822,28 @@ async function syncEvolutionChats() {
           continue;
         }
         if (isMessageIdAlreadyProcessed(msgId, contactKeys)) continue;
+        if (contactKeys.some((k) => aiEnabledBySession.get(k) === false)) {
+          continue;
+        }
         const skipCheck = shouldSkipBotReply(conv, lastMsg, "live_evolution_poll");
         if (skipCheck.skip) continue;
         for (const k of contactKeys) {
           handledContactsThisCycle.add(k);
         }
-        console.log(`\u{1F916} [Auto-Reply Polling Trigger]: Respondiendo a ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
-        triggerSalesBotReplyForConversation(conv, "live_evolution_poll").catch(
-          (err) => console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
-        );
+        console.log(`\u{1F916} [Auto-Reply Polling Trigger]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        const { isDuplicate } = enqueueInboundMessageJob({
+          messageId: msgId || lastMsg.id,
+          conversationId: conv.sessionId,
+          customer: conv.customerName,
+          customerPhone: conv.customerPhone,
+          instance: appConfig.evolution?.instance || "todolapto",
+          contentType: lastMsg.type
+        });
+        if (!isDuplicate) {
+          processPersistentQueueTick().catch(
+            (err) => console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err?.message || err)
+          );
+        }
       }
     }
     isFirstEvolutionSync = false;
@@ -4471,11 +5865,6 @@ function isInternalOrNoiseContent(content) {
   if (/Catálogo completo de laptops[\s\S]*?USB-4 TASBEL HUB/i.test(content)) return true;
   if (/0 modelos en stock|\(0 modelos disponibles en stock\)/i.test(content)) return true;
   return false;
-}
-function isSubstantiveProposal(msg) {
-  const c = msg.transcription || msg.content || "";
-  if (isInternalOrNoiseContent(c)) return false;
-  return c.includes("Cat\xE1logo") || c.includes("laptop") || c.includes("Laptop") || c.includes("RD$") || c.includes("Charles de Gaulle") || c.includes("tienda") || c.includes("opciones de laptops") || c.includes("contra entrega") || c.includes("transferencia") || c.includes("Chromebook") || c.includes("EDU GEAR") || c.includes("ThinkPad") || c.includes("Dell") || c.includes("Lenovo") || c.includes("Asus");
 }
 var localSentMessagesBySession = /* @__PURE__ */ new Map();
 function recordLocalMessage(sessionId, msg, customerPhone) {
@@ -4554,6 +5943,15 @@ function mergeWithLocalMessages(sessionId, evoList, existingList = [], customerP
     if (existingIdx >= 0) {
       if (localMsg.quotedMessage && !combined[existingIdx].quotedMessage) {
         combined[existingIdx].quotedMessage = localMsg.quotedMessage;
+      }
+      if (localMsg.transcription && !combined[existingIdx].transcription) {
+        combined[existingIdx].transcription = localMsg.transcription;
+        if (combined[existingIdx].type === "audio") {
+          combined[existingIdx].content = `\u{1F3A4} "${localMsg.transcription}"`;
+        }
+      }
+      if (localMsg.aiAnalysis && !combined[existingIdx].aiAnalysis) {
+        combined[existingIdx].aiAnalysis = localMsg.aiAnalysis;
       }
       if (localMsg.mediaUrl && !combined[existingIdx].mediaUrl) {
         combined[existingIdx].mediaUrl = localMsg.mediaUrl;
@@ -4712,101 +6110,43 @@ async function loadEvolutionMessagesForChat(sessionId) {
     }
     for (let i = 0; i < unique.length; i++) {
       const m = unique[i];
-      if (m.quotedMessage && (!m.quotedMessage.text || m.quotedMessage.text.trim().length === 0)) {
-        let parent;
-        if (m.quotedMessage.id) {
-          const qId = m.quotedMessage.id;
-          parent = msgById.get(qId) || msgById.get(`evo-${qId}`) || msgById.get(qId.replace(/^evo-/, ""));
-          if (!parent) {
-            parent = unique.find(
-              (cand, idx) => idx < i && !isInternalOrNoiseContent(cand.content) && (cand.id === qId || cand.evolutionMessageId === qId || cand.id.endsWith(qId) || cand.evolutionMessageId && cand.evolutionMessageId.endsWith(qId) || qId.endsWith(cand.id) || cand.evolutionMessageId && qId.endsWith(cand.evolutionMessageId))
-            );
-          }
-        }
-        if (parent) {
-          m.quotedMessage.text = parent.transcription || parent.content || (parent.type === "image" ? "\u{1F4F7} Foto enviada anteriormente" : parent.type === "audio" ? "\u{1F3A4} Nota de voz anterior" : parent.type === "video" ? "\u{1F3A5} Video anterior" : "Mensaje anterior");
-          m.quotedMessage.type = parent.type;
-          m.quotedMessage.mediaUrl = parent.mediaUrl;
-          m.quotedMessage.author = parent.sender === "customer" ? conv?.customerName || fallbackName : "Todo Lapto";
-        } else {
-          let foundSubstantive;
-          let fallbackPrev;
-          for (let j = i - 1; j >= 0; j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-            if (prev.sender !== m.sender && (prev.transcription || prev.content)) {
-              if (isSubstantiveProposal(prev)) {
-                foundSubstantive = prev;
+      hydrateQuotedMessageById(m, unique.slice(0, i), conv?.customerName || fallbackName);
+      if (!m.quotedMessage && m.sender === "customer" && i > 0) {
+        const rawTxt = (m.transcription || m.content || "").trim();
+        const txt = rawTxt.replace(/^🎤\s*"?|"?$/g, "").trim();
+        if (isPositionalOrNumberSelection(txt)) {
+          const tempConvForSlice = {
+            sessionId: canonicalId,
+            customerPhone: cleanPhone,
+            customerName: conv?.customerName || fallbackName,
+            aiEnabled: true,
+            unreadCount: 0,
+            lastTimestamp: m.timestamp,
+            lastMessagePreview: txt,
+            intentStatus: "explorando",
+            detectedProducts: [],
+            messages: unique.slice(0, i + 1)
+          };
+          const resolvedRef = resolveCatalogItemAndModelReference(tempConvForSlice, txt, "");
+          if (resolvedRef?.product && resolvedRef.matchedByPositionOrNumber) {
+            const p = resolvedRef.product;
+            const numPrefix = resolvedRef.itemNumber ? `*${resolvedRef.itemNumber}.* ` : "";
+            const condLabel = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
+            const specsPart = p.specsSummary || p.description_sale ? `
+\u2699\uFE0F ${p.specsSummary || p.description_sale}` : "";
+            let catalogMsgId = m.evolutionMessageId || m.id;
+            for (let j = i - 1; j >= 0; j--) {
+              if (unique[j].sender !== "customer" && unique[j].content.includes("*1.*")) {
+                catalogMsgId = unique[j].evolutionMessageId || unique[j].id;
                 break;
               }
-              if (!fallbackPrev && prev.content.trim().length > 15) {
-                fallbackPrev = prev;
-              }
             }
-          }
-          const chosen = foundSubstantive || fallbackPrev;
-          if (chosen) {
-            m.quotedMessage.text = chosen.transcription || chosen.content;
-            m.quotedMessage.type = chosen.type;
-            m.quotedMessage.mediaUrl = chosen.mediaUrl;
-            m.quotedMessage.author = chosen.sender === "customer" ? conv?.customerName || fallbackName : "Todo Lapto (Mensaje anterior)";
-          }
-        }
-      }
-      if (!m.quotedMessage && m.sender === "customer" && i > 0) {
-        const txt = (m.transcription || m.content || "").trim();
-        const isDeicticReply = /(te\s*acuerda[sn]?|se\s*acuerda[sn]?|recuerda[sn]?|te\s*recuerda[sn]?|sobre\s*esto|de\s*esto|esto\s*te\s*acuerda|acuerda[sn]?\s*de\s*esto|lo\s*que\s*hablamos|de\s*la\s*que\s*hablamos|lo\s*que\s*me\s*mostraste|todav[ií]a\s*(la|lo|las|los)?\s*tienen|cu[aá]nto\s*(cuesta|sale)|qu[eé]\s*precio|me\s*interesa|esa\s*misma|ese\s*mismo|la\s*quiero|dame\s*esa|aparte\s*esa)/i.test(
-          txt
-        );
-        const numberRefMatch = txt.match(
-          /^(?:la|el|opci[oó]n|modelo|n[uú]mero|#)\s*(\d{1,2})\b/i
-        );
-        if (numberRefMatch) {
-          const itemNum = numberRefMatch[1];
-          for (let j = i - 1; j >= Math.max(0, i - 15); j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-            if (prev.sender !== "customer" && prev.content.includes("Cat\xE1logo")) {
-              const lines = prev.content.split("\n");
-              const matchIdx = lines.findIndex(
-                (l) => l.includes(`*${itemNum}.*`) || l.startsWith(`${itemNum}.`) || l.includes(`${itemNum}\uFE0F\u20E3`)
-              );
-              const snippet = matchIdx >= 0 ? lines.slice(matchIdx, matchIdx + 4).join("\n") : prev.content;
-              m.quotedMessage = {
-                id: prev.evolutionMessageId || prev.id,
-                text: snippet,
-                type: prev.type,
-                author: "Todo Lapto (Cat\xE1logo)"
-              };
-              break;
-            }
-          }
-        } else if (isDeicticReply) {
-          let substantiveAnterior;
-          let fallbackAnterior;
-          for (let j = i - 1; j >= 0; j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-            if (prev.sender !== "customer") {
-              if (isSubstantiveProposal(prev)) {
-                substantiveAnterior = prev;
-                const isRepeatedAck = prev.content.startsWith("\xA1Claro que s\xED") || prev.content.startsWith("Claro, Sr.") || prev.content.includes("Recuerdo perfectamente");
-                if (!isRepeatedAck) {
-                  break;
-                }
-              } else if (!fallbackAnterior && prev.content.trim().length > 15) {
-                fallbackAnterior = prev;
-              }
-            }
-          }
-          const target = substantiveAnterior || fallbackAnterior;
-          if (target) {
             m.quotedMessage = {
-              id: target.evolutionMessageId || target.id,
-              text: target.transcription || target.content,
-              type: target.type,
-              mediaUrl: target.mediaUrl,
-              author: "Todo Lapto (Propuesta y opciones conversadas anteriormente)"
+              id: catalogMsgId,
+              text: `${numPrefix}*${p.name}*
+\u{1F4B0} RD$${p.list_price.toLocaleString()} | \u{1F4E6} ${p.virtual_available} unidad(es) | \u{1F3F7}\uFE0F ${condLabel}${specsPart}`,
+              type: "text",
+              author: `Todo Lapto (Cat\xE1logo \u2014 ${resolvedRef.referenceLabel})`
             };
           }
         }
@@ -4831,16 +6171,26 @@ async function loadEvolutionMessagesForChat(sessionId) {
         const cleanPhone2 = (conv.customerPhone || "").replace(/\D/g, "");
         const isInternalTeam = cleanPhone2 === appConfig.evolution.teamPhone || cleanPhone2 === appConfig.evolution.adminPhone || conv.customerName.toLowerCase().includes("soporte todo lapto");
         const msgTimeMs = new Date(latest.timestamp).getTime();
-        const ageMs = Date.now() - msgTimeMs;
+        const ageMs = getEffectiveCurrentDate().getTime() - msgTimeMs;
         const msgId = normalizeMsgIdKey(latest.evolutionMessageId || latest.id);
         const contactKeys = getConversationContactKeys(conv);
         if (!isInternalTeam && msgTimeMs >= botStartupCutoffMs - 2e3 && ageMs <= 10 * 60 * 1e3 && !isMessageIdAlreadyProcessed(msgId, contactKeys) && !contactKeys.some((k) => isBotLockActive(k))) {
           const skipCheck = shouldSkipBotReply(conv, latest, "live_evolution_poll");
           if (!skipCheck.skip) {
-            console.log(`\u{1F916} [Active Chat Fast Trigger]: Respondiendo a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
-            triggerSalesBotReplyForConversation(conv, "live_evolution_poll").catch(
-              (err) => console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err.message)
-            );
+            console.log(`\u{1F916} [Active Chat Fast Trigger]: Encolando respuesta a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
+            const { isDuplicate } = enqueueInboundMessageJob({
+              messageId: msgId || latest.id,
+              conversationId: conv.sessionId,
+              customer: conv.customerName,
+              customerPhone: conv.customerPhone,
+              instance: appConfig.evolution?.instance || "todolapto",
+              contentType: latest.type
+            });
+            if (!isDuplicate) {
+              processPersistentQueueTick().catch(
+                (err) => console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err?.message || err)
+              );
+            }
           }
         }
       }
@@ -4854,7 +6204,6 @@ var isFirstEvolutionSync = true;
 var botStartupCutoffMs = Date.now() - 6e4;
 var inFlightBotKeys = /* @__PURE__ */ new Map();
 var BOT_LOCK_TTL_MS = 9e4;
-var lastEvolutionRestartMs = 0;
 var lastFrontendHeartbeatMs = Date.now();
 function recordFrontendHeartbeat() {
   lastFrontendHeartbeatMs = Date.now();
@@ -4891,7 +6240,7 @@ function scheduleAuditLogSave() {
   auditSaveTimeout = setTimeout(() => {
     auditSaveTimeout = null;
     try {
-      fs.writeFileSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
+      writeFileAtomicSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
     } catch {
     }
   }, 1e3);
@@ -4959,73 +6308,147 @@ function getConversationContactKeys(conv, extraPhone) {
 }
 var lastBotReplyByContactKey = /* @__PURE__ */ new Map();
 var BOT_OUTBOUND_LOCKS_FILE = path.join(__dirname, ".vendema-outbound-locks.json");
-function acquireCrossProcessBotLock(lockKeys, ttlMs = 45e3) {
+var structuredConversationLocks = /* @__PURE__ */ new Map();
+function readCrossProcessLocksFromDisk() {
+  const result = {};
   try {
-    let data = {};
     if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
-      try {
-        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, "utf-8"));
-      } catch {
-        data = {};
+      const raw = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, "utf-8"));
+      const now = Date.now();
+      if (raw && typeof raw === "object") {
+        for (const [k, val] of Object.entries(raw)) {
+          if (typeof val === "number") {
+            if (now < val) {
+              result[k] = {
+                conversationId: k,
+                owner: `pid-${process.pid}`,
+                acquiredAt: new Date(val - BOT_LOCK_TTL_MS).toISOString(),
+                expiresAt: new Date(val).toISOString()
+              };
+            }
+          } else if (val && typeof val === "object" && val.expiresAt) {
+            const expMs = new Date(val.expiresAt).getTime();
+            if (expMs > now) {
+              result[k] = val;
+            }
+          }
+        }
       }
     }
+  } catch {
+  }
+  return result;
+}
+function getActiveConversationLocks() {
+  const diskLocks = readCrossProcessLocksFromDisk();
+  const uniqueByConv = /* @__PURE__ */ new Map();
+  for (const entry of Object.values(diskLocks)) {
+    if (entry && entry.conversationId) {
+      uniqueByConv.set(entry.conversationId, entry);
+    }
+  }
+  const now = Date.now();
+  for (const [k, entry] of structuredConversationLocks.entries()) {
+    if (new Date(entry.expiresAt).getTime() > now) {
+      uniqueByConv.set(entry.conversationId || k, entry);
+    } else {
+      structuredConversationLocks.delete(k);
+    }
+  }
+  return Array.from(uniqueByConv.values());
+}
+function acquireCrossProcessBotLock(lockKeys, conversationId, ownerId, ttlMs = BOT_LOCK_TTL_MS) {
+  try {
+    const data = readCrossProcessLocksFromDisk();
     const now = Date.now();
-    for (const [k, exp] of Object.entries(data)) {
-      if (now > exp) delete data[k];
-    }
     for (const key of lockKeys) {
-      if (data[key] && now < data[key]) {
-        return false;
+      const existing = data[key];
+      if (existing) {
+        const expMs = new Date(existing.expiresAt).getTime();
+        if (now < expMs && existing.owner !== ownerId) {
+          return false;
+        }
       }
     }
+    const lockRecord = {
+      conversationId,
+      owner: ownerId,
+      acquiredAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + ttlMs).toISOString()
+    };
     for (const key of lockKeys) {
-      data[key] = now + ttlMs;
+      data[key] = lockRecord;
+      structuredConversationLocks.set(key, lockRecord);
     }
-    fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
     return true;
   } catch {
     return true;
   }
 }
-function releaseCrossProcessBotLock(lockKeys) {
+function renewCrossProcessBotLock(lockKeys, ownerId, ttlMs = BOT_LOCK_TTL_MS) {
   try {
-    if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
-      let data = {};
-      try {
-        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, "utf-8"));
-      } catch {
-        data = {};
+    const data = readCrossProcessLocksFromDisk();
+    const now = Date.now();
+    const nextExpires = new Date(now + ttlMs).toISOString();
+    for (const key of lockKeys) {
+      if (data[key] && data[key].owner === ownerId) {
+        data[key].expiresAt = nextExpires;
       }
-      for (const key of lockKeys) {
+      const mem = structuredConversationLocks.get(key);
+      if (mem && mem.owner === ownerId) {
+        mem.expiresAt = nextExpires;
+      }
+      if (inFlightBotKeys.has(key)) {
+        inFlightBotKeys.set(key, now);
+      }
+    }
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
+  } catch {
+  }
+}
+function releaseCrossProcessBotLock(lockKeys, ownerId) {
+  try {
+    const data = readCrossProcessLocksFromDisk();
+    for (const key of lockKeys) {
+      if (!ownerId || !data[key] || data[key].owner === ownerId) {
         delete data[key];
       }
-      fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
+      structuredConversationLocks.delete(key);
     }
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
   } catch {
   }
 }
-function acquireBotLock(conv, triggerSource = "unknown") {
+function acquireBotLock(conv, triggerSource = "unknown", ownerId) {
+  const effectiveOwner = ownerId || `${triggerSource}-${process.pid}-${Date.now()}`;
+  if (triggerSource === "manual_crm_trigger") {
+    releaseBotLock(conv);
+  }
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
     if (isBotLockActive(k)) {
-      const lastMsg = conv.messages[conv.messages.length - 1];
-      const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || "";
-      const incomingText = lastMsg?.content || "";
-      recordBotAuditLog({
-        customerName: conv.customerName,
-        customerPhone: conv.customerPhone,
-        sessionId: conv.sessionId,
-        triggerSource,
-        incomingMessageId: incomingId,
-        incomingText,
-        decision: "blocked_in_flight",
-        reason: "Ya hay una respuesta gener\xE1ndose concurrentemente para este contacto. Bloqueo at\xF3mico activo.",
-        durationMs: 0
-      });
-      return false;
+      const existingMem = structuredConversationLocks.get(k);
+      if (!existingMem || existingMem.owner !== effectiveOwner) {
+        const lastMsg = conv.messages[conv.messages.length - 1];
+        const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || "";
+        const incomingText = lastMsg?.content || "";
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: incomingId,
+          incomingText,
+          decision: "blocked_in_flight",
+          reason: `Bloqueo at\xF3mico activo por conversaci\xF3n (owner: ${existingMem?.owner || "in_flight"}).`,
+          durationMs: 0
+        });
+        return false;
+      }
     }
   }
-  if (!acquireCrossProcessBotLock(keys, BOT_LOCK_TTL_MS)) {
+  if (!acquireCrossProcessBotLock(keys, conv.sessionId, effectiveOwner, BOT_LOCK_TTL_MS)) {
     const lastMsg = conv.messages[conv.messages.length - 1];
     const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || "";
     const incomingText = lastMsg?.content || "";
@@ -5037,7 +6460,7 @@ function acquireBotLock(conv, triggerSource = "unknown") {
       incomingMessageId: incomingId,
       incomingText,
       decision: "blocked_in_flight",
-      reason: "Ya hay una respuesta gener\xE1ndose en otro worker de Hostinger. Bloqueo multi-proceso activo.",
+      reason: "Ya hay una respuesta gener\xE1ndose en otro worker. Bloqueo multi-proceso activo.",
       durationMs: 0
     });
     return false;
@@ -5048,12 +6471,112 @@ function acquireBotLock(conv, triggerSource = "unknown") {
   }
   return true;
 }
-function releaseBotLock(conv) {
+function releaseBotLock(conv, ownerId) {
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
     inFlightBotKeys.delete(k);
   }
-  releaseCrossProcessBotLock(keys);
+  releaseCrossProcessBotLock(keys, ownerId);
+}
+var JOB_QUEUE_FILE = path.join(__dirname, ".vendema-job-queue.json");
+var JOB_MAX_EXECUTION_MS = 9e4;
+var JOB_DEFAULT_MAX_ATTEMPTS = 3;
+var persistentJobQueue = [];
+var isQueueWorkerRunning = false;
+function savePersistentJobQueue() {
+  try {
+    persistentJobQueue = persistentJobQueue.filter(
+      (j) => !isSyntheticTestArtifact(j.messageId) && !isSyntheticTestArtifact(j.conversationId) && !isSyntheticTestArtifact(j.customer)
+    );
+    if (persistentJobQueue.length > 400) {
+      persistentJobQueue = persistentJobQueue.slice(0, 400);
+    }
+    writeFileAtomicSync(JOB_QUEUE_FILE, JSON.stringify(persistentJobQueue, null, 2));
+  } catch (err) {
+    console.warn("[JobQueue Save Error]:", err?.message || err);
+  }
+}
+function loadPersistentJobQueue() {
+  try {
+    if (fs.existsSync(JOB_QUEUE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(JOB_QUEUE_FILE, "utf-8"));
+      if (Array.isArray(raw)) {
+        persistentJobQueue = raw.filter(
+          (j) => !isSyntheticTestArtifact(j?.messageId) && !isSyntheticTestArtifact(j?.conversationId) && !isSyntheticTestArtifact(j?.customer)
+        );
+      }
+    }
+  } catch {
+    persistentJobQueue = [];
+  }
+  let recoveredCount = 0;
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  for (const job of persistentJobQueue) {
+    if (job.status === "PROCESSING" || job.status === "RECEIVED") {
+      job.status = "RETRY";
+      job.nextRetryAt = nowIso;
+      job.lastError = "Recuperado autom\xE1ticamente tras reinicio del servidor";
+      recoveredCount++;
+    }
+  }
+  savePersistentJobQueue();
+  if (recoveredCount > 0) {
+    recordSystemApiLog({
+      service: "Backend",
+      action: `Recuperaci\xF3n de Cola Persistente (${recoveredCount} tareas)`,
+      method: "QUEUE",
+      statusCode: 200,
+      success: true,
+      durationMs: 0,
+      severity: "MEDIUM",
+      module: "queue",
+      requestPreview: `Se detectaron ${recoveredCount} trabajos en estado PROCESSING/RECEIVED tras reinicio`,
+      responseSnippet: `Trabajos restablecidos a estado RETRY para procesamiento seguro.`
+    });
+  }
+}
+loadPersistentJobQueue();
+function generateCorrelationId(messageId) {
+  const cleanMsg = normalizeMsgIdKey(messageId).slice(-8) || Math.random().toString(36).slice(2, 8);
+  return `corr-${Date.now()}-${cleanMsg}`;
+}
+function enqueueInboundMessageJob(params) {
+  const cleanMsgId = normalizeMsgIdKey(params.messageId) || `msg-${Date.now()}`;
+  const existing = persistentJobQueue.find(
+    (j) => normalizeMsgIdKey(j.messageId) === cleanMsgId && ["RECEIVED", "PENDING", "PROCESSING", "RETRY", "COMPLETED"].includes(j.status)
+  );
+  if (existing) {
+    return { job: existing, isDuplicate: true };
+  }
+  const correlationId = params.correlationId || generateCorrelationId(cleanMsgId);
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const job = {
+    id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    correlationId,
+    messageId: cleanMsgId,
+    conversationId: params.conversationId,
+    customer: params.customer || "Cliente WhatsApp",
+    customerPhone: params.customerPhone || "",
+    instance: params.instance || appConfig.evolution?.instance || "todolapto",
+    contentType: params.contentType || "text",
+    receivedAt: nowIso,
+    status: "RECEIVED",
+    attempts: 0,
+    maxAttempts: JOB_DEFAULT_MAX_ATTEMPTS
+  };
+  persistentJobQueue.unshift(job);
+  recordDiagnosticStage({
+    correlationId,
+    stage: "QUEUE_CREATED",
+    module: "queue",
+    customer: job.customer,
+    conversationId: job.conversationId,
+    messageId: job.messageId,
+    details: `Trabajo ${job.id} creado en cola persistente (estado RECEIVED -> PENDING)`
+  });
+  job.status = "PENDING";
+  savePersistentJobQueue();
+  return { job, isDuplicate: false };
 }
 function recordBotReplyForConversation(conv, customerMsgId, customerText, botReplyText) {
   const record = {
@@ -5085,6 +6608,27 @@ function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
   const customerPhone = conv.customerPhone || "";
   const incomingId = normalizeMsgIdKey(lastCustomerMsg?.evolutionMessageId || lastCustomerMsg?.id || "");
   const incomingText = (lastCustomerMsg?.transcription || lastCustomerMsg?.content || "").trim();
+  if (triggerSource !== "manual_crm_trigger") {
+    if (!appConfig.globalAiActive) {
+      return { skip: true, reason: "IA desactivada globalmente en la configuraci\xF3n del CRM" };
+    }
+    const isChatAiPaused = conv.aiEnabled === false || keys.some((k) => aiEnabledBySession.get(k) === false);
+    if (isChatAiPaused) {
+      const reason = "IA pausada manualmente en este chat para permitir atenci\xF3n humana";
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: "blocked_manual_pause",
+        reason,
+        durationMs: 0
+      });
+      return { skip: true, reason };
+    }
+  }
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
     const reason = "Excluido: Grupo de WhatsApp (el bot solo atiende chats individuales)";
     recordBotAuditLog({
@@ -5132,7 +6676,7 @@ function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
       }
       return {
         skip: true,
-        reason: `Mensaje previo al corte de activaci\xF3n (${new Date(msgTimeMs).toLocaleTimeString()}). Solo se responden mensajes nuevos autom\xE1ticamente.`
+        reason: `Mensaje previo al corte de activaci\xF3n (${formatDominicanTimeOnly(msgTimeMs) || new Date(msgTimeMs).toLocaleTimeString()}). Solo se responden mensajes nuevos autom\xE1ticamente.`
       };
     }
   }
@@ -5209,43 +6753,59 @@ function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
   return { skip: false };
 }
 var recentOutboundDispatches = /* @__PURE__ */ new Map();
+var lastBotSendTimeByPhone = /* @__PURE__ */ new Map();
 function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function ensureEvolutionInstanceConnected(forceRestart = false) {
+async function ensureEvolutionInstanceConnected() {
   if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) return false;
   const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, "");
   const instance = appConfig.evolution.instance;
   const headers = { apikey: appConfig.evolution.apiKey };
   try {
-    if (!forceRestart) {
-      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
-      if (stateRes?.ok) {
-        const data = await stateRes.json().catch(() => null);
-        const state = data?.instance?.state || data?.state;
-        if (state === "open") {
-          appConfig.evolution.connected = true;
-          return true;
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(4e3)
+    }).catch(() => null);
+    if (stateRes?.ok) {
+      const data = await stateRes.json().catch(() => null);
+      const state = data?.instance?.state || data?.state;
+      if (state === "open") {
+        appConfig.evolution.connected = true;
+        return true;
+      }
+      if (state === "connecting") {
+        for (let i = 0; i < 3; i++) {
+          await sleepMs(1e3);
+          const chk = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+            headers,
+            signal: AbortSignal.timeout(3e3)
+          }).catch(() => null);
+          if (chk?.ok) {
+            const d = await chk.json().catch(() => null);
+            if ((d?.instance?.state || d?.state) === "open") {
+              appConfig.evolution.connected = true;
+              return true;
+            }
+          }
         }
       }
     }
-    const now = Date.now();
-    if (now - lastEvolutionRestartMs > 15e3) {
-      lastEvolutionRestartMs = now;
-      await fetch(`${baseUrl}/instance/restart/${instance}`, { method: "POST", headers }).catch(() => null);
-      await sleepMs(1200);
-      await fetch(`${baseUrl}/instance/connect/${instance}`, { headers }).catch(() => null);
-    }
-    for (let i = 0; i < 4; i++) {
-      await sleepMs(800);
-      const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
-      if (verifyRes?.ok) {
-        const vData = await verifyRes.json().catch(() => null);
-        const vState = vData?.instance?.state || vData?.state;
-        if (vState === "open") {
-          appConfig.evolution.connected = true;
-          return true;
-        }
+    await fetch(`${baseUrl}/instance/connect/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(4e3)
+    }).catch(() => null);
+    await sleepMs(1200);
+    const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(3e3)
+    }).catch(() => null);
+    if (verifyRes?.ok) {
+      const vData = await verifyRes.json().catch(() => null);
+      const vState = vData?.instance?.state || vData?.state;
+      if (vState === "open") {
+        appConfig.evolution.connected = true;
+        return true;
       }
     }
   } catch {
@@ -5261,15 +6821,23 @@ function normalizeEvolutionTarget(numberOrJid) {
   const raw = (numberOrJid || "").trim();
   if (!raw) return "";
   if (isWhatsAppGroup(raw)) return "";
+  const cleanKey = raw.replace(/@.*$/, "").replace(/\D/g, "");
+  const mappedPhone = lidToPhoneMap.get(raw) || (cleanKey ? lidToPhoneMap.get(cleanKey) : void 0);
+  if (mappedPhone) {
+    const cleanMapped = mappedPhone.replace(/\D/g, "");
+    if (cleanMapped.length === 10 && /^(809|829|849)/.test(cleanMapped)) {
+      return `1${cleanMapped}@s.whatsapp.net`;
+    }
+    return `${cleanMapped}@s.whatsapp.net`;
+  }
   if (raw.includes("@")) return raw;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length >= 14) {
-    return `${digits}@lid`;
+  if (cleanKey.length >= 14) {
+    return `${cleanKey}@lid`;
   }
-  if (digits.length === 10 && /^(809|829|849)/.test(digits)) {
-    return `1${digits}`;
+  if (cleanKey.length === 10 && /^(809|829|849)/.test(cleanKey)) {
+    return `1${cleanKey}@s.whatsapp.net`;
   }
-  return digits;
+  return cleanKey ? `${cleanKey}@s.whatsapp.net` : raw;
 }
 async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, isManualAgent = false) {
   if (isWhatsAppGroup(numberOrJid)) {
@@ -5281,9 +6849,24 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, 
     return { ok: false, socketClosed: false };
   }
   const cleanTargetKey = target.replace(/@.*$/, "").replace(/\D/g, "") || target;
-  const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
+  const trimmedText = text.trim();
+  const dispatchKey = `${cleanTargetKey}::${trimmedText}`;
+  const nowMs = Date.now();
+  const lastExactTs = recentOutboundDispatches.get(dispatchKey);
+  if (lastExactTs && nowMs - lastExactTs < 6e4) {
+    console.log(`\u{1F6E1}\uFE0F [Anti-Duplicate]: Mensaje id\xE9ntico ya despachado a ${cleanTargetKey} hace ${Math.round((nowMs - lastExactTs) / 1e3)}s. Cancelando duplicado.`);
+    return { ok: true, socketClosed: false };
+  }
+  if (!isManualAgent) {
+    const lastAnyBotSend = lastBotSendTimeByPhone.get(cleanTargetKey);
+    if (lastAnyBotSend && nowMs - lastAnyBotSend < 1e4) {
+      console.log(`\u{1F6E1}\uFE0F [Anti-Duplicate Guard]: El bot ya envi\xF3 un mensaje a ${cleanTargetKey} hace ${Math.round((nowMs - lastAnyBotSend) / 1e3)}s. Previniendo env\xEDo doble.`);
+      return { ok: true, socketClosed: false };
+    }
+  }
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/message/sendText/${appConfig.evolution.instance}`;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const dispatchTarget = attempt === 2 && cleanTargetKey.length >= 10 && !cleanTargetKey.includes("@lid") ? cleanTargetKey : target;
     const t0 = Date.now();
     try {
       const res = await fetch(url, {
@@ -5293,11 +6876,11 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, 
           apikey: appConfig.evolution.apiKey
         },
         body: JSON.stringify({
-          number: target,
+          number: dispatchTarget,
           text,
           delay: delayMs
         }),
-        signal: AbortSignal.timeout(15e3)
+        signal: AbortSignal.timeout(2e4)
       });
       const durationMs = Date.now() - t0;
       if (res.ok) {
@@ -5305,6 +6888,7 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, 
         const messageId = data?.key?.id || data?.id || "";
         if (!isManualAgent) {
           recentOutboundDispatches.set(dispatchKey, Date.now());
+          lastBotSendTimeByPhone.set(cleanTargetKey, Date.now());
         }
         appConfig.evolution.connected = true;
         recordSystemApiLog({
@@ -5312,34 +6896,36 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, 
           action: "Enviar Mensaje WhatsApp (sendText)",
           method: "POST",
           url,
-          target,
+          target: dispatchTarget,
           statusCode: res.status,
           success: true,
           durationMs,
-          requestPreview: `Destino: ${target} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+          requestPreview: `Destino: ${dispatchTarget} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
           responseSnippet: JSON.stringify(data || {}).slice(0, 350)
         });
         return { ok: true, socketClosed: false, messageId };
       }
       const errBody = await res.text().catch(() => "");
-      const isSocketClosed = /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) || res.status >= 500;
+      const isSocketClosed = /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required|1006|1005|1001|closed|socket/i.test(errBody) || res.status >= 500;
       recordSystemApiLog({
         service: "Evolution API",
         action: "Enviar Mensaje WhatsApp (sendText)",
         method: "POST",
         url,
-        target,
+        target: dispatchTarget,
         statusCode: res.status,
         success: false,
         durationMs,
-        requestPreview: `Destino: ${target} | Intento: ${attempt} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+        requestPreview: `Destino: ${dispatchTarget} | Intento: ${attempt}/2 | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
         error: errBody || `HTTP ${res.status}`,
         responseSnippet: errBody.slice(0, 500)
       });
       if (isSocketClosed && attempt === 1) {
-        console.log(`[Evolution API Reconnect]: Reanudando sesi\xF3n de WhatsApp tras desconexi\xF3n temporal...`);
-        await ensureEvolutionInstanceConnected(true);
-        continue;
+        const reconnected = await ensureEvolutionInstanceConnected();
+        if (reconnected) {
+          await sleepMs(800);
+          continue;
+        }
       }
       if (!isManualAgent) {
         recentOutboundDispatches.delete(dispatchKey);
@@ -5352,17 +6938,19 @@ async function sendEvolutionMessageWithStatus(numberOrJid, text, delayMs = 1e3, 
         action: "Enviar Mensaje WhatsApp (sendText)",
         method: "POST",
         url,
-        target,
+        target: dispatchTarget,
         statusCode: 0,
         success: false,
         durationMs,
-        requestPreview: `Destino: ${target} | Intento: ${attempt}`,
+        requestPreview: `Destino: ${dispatchTarget} | Intento: ${attempt}/2`,
         error: fetchErr?.message || "Error de red o timeout al despachar a Evolution API"
       });
       if (attempt === 1) {
-        console.log(`[Evolution API Reconnect]: Reanudando sesi\xF3n de WhatsApp tras timeout de red...`);
-        await ensureEvolutionInstanceConnected(true);
-        continue;
+        const reconnected = await ensureEvolutionInstanceConnected();
+        if (reconnected) {
+          await sleepMs(800);
+          continue;
+        }
       }
       if (!isManualAgent) {
         recentOutboundDispatches.delete(dispatchKey);
@@ -5401,23 +6989,22 @@ async function sendEvolutionTypingPresence(conv, durationMs = 3500) {
   }
   const primaryTarget = Array.from(targets)[0] || conv.sessionId;
   const t0 = Date.now();
-  await Promise.all(
-    Array.from(targets).slice(0, 2).map(
-      (target) => fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: appConfig.evolution.apiKey
-        },
-        body: JSON.stringify({
-          number: target,
-          delay: durationMs,
-          presence: "composing"
-        }),
-        signal: AbortSignal.timeout(durationMs + 4e3)
-      }).catch(() => null)
-    )
-  );
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: appConfig.evolution.apiKey
+      },
+      body: JSON.stringify({
+        number: primaryTarget,
+        delay: durationMs,
+        presence: "composing"
+      }),
+      signal: AbortSignal.timeout(durationMs + 3e3)
+    }).catch(() => null);
+  } catch {
+  }
   recordSystemApiLog({
     service: "Evolution API",
     action: `Estado Escribiendo... (${(durationMs / 1e3).toFixed(1)}s)`,
@@ -5441,12 +7028,19 @@ async function sendEvolutionMessageToConversation(conv, text, delayMs = 1e3, isM
   if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
     const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
     primaryTarget = `${std}@s.whatsapp.net`;
-  } else if (conv.sessionId && !conv.sessionId.includes("@lid")) {
-    primaryTarget = conv.sessionId;
-  } else if (cleanPhone) {
-    primaryTarget = cleanPhone;
   } else {
-    primaryTarget = conv.sessionId;
+    const mappedPhone = lidToPhoneMap.get(conv.sessionId) || (cleanPhone ? lidToPhoneMap.get(cleanPhone) : void 0);
+    if (mappedPhone) {
+      const cleanM = mappedPhone.replace(/\D/g, "");
+      const stdM = cleanM.length === 10 && /^(809|829|849)/.test(cleanM) ? `1${cleanM}` : cleanM;
+      primaryTarget = `${stdM}@s.whatsapp.net`;
+    } else if (conv.sessionId && !conv.sessionId.includes("@lid")) {
+      primaryTarget = conv.sessionId;
+    } else if (cleanPhone) {
+      primaryTarget = cleanPhone;
+    } else {
+      primaryTarget = conv.sessionId;
+    }
   }
   const contactKeys = getConversationContactKeys(conv);
   const trimmedText = text.trim();
@@ -5567,40 +7161,84 @@ async function sendEvolutionAudio(numberOrJid, base64Audio) {
     return false;
   }
 }
-async function fetchMediaBase64FromEvolution(messageId, convertToMp4 = false) {
-  const cacheKey = `${messageId}_${convertToMp4}`;
+async function fetchMediaBase64FromEvolution(messageId, convertToMp4 = false, remoteJid) {
+  const cleanId = String(messageId || "").replace(/^evo-/, "").trim();
+  if (!cleanId) return null;
+  const cacheKey = `${cleanId}_${convertToMp4}`;
   if (mediaCache.has(cacheKey)) {
     const cached = mediaCache.get(cacheKey);
     return { ...cached, base64: cached.buffer.toString("base64") };
   }
-  const url = `${appConfig.evolution.serverUrl}/chat/getBase64FromMediaMessage/${appConfig.evolution.instance}`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: appConfig.evolution.apiKey
-      },
-      body: JSON.stringify({
-        message: { key: { id: messageId } },
-        convertToMp4
-      })
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data?.base64) return null;
-    const buffer = Buffer.from(data.base64, "base64");
-    const mimetype = data.mimetype || (convertToMp4 ? "video/mp4" : "application/octet-stream");
-    if (mediaCache.size > 50) {
-      const firstKey = mediaCache.keys().next().value;
-      if (firstKey) mediaCache.delete(firstKey);
-    }
-    mediaCache.set(cacheKey, { buffer, mimetype });
-    return { buffer, mimetype, base64: data.base64 };
-  } catch (err) {
-    console.log(`[Evolution Media Notice for ${messageId}]:`, err.message);
-    return null;
+  const rawRecord = rawEvolutionRecordsByMsgId.get(cleanId) || rawEvolutionRecordsByMsgId.get(messageId);
+  const embeddedBase64 = rawRecord?.base64 || rawRecord?.message?.imageMessage?.base64 || rawRecord?.message?.audioMessage?.base64;
+  if (embeddedBase64) {
+    const rawMime = rawRecord?.message?.imageMessage?.mimetype || rawRecord?.message?.audioMessage?.mimetype || "image/jpeg";
+    const buffer = Buffer.from(embeddedBase64, "base64");
+    mediaCache.set(cacheKey, { buffer, mimetype: rawMime });
+    return { buffer, mimetype: rawMime, base64: embeddedBase64 };
   }
+  const url = `${appConfig.evolution.serverUrl}/chat/getBase64FromMediaMessage/${appConfig.evolution.instance}`;
+  const candidateJids = /* @__PURE__ */ new Set();
+  if (remoteJid) candidateJids.add(remoteJid);
+  if (rawRecord?.key?.remoteJid) candidateJids.add(rawRecord.key.remoteJid);
+  if (remoteJid) {
+    const mapped = lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, ""));
+    if (mapped) candidateJids.add(`${mapped}@s.whatsapp.net`);
+    const rel = relatedJidsBySession.get(remoteJid);
+    if (rel) {
+      for (const r of rel) candidateJids.add(r);
+    }
+  }
+  for (const conv of conversations) {
+    if (conv.messages?.some((m) => m.evolutionMessageId === cleanId || m.id === cleanId)) {
+      candidateJids.add(conv.sessionId);
+      if (conv.customerPhone) candidateJids.add(`${conv.customerPhone}@s.whatsapp.net`);
+      const rel = relatedJidsBySession.get(conv.sessionId);
+      if (rel) {
+        for (const r of rel) candidateJids.add(r);
+      }
+      break;
+    }
+  }
+  const payloads = [
+    { "message.key.id": cleanId, convertToMp4 },
+    { message: { key: { id: cleanId } }, convertToMp4 },
+    rawRecord?.key ? { message: { key: rawRecord.key, message: rawRecord.message }, convertToMp4 } : null
+  ];
+  for (const j of candidateJids) {
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j, fromMe: false } }, convertToMp4 });
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j, fromMe: true } }, convertToMp4 });
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j } }, convertToMp4 });
+    payloads.push({ "message.key.id": cleanId, "message.key.remoteJid": j, convertToMp4 });
+  }
+  const validPayloads = payloads.filter(Boolean);
+  for (const payload of validPayloads) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: appConfig.evolution.apiKey
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12e3)
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data?.base64) continue;
+      const buffer = Buffer.from(data.base64, "base64");
+      const mimetype = data.mimetype || (convertToMp4 ? "video/mp4" : "application/octet-stream");
+      if (mediaCache.size > 50) {
+        const firstKey = mediaCache.keys().next().value;
+        if (firstKey) mediaCache.delete(firstKey);
+      }
+      mediaCache.set(cacheKey, { buffer, mimetype });
+      return { buffer, mimetype, base64: data.base64 };
+    } catch {
+    }
+  }
+  console.log(`[Evolution Media Notice for ${cleanId}]: No se pudo descargar el medio de Evolution API`);
+  return null;
 }
 function formatWhatsAppProductBlock(p, idx) {
   const condBadge = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
@@ -5836,7 +7474,7 @@ function detectGenericProductFamily(query) {
       matcher: (p) => isPrinterSupplyOrConsumable(p.name, p.odooCategory)
     };
   }
-  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
+  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|imprimir|fotocopiadora|fotocopiadoras)\b/i.test(s)) {
     return {
       id: "impresora",
       label: "Impresoras y Equipos de Impresi\xF3n",
@@ -5857,7 +7495,7 @@ function detectGenericProductFamily(query) {
       }
     };
   }
-  if (/\b(monitor|monitores|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s)) {
+  if (/\b(monitor|monitores|pantalla|pantallas|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s) && !/\b(tactil|táctil|partida|rota|pequeña)\b/i.test(s)) {
     return {
       id: "monitor",
       label: "Monitores y Pantallas",
@@ -5932,7 +7570,9 @@ function detectGenericProductFamily(query) {
       matcher: (p) => isCableOrWiringItem(p.name, p.odooCategory)
     };
   }
-  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks|chromebook|chromebooks)\b/i.test(s)) {
+  if (/\b(laptop|laptops|lapto|laptos|computadora|computadoras|computador|computadores|pc|pcs|portatil|portatiles|portátil|portátiles|notebook|notebooks|chromebook|chromebooks|maquina|maquinas|máquina|máquinas)\b/i.test(
+    s
+  ) && !/\b(pad|mouse|alfombrilla|pantalla\s*de\s*pc|pantalla\s*para\s*pc|monitor)\b/i.test(s)) {
     return {
       id: "laptop",
       label: "Laptops y Equipos Port\xE1tiles",
@@ -5948,11 +7588,54 @@ function detectGenericProductFamily(query) {
   }
   return null;
 }
+function normalizePhoneticProductText(raw) {
+  if (!raw) return "";
+  return raw.replace(/\b(team\s*pack|tin\s*pad|tink\s*pad|thin\s*pad|think\s*pack|tim\s*pad|zin\s*pad)\b/gi, "thinkpad").replace(/\b(lati\s*tud|lati\s*tu)\b/gi, "latitude").replace(/\b(pro\s*buk|pro\s*book)\b/gi, "probook").replace(/\b(eli\s*te\s*book|elite\s*buk|elit\s*book)\b/gi, "elitebook").replace(/\b(idea\s*pad|idea\s*pack)\b/gi, "ideapad").replace(/\b(ins\s*piron)\b/gi, "inspiron").replace(/\b(crome\s*book|crom\s*book|chro\s*book)\b/gi, "chromebook").replace(/\b([exltpgc])\s+(\d{2,4})\b/gi, "$1$2");
+}
+function isDiscountInquiry(raw) {
+  if (!raw) return false;
+  return /\b(descuento|descuentos|rebaja|rebajas|rebajar|me\s*la\s*dejas?\s*en|en\s*cu[aá]nto\s*me\s*la\s*deja[sn]?|cu[aá]l\s*es\s*el\s*precio\s*m[ií]nimo|precio\s*m[ií]nimo|lo\s*menos\s*que\s*la\s*deja[sn]?|en\s*cu[aá]nto\s*es\s*lo\s*m[ií]nimo|hacerme\s*un\s*especial|precio\s*especial|me\s*haces?\s*(?:un\s*)?descuento|le\s*haces?\s*(?:un\s*)?descuento|le\s*hacen\s*(?:alg[uú]n\s*)?descuento|tiene\s*descuento|tienen\s*descuento|dejarla\s*en\s*menos|algo\s*menos)\b/i.test(
+    raw
+  );
+}
+function hasSpecificModelCodeInText(raw) {
+  if (!raw) return false;
+  const norm = normalizePhoneticProductText(raw).toLowerCase();
+  return /\b(e460|e570|e5570|e5470|e5270|e7270|l490|x131e|x360|c730|c771|p22t|3100|3300|3400|3541|5400|5420|5480|5510|t480|t470|15iil05|ba009dx|850\s*g4|450\s*g3|450\s*g5|430\s*g7|640\s*g2|2874|2875|720|530|617|n23|100e|11e|m4|c203x)\b/i.test(
+    norm
+  );
+}
+function isPositionalOrNumberSelection(raw) {
+  if (!raw) return false;
+  const s = raw.trim().toLowerCase();
+  if (/\b(la\s*[uú]ltima|el\s*[uú]ltimo|la\s*pen[uú]ltima|el\s*pen[uú]ltimo|la\s*primera|el\s*primero|la\s*segunda|el\s*segundo|la\s*tercera|el\s*tercero|la\s*cuarta|el\s*cuarto|la\s*quinta|el\s*quinto|la\s*sexta|el\s*sexto|la\s*s[eé]ptima|el\s*s[eé]ptimo|la\s*octava|el\s*octavo|la\s*novena|el\s*noveno|la\s*d[eé]cima|el\s*d[eé]cimo|[uú]ltima\s*opci[oó]n|primera\s*opci[oó]n|segunda\s*opci[oó]n|tercera\s*opci[oó]n)\b/i.test(
+    s
+  )) {
+    return true;
+  }
+  if (/^\s*(?:la|el|opci[oó]n|modelo|n[uú]mero|numero|item|#)?\s*#?(\d{1,2})\s*[.!?]?\s*$/i.test(s)) {
+    return true;
+  }
+  if (/\b(?:la|el|opci[oó]n|modelo|n[uú]mero|numero|#)\s*#?(\d{1,2})\b(?!\s*(?:gb|tb|ram|ssd|hdd|pulgadas|mil|k|pesos|dop|generaci[oó]n|gen|n[uú]cleos|meses|a[ñn]os|unidades|horas|am|pm))/i.test(
+    s
+  )) {
+    return true;
+  }
+  return false;
+}
 function getRelevantProductsHighlight(latestQueryText, fullContextText = "", recentConversationText = "") {
   if (!latestQueryText && !fullContextText && !recentConversationText || products.length === 0) return "";
-  const userOnlyLatest = latestQueryText.replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:/gi, "").trim();
+  const userOnlyLatest = normalizePhoneticProductText(
+    latestQueryText.replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Mensaje actual del cliente sobre esta cita anterior:\s*"?/gi, "").replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, "").replace(/\[nota de voz[^\]]*\]/gi, " ").replace(/\[audio[^\]]*\]/gi, " ").replace(/\[foto[^\]]*\]/gi, " ").replace(/\[detalles[^\]]*\]/gi, " ").replace(/\[contenido visual[^\]]*\]/gi, " ").replace(/[🎤📷🔍]/g, " ").trim()
+  );
   const cleanLatest = userOnlyLatest.toLowerCase();
   if (isSimpleConversationalMessage(cleanLatest)) {
+    return "";
+  }
+  const isSingleModelOrSelection = isDiscountInquiry(cleanLatest) || isPositionalOrNumberSelection(cleanLatest) || hasSpecificModelCodeInText(cleanLatest);
+  const isOperationalQuestion = /\b(laborando|laboran|laborar|trabajando|trabajan|abierto|abiertos|abierta|abiertas|cerrado|cerrados|abren|cierran|horario|horarios|ubicacion|ubicación|ubicados|donde estan|direccion|dirección|hacen envios|delivery|garantia|garantía)\b/i.test(`${cleanLatest} ${fullContextText}`);
+  const hasExplicitProductWord = /\b(laptop|laptops|lapto|computadora|computadoras|impresora|impresoras|monitor|monitores|disco|ssd|ram|cargador|bateria|pantalla|teclado|mouse|probook|thinkpad|latitude|elitebook|optiplex|core\s*i[3579]|celeron|ryzen)\b/i.test(`${cleanLatest} ${fullContextText}`);
+  if (isOperationalQuestion && !hasExplicitProductWord) {
     return "";
   }
   const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
@@ -5996,7 +7679,7 @@ function getRelevantProductsHighlight(latestQueryText, fullContextText = "", rec
     );
   }
   let hasPrimaryFilterSection = false;
-  if (genericFamily && (genericFamily.id !== "laptop" || !brandFilter && !budgetFilter && !useCaseFilter && !wantsOnlyNew)) {
+  if (!isSingleModelOrSelection && genericFamily && (genericFamily.id !== "laptop" || !brandFilter && !budgetFilter && !useCaseFilter && !wantsOnlyNew)) {
     let familyProducts = inStock.filter(genericFamily.matcher);
     if (!genericFamily.isCable) {
       familyProducts = familyProducts.filter((p) => !isCableOrWiringItem(p.name, p.odooCategory));
@@ -6031,11 +7714,17 @@ function getRelevantProductsHighlight(latestQueryText, fullContextText = "", rec
 *(${familyProducts.length} modelos disponibles en stock real)*` : `\u{1F4E6} *Cat\xE1logo completo de ${genericFamily.label} \u2014 Todo Lapto*
 
 *(${familyProducts.length} opciones disponibles en stock real)*`;
-      const catalogFooter = genericFamily.id === "laptop" ? `
+      const rdNowForFooter = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+      const scheduleNoticeInFooter = rdNowForFooter.isOpen ? `
 
-*\xBFCu\xE1l te interesa? Tambi\xE9n dime si buscas una marca, presupuesto o uso espec\xEDfico (oficina, estudios o gaming) y te filtro las mejores opciones.* \u{1F6D2}` : `
+\u{1F3EA} *Estamos abiertos ahora mismo en la Av. Charles de Gaulle No. 133 hasta las 6:00 PM.* Contamos con retiro en tienda f\xEDsica y servicio de entrega a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.` : `
 
-*\xBFCu\xE1l te interesa? Te lo aparto ahora mismo para entrega a domicilio o retiro en tienda.* \u{1F6D2}`;
+\u{1F552} *Horario Todo Lapto:* Actualmente nos encontramos fuera de jornada (${rdNowForFooter.statusDetail}). Con gusto tomamos tu pedido por aqu\xED y queda apartado para despacharse a primera hora ${rdNowForFooter.nextOpeningStr} \u{1F69A}.`;
+      const catalogFooter = genericFamily.id === "laptop" ? `${scheduleNoticeInFooter}
+
+*\xBFCu\xE1l de estas opciones te interesa? Tambi\xE9n dime si buscas una marca, presupuesto o uso espec\xEDfico (oficina, estudios o gaming) y te filtro las mejores alternativas.* \u{1F6D2}` : `${scheduleNoticeInFooter}
+
+*\xBFCu\xE1l de estas opciones te interesa? Te la aparto ahora mismo para entrega a domicilio o retiro en tienda.* \u{1F6D2}`;
       sections.push(
         `=== \u{1F3AF} CAT\xC1LOGO COMPLETO OBLIGATORIO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
 \u{1F6A8} ORDEN OBLIGATORIA E INQUEBRANTABLE PARA OPENAI:
@@ -6058,7 +7747,7 @@ ${itemsListFormatted}${catalogFooter}
 Informa cordialmente al cliente que en este momento no tenemos unidades disponibles de ${genericFamily.label}${brandFilter ? ` marca ${brandFilter.label}` : ""} en stock f\xEDsico, y ofr\xE9cele alternativas o verificar pr\xF3xima llegada.`
       );
     }
-  } else if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
+  } else if (!isSingleModelOrSelection && (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew)) {
     hasPrimaryFilterSection = true;
     let filtered = [...laptopsInStock];
     const activeFilterLabels = [];
@@ -6218,7 +7907,110 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       "unidades",
       "condicion",
       "nuevo",
-      "usado"
+      "usado",
+      // Media, audio and voice terms (never match sound products like S8 Stereo on voice notes)
+      "audio",
+      "audios",
+      "nota",
+      "notas",
+      "voz",
+      "voces",
+      "microfono",
+      "micr\xF3fono",
+      "grabacion",
+      "grabaci\xF3n",
+      "transcribir",
+      "transcripcion",
+      "transcripci\xF3n",
+      "claridad",
+      "escuchar",
+      "mensaje",
+      "mensajes",
+      "texto",
+      // Image terms
+      "foto",
+      "fotos",
+      "fotografia",
+      "imagen",
+      "imagenes",
+      "im\xE1genes",
+      "captura",
+      "capturas",
+      "pantalla",
+      "pantallas",
+      "adjunto",
+      "adjuntos",
+      "archivo",
+      "archivos",
+      "documento",
+      "sticker",
+      // Operational store terms
+      "laborando",
+      "laboran",
+      "laborar",
+      "trabajando",
+      "trabajan",
+      "abierto",
+      "abiertos",
+      "abierta",
+      "abiertas",
+      "cerrado",
+      "cerrados",
+      "cerrada",
+      "cerradas",
+      "abren",
+      "cierran",
+      "horario",
+      "horarios",
+      "hora",
+      "horas",
+      "dia",
+      "dias",
+      "d\xEDas",
+      "hoy",
+      "manana",
+      "ma\xF1ana",
+      "feriado",
+      "feriados",
+      "domingo",
+      "domingos",
+      "sabado",
+      "sabados",
+      "s\xE1bados",
+      "lunes",
+      "direccion",
+      "direcci\xF3n",
+      "ubicacion",
+      "ubicaci\xF3n",
+      "ubicados",
+      "quedan",
+      "tienda",
+      "local",
+      "sucursal",
+      "envio",
+      "env\xEDos",
+      "envios",
+      "delivery",
+      "despacho",
+      "domicilio",
+      "garantia",
+      "garant\xEDa",
+      "garantias",
+      "garant\xEDas",
+      // Conversational metadata
+      "enviada",
+      "enviado",
+      "cliente",
+      "pudo",
+      "anterior",
+      "anteriormente",
+      "citado",
+      "citada",
+      "pregunta",
+      "preguntando",
+      "respuesta",
+      "duda",
+      "consulta"
     ]);
     const validShortTechTokens = /* @__PURE__ */ new Set([
       "hp",
@@ -6271,10 +8063,17 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
         }
       }
       scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-      const topMatches = scored.map((s) => s.product);
+      const bestScore = scored[0]?.score || 0;
+      const topMatches = isSingleModelOrSelection ? scored.filter((s) => s.score === bestScore).slice(0, 2).map((s) => s.product) : scored.map((s) => s.product);
       if (topMatches.length > 0) {
-        sections.push(
-          `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===
+        if (isSingleModelOrSelection) {
+          sections.push(
+            `=== \u{1F3AF} PRODUCTO ESPEC\xCDFICO IDENTIFICADO EN INVENTARIO ODOO ===
+` + topMatches.map((p, idx) => formatWhatsAppProductBlock(p, idx)).join("\n\n")
+          );
+        } else {
+          sections.push(
+            `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===
 <!-- [CATALOG_BLOCK_START] -->
 \xA1Claro! Aqu\xED tienes las opciones disponibles en nuestro inventario actual:
 
@@ -6282,7 +8081,8 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
 
 *\xBFCu\xE1l de estas opciones te interesa apartar?* \u{1F6D2}
 <!-- [CATALOG_BLOCK_END] -->`
-        );
+          );
+        }
       }
     }
   }
@@ -6293,9 +8093,69 @@ function getLearnedInsightsPromptContext() {
     (ins) => `[Aprendizaje - ${ins.category}]: Cuando el cliente exprese "${ins.triggerPhrase}", responde aplicando esta t\xE1ctica comprobada (${ins.successRate}% \xE9xito): "${ins.winningPitch}". Contexto: ${ins.counterObjection}`
   ).join("\n\n");
 }
+function buildFiveServiceHealthSnapshot() {
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const backendProbe = {
+    service: "Backend",
+    status: isServerShuttingDown ? "DISCONNECTED" : "CONNECTED",
+    latencyMs: 1,
+    lastCheckedAt: nowIso,
+    failureType: "NONE",
+    details: `PID ${process.pid} \xB7 Uptime ${Math.floor(process.uptime())}s`
+  };
+  const lastSupaLog = systemApiLogs.find((l) => l.service === "Supabase");
+  const hasSupaCfg = Boolean(appConfig.supabase?.url && appConfig.supabase?.anonKey);
+  const pendingSyncCount = pendingSupabaseSyncMap.size;
+  const supabaseProbe = {
+    service: "Supabase",
+    status: !hasSupaCfg ? "DISCONNECTED" : pendingSyncCount > 5 ? "DEGRADED" : appConfig.supabase?.connected !== false ? "CONNECTED" : "DEGRADED",
+    latencyMs: lastSupaLog?.durationMs || 0,
+    lastCheckedAt: lastSupaLog?.timestamp || appConfig.supabase?.lastSync || nowIso,
+    failureType: !hasSupaCfg ? "INVALID_CONFIG" : pendingSyncCount > 0 ? "CONNECTION_ERROR" : "NONE",
+    details: !hasSupaCfg ? "Sin credenciales configuradas" : pendingSyncCount > 0 ? `${pendingSyncCount} sincronizaciones en cola local` : "Sincronizaci\xF3n activa"
+  };
+  const lastEvoLog = systemApiLogs.find((l) => l.service === "Evolution API");
+  const hasEvoCfg = Boolean(appConfig.evolution?.serverUrl && appConfig.evolution?.instance && appConfig.evolution?.apiKey);
+  const evoErrText = (lastEvoLog?.error || "").toLowerCase();
+  const evolutionProbe = {
+    service: "Evolution API",
+    status: !hasEvoCfg ? "DISCONNECTED" : lastEvoLog ? lastEvoLog.success ? "CONNECTED" : evoErrText.includes("connection closed") ? "DISCONNECTED" : "DEGRADED" : appConfig.evolution?.connected ? "CONNECTED" : "UNKNOWN",
+    latencyMs: lastEvoLog?.durationMs || 0,
+    lastCheckedAt: lastEvoLog?.timestamp || nowIso,
+    failureType: !hasEvoCfg ? "INVALID_CONFIG" : lastEvoLog && !lastEvoLog.success ? lastEvoLog.statusCode === 401 || lastEvoLog.statusCode === 403 ? "AUTH_ERROR" : evoErrText.includes("connection closed") ? "CONNECTION_ERROR" : "UPSTREAM_ERROR" : "NONE",
+    details: lastEvoLog ? lastEvoLog.success ? `Instancia ${appConfig.evolution.instance} conectada` : lastEvoLog.error || `HTTP ${lastEvoLog.statusCode || 500}` : `Instancia ${appConfig.evolution.instance}`
+  };
+  const lastAiLog = systemApiLogs.find((l) => l.service === "AI Engine");
+  const hasOpenAiKey = Boolean(appConfig.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey));
+  const aiErrText = (lastAiLog?.error || "").toLowerCase();
+  const openaiProbe = {
+    service: "OpenAI",
+    status: !hasOpenAiKey ? "DISCONNECTED" : lastAiLog ? lastAiLog.success ? "CONNECTED" : "DISCONNECTED" : "UNKNOWN",
+    latencyMs: lastAiLog?.durationMs || 0,
+    lastCheckedAt: lastAiLog?.timestamp || nowIso,
+    failureType: !hasOpenAiKey ? "INVALID_CONFIG" : lastAiLog && !lastAiLog.success ? lastAiLog.statusCode === 401 || aiErrText.includes("401") || aiErrText.includes("incorrect api key") ? "AUTH_ERROR" : lastAiLog.statusCode === 429 || aiErrText.includes("429") ? "RATE_LIMIT" : "UPSTREAM_ERROR" : "NONE",
+    details: !hasOpenAiKey ? "Falta API Key sk-..." : lastAiLog ? lastAiLog.success ? `Motor ${appConfig.aiProvider?.model || "gpt-4o-mini"} operativo` : lastAiLog.error || `HTTP ${lastAiLog.statusCode || 401}` : `Modelo ${appConfig.aiProvider?.model || "gpt-4o-mini"}`
+  };
+  const lastOdooLog = systemApiLogs.find((l) => l.service === "Odoo ERP");
+  const hasOdooCfg = Boolean(appConfig.odoo?.url && appConfig.odoo?.db && appConfig.odoo?.apiKey);
+  const odooProbe = {
+    service: "Odoo",
+    status: !hasOdooCfg ? "DISCONNECTED" : lastOdooLog ? lastOdooLog.success ? "CONNECTED" : "DEGRADED" : products.length > 0 ? "CONNECTED" : "UNKNOWN",
+    latencyMs: lastOdooLog?.durationMs || 0,
+    lastCheckedAt: lastOdooLog?.timestamp || appConfig.odoo?.lastSync || nowIso,
+    failureType: !hasOdooCfg ? "INVALID_CONFIG" : lastOdooLog && !lastOdooLog.success ? "UPSTREAM_ERROR" : "NONE",
+    details: `${products.length} productos en stock \xB7 DB: ${appConfig.odoo.db}`
+  };
+  return [backendProbe, supabaseProbe, evolutionProbe, openaiProbe, odooProbe];
+}
 app.get("/api/system/logs", (req, res) => {
   const service = req.query.service;
   const status = req.query.status;
+  const severity = req.query.severity;
+  const correlationId = req.query.correlationId;
+  const customer = req.query.customer;
+  const moduleFilter = req.query.module;
+  const stageFilter = req.query.stage;
   let filtered = [...systemApiLogs];
   if (service && service !== "all") {
     filtered = filtered.filter((l) => l.service.toLowerCase().includes(service.toLowerCase()));
@@ -6305,29 +8165,217 @@ app.get("/api/system/logs", (req, res) => {
   } else if (status === "success") {
     filtered = filtered.filter((l) => l.success && (!l.statusCode || l.statusCode < 400));
   }
+  if (severity && severity !== "all") {
+    filtered = filtered.filter((l) => (l.severity || "INFO").toUpperCase() === severity.toUpperCase());
+  }
+  if (correlationId && correlationId.trim()) {
+    const q = correlationId.trim().toLowerCase();
+    filtered = filtered.filter((l) => (l.correlationId || "").toLowerCase().includes(q));
+  }
+  if (customer && customer.trim()) {
+    const q = customer.trim().toLowerCase();
+    filtered = filtered.filter(
+      (l) => (l.customer || "").toLowerCase().includes(q) || (l.target || "").toLowerCase().includes(q) || (l.conversationId || "").toLowerCase().includes(q)
+    );
+  }
+  if (moduleFilter && moduleFilter !== "all") {
+    filtered = filtered.filter((l) => (l.module || "").toLowerCase() === moduleFilter.toLowerCase());
+  }
+  if (stageFilter && stageFilter !== "all") {
+    filtered = filtered.filter((l) => l.stage === stageFilter);
+  }
+  const activeLocks = getActiveConversationLocks();
+  const fiveServices = buildFiveServiceHealthSnapshot();
+  const mapProbe = (svcName) => {
+    const found = fiveServices.find((s) => s.service === svcName);
+    return {
+      name: svcName,
+      status: found?.status || "UNKNOWN",
+      lastChecked: found?.lastCheckedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      responseTimeMs: found?.latencyMs,
+      details: found?.details,
+      error: found?.failureType && found.failureType !== "NONE" ? found.details : void 0
+    };
+  };
+  const queueSummary = {
+    total: persistentJobQueue.length,
+    pending: persistentJobQueue.filter((j) => j.status === "PENDING" || j.status === "RECEIVED").length,
+    processing: persistentJobQueue.filter((j) => j.status === "PROCESSING").length,
+    retry: persistentJobQueue.filter((j) => j.status === "RETRY").length,
+    deadLetter: persistentJobQueue.filter((j) => j.status === "DEAD_LETTER" || j.status === "FAILED").length,
+    failed: persistentJobQueue.filter((j) => j.status === "DEAD_LETTER" || j.status === "FAILED").length,
+    completed: persistentJobQueue.filter((j) => j.status === "COMPLETED").length
+  };
+  const diagnosticsPayload = {
+    services: {
+      backend: mapProbe("Backend"),
+      supabase: mapProbe("Supabase"),
+      evolution: mapProbe("Evolution API"),
+      openai: mapProbe("OpenAI"),
+      odoo: mapProbe("Odoo")
+    },
+    queueStats: queueSummary,
+    queueJobs: persistentJobQueue.slice(0, 80),
+    activeLocks,
+    pendingSyncCount: pendingSupabaseSyncMap.size,
+    lastWebhookAt: lastWebhookReceivedAt
+  };
   res.json({
     success: true,
     logs: filtered,
     totalCount: systemApiLogs.length,
-    errorCount: systemApiLogs.filter((l) => !l.success || l.statusCode && l.statusCode >= 400).length
+    errorCount: systemApiLogs.filter((l) => !l.success || l.statusCode && l.statusCode >= 400).length,
+    servicesHealth: fiveServices,
+    queueSummary,
+    recentJobs: persistentJobQueue.slice(0, 60),
+    activeLocks,
+    pendingSupabaseSyncs: Array.from(pendingSupabaseSyncMap.values()),
+    lastWebhookReceivedAt,
+    diagnostics: diagnosticsPayload
+  });
+});
+app.get("/api/system/diagnostics", (_req, res) => {
+  const activeLocks = getActiveConversationLocks();
+  const fiveServices = buildFiveServiceHealthSnapshot();
+  const mapProbe = (svcName) => {
+    const found = fiveServices.find((s) => s.service === svcName);
+    return {
+      name: svcName,
+      status: found?.status || "UNKNOWN",
+      lastChecked: found?.lastCheckedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      responseTimeMs: found?.latencyMs,
+      details: found?.details,
+      error: found?.failureType && found.failureType !== "NONE" ? found.details : void 0
+    };
+  };
+  const queueSummary = {
+    total: persistentJobQueue.length,
+    pending: persistentJobQueue.filter((j) => j.status === "PENDING" || j.status === "RECEIVED").length,
+    processing: persistentJobQueue.filter((j) => j.status === "PROCESSING").length,
+    retry: persistentJobQueue.filter((j) => j.status === "RETRY").length,
+    deadLetter: persistentJobQueue.filter((j) => j.status === "DEAD_LETTER" || j.status === "FAILED").length,
+    failed: persistentJobQueue.filter((j) => j.status === "DEAD_LETTER" || j.status === "FAILED").length,
+    completed: persistentJobQueue.filter((j) => j.status === "COMPLETED").length
+  };
+  res.json({
+    success: true,
+    services: fiveServices,
+    queue: {
+      summary: queueSummary,
+      jobs: persistentJobQueue.slice(0, 100)
+    },
+    activeLocks,
+    pendingSupabaseSyncs: Array.from(pendingSupabaseSyncMap.values()),
+    lastWebhookReceivedAt,
+    diagnostics: {
+      services: {
+        backend: mapProbe("Backend"),
+        supabase: mapProbe("Supabase"),
+        evolution: mapProbe("Evolution API"),
+        openai: mapProbe("OpenAI"),
+        odoo: mapProbe("Odoo")
+      },
+      queueStats: queueSummary,
+      queueJobs: persistentJobQueue.slice(0, 100),
+      activeLocks,
+      pendingSyncCount: pendingSupabaseSyncMap.size,
+      lastWebhookAt: lastWebhookReceivedAt
+    },
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+});
+app.post("/api/system/queue/retry/:jobId", (req, res) => {
+  const { jobId } = req.params;
+  const job = persistentJobQueue.find((j) => j.id === jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, message: "Trabajo no encontrado en la cola." });
+  }
+  job.status = "RETRY";
+  job.attempts = 0;
+  job.nextRetryAt = (/* @__PURE__ */ new Date()).toISOString();
+  job.lastError = void 0;
+  unmarkMessageIdProcessedForRetry(job.messageId, [job.conversationId, job.customerPhone]);
+  savePersistentJobQueue();
+  processPersistentQueueTick().catch(() => {
+  });
+  res.json({ success: true, job, message: "Trabajo reencolado para procesamiento inmediato." });
+});
+app.post("/api/system/locks/release", (req, res) => {
+  const { conversationId } = req.body || {};
+  if (conversationId) {
+    const conv = conversations.find((c) => c.sessionId === conversationId);
+    if (conv) {
+      releaseBotLock(conv);
+    } else {
+      releaseCrossProcessBotLock([conversationId]);
+    }
+  } else {
+    inFlightBotKeys.clear();
+    structuredConversationLocks.clear();
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify({}, null, 2));
+  }
+  res.json({ success: true, activeLocks: getActiveConversationLocks() });
+});
+app.post("/api/system/queue/clear", (_req, res) => {
+  persistentJobQueue = persistentJobQueue.filter(
+    (j) => j.status === "PROCESSING" || j.status === "PENDING" || j.status === "RECEIVED"
+  );
+  savePersistentJobQueue();
+  res.json({
+    success: true,
+    jobs: persistentJobQueue,
+    message: "Historial de trabajos fallidos y completados limpiado."
   });
 });
 app.post("/api/system/logs/clear", (_req, res) => {
   systemApiLogs.length = 0;
+  persistentJobQueue = persistentJobQueue.filter(
+    (j) => j.status === "PROCESSING" || j.status === "PENDING" || j.status === "RECEIVED"
+  );
+  savePersistentJobQueue();
   recordSystemApiLog({
-    service: "Evolution API",
+    service: "Backend",
     action: "Registros del Sistema Vaciados",
     method: "SYS",
     statusCode: 200,
     success: true,
     durationMs: 0,
+    severity: "INFO",
+    module: "diagnostics",
     requestPreview: "Limpieza manual solicitada desde la interfaz",
-    responseSnippet: "Buffer de diagn\xF3stico reiniciado a 0."
+    responseSnippet: "Buffer de diagn\xF3stico y tareas fallidas reiniciados a 0."
   });
   res.json({ success: true, message: "Registros del sistema vaciados con \xE9xito" });
 });
 app.post("/api/system/logs/test-ping", async (_req, res) => {
-  const results = { evolution: null, odoo: null };
+  const results = { backend: { ok: true, status: 200, durationMs: 1 }, supabase: null, evolution: null, odoo: null, openai: null };
+  try {
+    const t0 = Date.now();
+    const supaRes = await testSupabaseConnection(
+      appConfig.supabase?.url || DEFAULT_SUPABASE_URL,
+      appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY
+    );
+    const supaDuration = Date.now() - t0;
+    recordSystemApiLog({
+      service: "Supabase",
+      action: "Diagn\xF3stico en Vivo (Supabase Probe)",
+      method: "GET",
+      url: appConfig.supabase?.url || DEFAULT_SUPABASE_URL,
+      statusCode: supaRes.success ? 200 : 500,
+      success: supaRes.success,
+      durationMs: supaDuration,
+      responseSnippet: supaRes.message,
+      error: supaRes.success ? void 0 : supaRes.message
+    });
+    results.supabase = {
+      ok: supaRes.success,
+      status: supaRes.success ? 200 : 500,
+      durationMs: supaDuration,
+      details: supaRes.message
+    };
+  } catch (err) {
+    results.supabase = { ok: false, status: 500, error: err.message };
+  }
   try {
     const t0 = Date.now();
     const evoUrl = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/instance/connectionState/${appConfig.evolution.instance}`;
@@ -6406,15 +8454,15 @@ app.post("/api/system/logs/test-ping", async (_req, res) => {
     results.openai = {
       ok: false,
       status: String(err.message || "").includes("401") ? 401 : String(err.message || "").includes("429") ? 429 : 500,
-      error: err.message
+      error: sanitizeSecretsInText(err.message)
     };
   }
-  res.json({ success: true, results });
+  res.json({ success: true, results, servicesHealth: buildFiveServiceHealthSnapshot() });
 });
-app.get("/api/config", (req, res) => {
+app.get("/api/config", (_req, res) => {
   res.json({
     success: true,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     businessSchedule: getDominicanTimeContext(),
     stats: {
       totalProducts: products.length,
@@ -6453,11 +8501,13 @@ app.post("/api/holidays/sync-supabase", async (_req, res) => {
       appConfig.supabase?.url,
       appConfig.supabase?.anonKey
     );
+    recordSupabaseSyncState("holiday", "all", syncRes.synced);
     res.json({
       success: syncRes.synced,
       ...syncRes
     });
   } catch (err) {
+    recordSupabaseSyncState("holiday", "all", false, err.message);
     res.status(500).json({
       success: false,
       message: err.message
@@ -6484,11 +8534,12 @@ app.post("/api/holidays/overrides", async (req, res) => {
       tableExists = syncRes.tableExists;
       tableRowsSynced = syncRes.tableRowsSynced;
       storage = syncRes.storage;
+      recordSupabaseSyncState("holiday", "overrides", dbSynced);
       if (appConfig.supabase?.autoSync !== false) {
-        autoSyncConfigToSupabase(appConfig).catch(() => {
-        });
+        autoSyncConfigToSupabase(appConfig).then(() => recordSupabaseSyncState("config", "global", true)).catch((e) => recordSupabaseSyncState("config", "global", false, e?.message));
       }
-    } catch {
+    } catch (e) {
+      recordSupabaseSyncState("holiday", "overrides", false, e?.message);
     }
     broadcastEvent("config_updated", appConfig);
   }
@@ -6499,36 +8550,74 @@ app.post("/api/holidays/overrides", async (req, res) => {
     tableExists,
     tableRowsSynced,
     storage,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     schedule: ctx,
     holidayOverrides: appConfig.holidayOverrides || [],
     availableYears: getAvailableHolidayYears(ctx.year, ctx.month, appConfig.holidayOverrides || []),
     holidays: getHolidaysWithOverridesForYear(ctx.year, appConfig.holidayOverrides || [])
   });
 });
-app.post("/api/config", async (req, res) => {
+app.post("/api/config", requireSessionRole(["super_admin", "dueno", "empleado"], false), async (req, res) => {
   const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== void 0) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
-    const nextAi = { ...appConfig.aiProvider, ...aiProvider, provider: "openai" };
-    if (!nextAi.model || !nextAi.model.startsWith("gpt-") && !nextAi.model.startsWith("o")) {
-      nextAi.model = "gpt-4o-mini";
+    const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
+    const incomingOpenAiKey = typeof aiProvider.openaiApiKey === "string" ? aiProvider.openaiApiKey.trim() : "";
+    const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+    const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
+    const incomingGeminiKey = typeof aiProvider.geminiApiKey === "string" ? aiProvider.geminiApiKey.trim() : "";
+    const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+    const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
+    const incomingDeepseekKey = typeof aiProvider.deepseekApiKey === "string" ? aiProvider.deepseekApiKey.trim() : "";
+    const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+    const targetProvider = aiProvider.provider || appConfig.aiProvider?.provider || "gemini";
+    let targetModel = aiProvider.model || appConfig.aiProvider?.model;
+    if (!targetModel) {
+      targetModel = targetProvider === "gemini" ? "gemini-3.5-flash-lite" : "gpt-4o-mini";
     }
-    if (typeof aiProvider.openaiApiKey === "string") {
-      nextAi.openaiApiKey = aiProvider.openaiApiKey.trim();
-    }
+    const nextAi = {
+      ...appConfig.aiProvider,
+      ...aiProvider,
+      provider: targetProvider,
+      model: targetModel,
+      openaiApiKey: resolvedOpenAiKey,
+      geminiApiKey: resolvedGeminiKey,
+      deepseekApiKey: resolvedDeepseekKey
+    };
     if (typeof aiProvider.openaiBaseUrl === "string" && aiProvider.openaiBaseUrl.trim()) {
       nextAi.openaiBaseUrl = aiProvider.openaiBaseUrl.trim();
     }
-    nextAi.deepseekApiKey = "";
-    nextAi.deepseekBaseUrl = "";
-    nextAi.geminiApiKey = "";
+    if (typeof aiProvider.deepseekBaseUrl === "string" && aiProvider.deepseekBaseUrl.trim()) {
+      nextAi.deepseekBaseUrl = aiProvider.deepseekBaseUrl.trim();
+    }
     appConfig.aiProvider = nextAi;
   }
-  if (odoo) appConfig.odoo = { ...appConfig.odoo, ...odoo };
-  if (evolution) appConfig.evolution = { ...appConfig.evolution, ...evolution };
+  if (odoo) {
+    const existingOdooKey = appConfig.odoo?.apiKey || "";
+    const incomingOdooKey = typeof odoo.apiKey === "string" ? odoo.apiKey.trim() : "";
+    appConfig.odoo = {
+      ...appConfig.odoo,
+      ...odoo,
+      apiKey: !isMaskedSecret(incomingOdooKey) ? incomingOdooKey : existingOdooKey
+    };
+  }
+  if (evolution) {
+    const existingEvoKey = appConfig.evolution?.apiKey || "";
+    const incomingEvoKey = typeof evolution.apiKey === "string" ? evolution.apiKey.trim() : "";
+    appConfig.evolution = {
+      ...appConfig.evolution,
+      ...evolution,
+      apiKey: !isMaskedSecret(incomingEvoKey) ? incomingEvoKey : existingEvoKey
+    };
+  }
   if (supabase) {
-    appConfig.supabase = { ...appConfig.supabase || {}, ...supabase };
+    const existingSupaKey = appConfig.supabase?.anonKey || "";
+    const incomingSupaKey = typeof supabase.anonKey === "string" ? supabase.anonKey.trim() : "";
+    appConfig.supabase = {
+      ...appConfig.supabase || { url: "", anonKey: "" },
+      ...supabase,
+      anonKey: !isMaskedSecret(incomingSupaKey) ? incomingSupaKey : existingSupaKey
+    };
     if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
       getSupabaseClient(appConfig.supabase.url, appConfig.supabase.anonKey);
     }
@@ -6537,50 +8626,123 @@ app.post("/api/config", async (req, res) => {
     appConfig.holidayOverrides = holidayOverrides;
     setGlobalHolidayOverrides(appConfig.holidayOverrides);
   }
+  if (Array.isArray(req.body.activeWhatsAppStatuses)) {
+    appConfig.activeWhatsAppStatuses = req.body.activeWhatsAppStatuses;
+  }
   savePersistedConfig();
   if (appConfig.supabase?.autoSync !== false) {
-    autoSyncConfigToSupabase(appConfig).catch(() => {
-    });
+    autoSyncConfigToSupabase(appConfig).then(() => recordSupabaseSyncState("config", "global", true)).catch((e) => recordSupabaseSyncState("config", "global", false, e?.message));
   }
   broadcastEvent("config_updated", appConfig);
-  res.json({ success: true, config: appConfig });
+  res.json({ success: true, config: getPublicMaskedConfig(appConfig) });
+});
+app.get("/api/whatsapp-statuses", (_req, res) => {
+  res.json({
+    success: true,
+    statuses: appConfig.activeWhatsAppStatuses || []
+  });
+});
+app.post("/api/whatsapp-statuses", (req, res) => {
+  const { statuses, status } = req.body;
+  if (Array.isArray(statuses)) {
+    appConfig.activeWhatsAppStatuses = statuses;
+  } else if (status && typeof status === "object") {
+    const existing = appConfig.activeWhatsAppStatuses || [];
+    const idx = existing.findIndex((s) => s.id === status.id);
+    if (idx >= 0) {
+      existing[idx] = { ...existing[idx], ...status };
+    } else {
+      existing.unshift({
+        id: status.id || `status-${Date.now()}`,
+        title: status.title || status.productName || "Oferta de Estado",
+        productName: status.productName || "",
+        price: status.price || "",
+        description: status.description || "",
+        imageUrl: status.imageUrl || "",
+        active: status.active !== false,
+        createdAt: status.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    appConfig.activeWhatsAppStatuses = existing;
+  }
+  savePersistedConfig();
+  broadcastEvent("whatsapp_statuses_updated", appConfig.activeWhatsAppStatuses);
+  res.json({
+    success: true,
+    statuses: appConfig.activeWhatsAppStatuses
+  });
+});
+app.post("/api/whatsapp-statuses/toggle", (req, res) => {
+  const { id, active } = req.body;
+  const list = appConfig.activeWhatsAppStatuses || [];
+  const item = list.find((s) => s.id === id);
+  if (item) {
+    item.active = active !== void 0 ? Boolean(active) : !item.active;
+    savePersistedConfig();
+    broadcastEvent("whatsapp_statuses_updated", appConfig.activeWhatsAppStatuses);
+  }
+  res.json({ success: true, statuses: list });
+});
+app.delete("/api/whatsapp-statuses/:id", (req, res) => {
+  const { id } = req.params;
+  appConfig.activeWhatsAppStatuses = (appConfig.activeWhatsAppStatuses || []).filter((s) => s.id !== id);
+  savePersistedConfig();
+  broadcastEvent("whatsapp_statuses_updated", appConfig.activeWhatsAppStatuses);
+  res.json({ success: true, statuses: appConfig.activeWhatsAppStatuses });
 });
 app.post("/api/ai/save-credentials", async (req, res) => {
   const {
+    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
-    openaiBaseUrl
+    openaiBaseUrl,
+    geminiApiKey,
+    deepseekApiKey,
+    deepseekBaseUrl
   } = req.body;
-  const cleanModel = model && (String(model).startsWith("gpt-") || String(model).startsWith("o")) ? String(model) : appConfig.aiProvider?.model?.startsWith("gpt-") || appConfig.aiProvider?.model?.startsWith("o") ? appConfig.aiProvider.model : "gpt-4o-mini";
+  const targetProvider = provider || appConfig.aiProvider?.provider || "gemini";
+  const cleanModel = model && String(model).trim() ? String(model).trim() : targetProvider === "gemini" ? "gemini-3.5-flash-lite" : "gpt-4o-mini";
+  const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
+  const incomingOpenAiKey = openaiApiKey !== void 0 ? String(openaiApiKey).trim() : "";
+  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
+  const incomingGeminiKey = geminiApiKey !== void 0 ? String(geminiApiKey).trim() : "";
+  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
+  const incomingDeepseekKey = deepseekApiKey !== void 0 ? String(deepseekApiKey).trim() : "";
+  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: "openai",
+    provider: targetProvider,
     model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? "",
-    ...openaiApiKey !== void 0 ? { openaiApiKey: String(openaiApiKey).trim() } : {},
+    openaiApiKey: resolvedOpenAiKey,
+    geminiApiKey: resolvedGeminiKey,
+    deepseekApiKey: resolvedDeepseekKey,
     ...openaiBaseUrl !== void 0 && String(openaiBaseUrl).trim() ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {},
-    deepseekApiKey: "",
-    deepseekBaseUrl: "",
-    geminiApiKey: ""
+    ...deepseekBaseUrl !== void 0 && String(deepseekBaseUrl).trim() ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}
   };
   savePersistedConfig();
   try {
     await autoSyncConfigToSupabase(appConfig);
-  } catch {
+    recordSupabaseSyncState("config", "ai", true);
+  } catch (e) {
+    recordSupabaseSyncState("config", "ai", false, e?.message);
   }
   broadcastEvent("config_updated", appConfig);
   res.json({
     success: true,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     message: "Credenciales de OpenAI guardadas permanentemente en el servidor y respaldadas en Supabase."
   });
 });
 app.post("/api/supabase/test-connection", async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || "").trim();
-  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || "").trim();
+  const rawAnon = (req.body.anonKey || "").trim();
+  const anonKey = !isMaskedSecret(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || "").trim();
   if (!url || !anonKey) {
     return res.status(400).json({
       success: false,
@@ -6598,10 +8760,13 @@ app.post("/api/supabase/test-connection", async (req, res) => {
   if (result.success) {
     appConfig.supabase.connected = true;
     savePersistedConfig();
+    recordSupabaseSyncState("config", "supabase_probe", true);
+  } else {
+    recordSupabaseSyncState("config", "supabase_probe", false, result.message);
   }
   res.json(result);
 });
-app.get("/api/supabase/schema-sql", (req, res) => {
+app.get("/api/supabase/schema-sql", (_req, res) => {
   res.json({
     success: true,
     sql: getSupabaseSchemaSql()
@@ -6609,7 +8774,8 @@ app.get("/api/supabase/schema-sql", (req, res) => {
 });
 app.post("/api/supabase/sync-all", async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || DEFAULT_SUPABASE_URL).trim();
-  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
+  const rawAnon = (req.body.anonKey || "").trim();
+  const anonKey = !isMaskedSecret(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
   if (url && anonKey) {
     if (!appConfig.supabase) {
       appConfig.supabase = { url: "", anonKey: "", connected: false, autoSync: true };
@@ -6640,12 +8806,14 @@ app.post("/api/supabase/sync-all", async (req, res) => {
       }
       savePersistedConfig();
     }
+    recordSupabaseSyncState("config", "sync_all", true);
     res.json({
       success: stats.errors.length === 0 || stats.usersSynced + stats.ordersSynced + stats.customersSynced + stats.messagesSynced > 0,
       stats,
       lastSync: appConfig.supabase?.lastSync
     });
   } catch (err) {
+    recordSupabaseSyncState("config", "sync_all", false, err.message);
     res.status(500).json({
       success: false,
       message: `Error al subir datos a Supabase: ${err.message}`
@@ -6667,44 +8835,66 @@ app.post("/api/auth/login", async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ success: false, message: "Ingresa tu nombre de usuario y contrase\xF1a." });
   }
+  const clientIp = String(req.ip || req.headers["x-forwarded-for"] || "local").split(",")[0].trim();
+  const rateKey = `${clientIp}:${String(username).toLowerCase().trim()}`;
+  const now = Date.now();
+  const rateEntry = loginRateLimitMap.get(rateKey);
+  if (rateEntry && rateEntry.lockedUntil > now) {
+    const waitSec = Math.ceil((rateEntry.lockedUntil - now) / 1e3);
+    return res.status(429).json({
+      success: false,
+      message: `Demasiados intentos fallidos. Por seguridad, intenta nuevamente en ${waitSec} segundos.`
+    });
+  }
   let found = findMatchingSystemUser(username);
-  if (!found || found.password !== String(password).trim()) {
+  let pwCheck = found ? verifyUserPassword(password, found.password) : { valid: false, needsMigration: false };
+  if (!found || !pwCheck.valid) {
     await hydrateAndSyncUsersWithSupabase();
     found = findMatchingSystemUser(username);
+    pwCheck = found ? verifyUserPassword(password, found.password) : { valid: false, needsMigration: false };
   }
-  if (!found) {
-    return res.status(401).json({ success: false, message: "Nombre de usuario no encontrado." });
+  if (!found || !pwCheck.valid) {
+    const prevCount = rateEntry && now - rateEntry.firstAttemptAt < 10 * 60 * 1e3 ? rateEntry.count + 1 : 1;
+    loginRateLimitMap.set(rateKey, {
+      count: prevCount,
+      firstAttemptAt: rateEntry && now - rateEntry.firstAttemptAt < 10 * 60 * 1e3 ? rateEntry.firstAttemptAt : now,
+      lockedUntil: prevCount >= 8 ? now + 5 * 60 * 1e3 : 0
+    });
+    return res.status(401).json({
+      success: false,
+      message: !found ? "Nombre de usuario no encontrado." : "Contrase\xF1a incorrecta."
+    });
   }
   if (!found.activo) {
     return res.status(403).json({ success: false, message: "Esta cuenta ha sido desactivada por el Super Administrador." });
   }
-  if (found.password !== String(password).trim()) {
-    return res.status(401).json({ success: false, message: "Contrase\xF1a incorrecta." });
+  loginRateLimitMap.delete(rateKey);
+  if (pwCheck.needsMigration || !isPasswordHashed(found.password)) {
+    found.password = hashUserPassword(password);
   }
   found.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
   savePersistedUsers();
-  autoSyncUserToSupabase(found, systemUsers).catch(() => {
-  });
-  const token = `vendema_tk_${found.id}_${Date.now()}`;
+  autoSyncUserToSupabase(found, systemUsers).then(() => recordSupabaseSyncState("user", found.id, true)).catch((e) => recordSupabaseSyncState("user", found.id, false, e?.message));
+  const { token, expiresAt } = createSignedSessionToken(found);
+  setSessionCookie(res, token, req);
   res.json({
     success: true,
     user: sanitizeUser(found),
-    token
+    token,
+    expiresAt: new Date(expiresAt).toISOString()
   });
 });
 app.get("/api/auth/me", async (req, res) => {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const token = extractTokenFromRequest(req);
   if (!token) {
     return res.status(401).json({ success: false, message: "No autenticado." });
   }
-  const match = token.match(/^vendema_tk_(usr_[a-zA-Z0-9_]+)_/);
-  if (match) {
-    const userId = match[1];
-    let user = systemUsers.find((u) => u.id === userId && u.activo);
+  const verified = verifySignedSessionToken(token);
+  if (verified.valid && verified.userId) {
+    let user = systemUsers.find((u) => u.id === verified.userId && u.activo);
     if (!user) {
       await hydrateAndSyncUsersWithSupabase();
-      user = systemUsers.find((u) => u.id === userId && u.activo);
+      user = systemUsers.find((u) => u.id === verified.userId && u.activo);
     }
     if (user) {
       return res.json({ success: true, user: sanitizeUser(user) });
@@ -6712,10 +8902,16 @@ app.get("/api/auth/me", async (req, res) => {
   }
   res.status(401).json({ success: false, message: "Sesi\xF3n no v\xE1lida o expirada." });
 });
-app.post("/api/auth/logout", (_req, res) => {
+app.post("/api/auth/logout", (req, res) => {
+  const token = extractTokenFromRequest(req);
+  const verified = verifySignedSessionToken(token);
+  if (verified.sessionId) {
+    activeSessionsMap.delete(verified.sessionId);
+  }
+  clearSessionCookie(res);
   res.json({ success: true, message: "Sesi\xF3n cerrada correctamente." });
 });
-app.get("/api/users", async (_req, res) => {
+app.get("/api/users", requireSessionRole(["super_admin", "dueno"], false), async (_req, res) => {
   await hydrateAndSyncUsersWithSupabase();
   res.json({
     success: true,
@@ -6723,7 +8919,7 @@ app.get("/api/users", async (_req, res) => {
     total: systemUsers.length
   });
 });
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", requireSessionRole(["super_admin", "dueno"], false), async (req, res) => {
   const { nombre, username, password, whatsapp, role } = req.body;
   if (!nombre || !username || !password || !whatsapp) {
     return res.status(400).json({
@@ -6751,7 +8947,7 @@ app.post("/api/users", async (req, res) => {
     id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     nombre: String(nombre).trim(),
     username: cleanUsername,
-    password: String(password).trim(),
+    password: hashUserPassword(String(password).trim()),
     whatsapp: String(whatsapp).replace(/[^\d+]/g, ""),
     role: userRole,
     activo: true,
@@ -6759,14 +8955,16 @@ app.post("/api/users", async (req, res) => {
   };
   systemUsers.push(newUser);
   savePersistedUsers();
-  await autoSyncUserToSupabase(newUser, systemUsers);
+  await autoSyncUserToSupabase(newUser, systemUsers).catch(
+    (e) => recordSupabaseSyncState("user", newUser.id, false, e?.message)
+  );
   res.status(201).json({
     success: true,
-    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado y sincronizado con Supabase.`,
+    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado con contrase\xF1a cifrada y sincronizado con Supabase.`,
     user: sanitizeUser(newUser)
   });
 });
-app.put("/api/users/:id", async (req, res) => {
+app.put("/api/users/:id", requireSessionRole(["super_admin", "dueno"], false), async (req, res) => {
   const { id } = req.params;
   const userIdx = systemUsers.findIndex((u) => u.id === id);
   if (userIdx === -1) {
@@ -6776,8 +8974,8 @@ app.put("/api/users/:id", async (req, res) => {
   const { nombre, whatsapp, password, role, activo } = req.body;
   if (nombre) targetUser.nombre = String(nombre).trim();
   if (whatsapp) targetUser.whatsapp = String(whatsapp).replace(/[^\d+]/g, "");
-  if (password && String(password).trim()) {
-    targetUser.password = String(password).trim();
+  if (password && String(password).trim() && !isMaskedSecret(password)) {
+    targetUser.password = hashUserPassword(String(password).trim());
   }
   if (targetUser.username.toLowerCase() === "nelson") {
     targetUser.role = "super_admin";
@@ -6791,14 +8989,16 @@ app.put("/api/users/:id", async (req, res) => {
     }
   }
   savePersistedUsers();
-  await autoSyncUserToSupabase(targetUser, systemUsers);
+  await autoSyncUserToSupabase(targetUser, systemUsers).catch(
+    (e) => recordSupabaseSyncState("user", targetUser.id, false, e?.message)
+  );
   res.json({
     success: true,
     message: `Usuario ${targetUser.nombre} actualizado y sincronizado con Supabase.`,
     user: sanitizeUser(targetUser)
   });
 });
-app.delete("/api/users/:id", async (req, res) => {
+app.delete("/api/users/:id", requireSessionRole(["super_admin", "dueno"], false), async (req, res) => {
   const { id } = req.params;
   const targetUser = systemUsers.find((u) => u.id === id);
   if (!targetUser) {
@@ -6812,7 +9012,8 @@ app.delete("/api/users/:id", async (req, res) => {
   }
   systemUsers = systemUsers.filter((u) => u.id !== id);
   savePersistedUsers();
-  await deleteUserFromSupabase(targetUser, systemUsers);
+  await deleteUserFromSupabase(targetUser, systemUsers).catch(() => {
+  });
   res.json({
     success: true,
     message: `Usuario @${targetUser.username} eliminado correctamente.`
@@ -6820,76 +9021,120 @@ app.delete("/api/users/:id", async (req, res) => {
 });
 app.post("/api/ai/test-provider", async (req, res) => {
   const {
+    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
-    openaiBaseUrl
+    openaiBaseUrl,
+    geminiApiKey,
+    deepseekApiKey,
+    deepseekBaseUrl
   } = req.body;
-  const cleanModel = model && (String(model).startsWith("gpt-") || String(model).startsWith("o")) ? String(model) : appConfig.aiProvider?.model?.startsWith("gpt-") || appConfig.aiProvider?.model?.startsWith("o") ? appConfig.aiProvider.model : "gpt-4o-mini";
+  const targetProvider = provider || appConfig.aiProvider?.provider || "gemini";
+  const cleanModel = model && String(model).trim() ? String(model).trim() : targetProvider === "gemini" ? "gemini-3.5-flash-lite" : "gpt-4o-mini";
+  const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
+  const incomingOpenAiKey = openaiApiKey !== void 0 ? String(openaiApiKey).trim() : "";
+  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
+  const incomingGeminiKey = geminiApiKey !== void 0 ? String(geminiApiKey).trim() : "";
+  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
+  const incomingDeepseekKey = deepseekApiKey !== void 0 ? String(deepseekApiKey).trim() : "";
+  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: "openai",
+    provider: targetProvider,
     model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? "",
-    ...openaiApiKey !== void 0 ? { openaiApiKey: String(openaiApiKey).trim() } : {},
+    openaiApiKey: resolvedOpenAiKey,
+    geminiApiKey: resolvedGeminiKey,
+    deepseekApiKey: resolvedDeepseekKey,
     ...openaiBaseUrl !== void 0 ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {},
-    deepseekApiKey: "",
-    deepseekBaseUrl: "",
-    geminiApiKey: ""
+    ...deepseekBaseUrl !== void 0 ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}
   };
   savePersistedConfig();
-  if (!appConfig.aiProvider.openaiApiKey && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "MY_OPENAI_API_KEY")) {
+  if (targetProvider === "gemini" && !getActiveGeminiKey()) {
     return res.json({
       success: false,
-      message: "Por favor ingresa tu API Key de OpenAI (sk-...) en el campo de credenciales para conectar con OpenAI."
+      requestedProvider: "gemini",
+      message: "Por favor ingresa tu API Key de Google Gemini para probar la conexi\xF3n."
+    });
+  }
+  if (targetProvider === "openai" && !getActiveOpenAiKey()) {
+    return res.json({
+      success: false,
+      requestedProvider: "openai",
+      message: "Por favor ingresa tu API Key de OpenAI (sk-...) para probar la conexi\xF3n con OpenAI."
     });
   }
   try {
     const result = await generateTextWithConfiguredAI({
-      prompt: "Responde en una sola l\xEDnea confirmando que est\xE1s activo con OpenAI para vender laptops en Todo Lapto.",
-      systemInstruction: "Eres el motor oficial de inteligencia artificial OpenAI de Vendem\xE1 CRM para Todo Lapto.",
+      prompt: "Responde \xFAnicamente: OK",
+      systemInstruction: "Eres el motor de inteligencia artificial de Vendem\xE1 CRM para Todo Lapto.",
       allowFallback: false
     });
     res.json({
       success: true,
-      providerUsed: "openai",
+      providerUsed: result.providerUsed,
       modelUsed: result.modelUsed,
-      message: `Motor OPENAI (${result.modelUsed}) conectado y verificado con \xE9xito: "${result.text.trim()}"`
+      reply: result.text.trim(),
+      message: `Motor ${result.providerUsed.toUpperCase()} (${result.modelUsed}) conectado y verificado con \xE9xito: "${result.text.trim()}"`
     });
   } catch (err) {
     res.json({
       success: false,
-      requestedProvider: "openai",
-      message: `No se pudo conectar con OpenAI: ${err.message}`
+      requestedProvider: targetProvider,
+      message: `No se pudo conectar con ${targetProvider.toUpperCase()}: ${sanitizeSecretsInText(err.message)}`
     });
   }
 });
-app.post("/api/system/time-sync", (req, res) => {
-  const { clientTimestamp } = req.body;
-  if (typeof clientTimestamp === "number" && clientTimestamp > 0) {
-    const serverNow = Date.now();
-    const driftMs = clientTimestamp - serverNow;
-    if (Math.abs(driftMs) > 3e3) {
-      setGlobalTimeOffset(driftMs);
-      console.log(`[Time Sync]: Servidor sincronizado con hora real del cliente. Drift corregido: ${driftMs}ms`);
-    }
-  }
-  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+app.get("/api/system/time-sync", async (req, res) => {
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
   res.json({
     success: true,
-    serverTimestamp: Date.now(),
-    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: "America/Santo_Domingo (UTC-4)",
+    dominicanTime: rd
+  });
+});
+app.post("/api/system/time-sync", async (req, res) => {
+  await syncAuthoritativeDominicanTime().catch(() => {
+  });
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: "America/Santo_Domingo (UTC-4)",
     dominicanTime: rd
   });
 });
 app.get("/api/system/time-status", (req, res) => {
-  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
   res.json({
     success: true,
-    serverTimestamp: Date.now(),
-    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: "America/Santo_Domingo (UTC-4)",
+    dominicanTime: rd
+  });
+});
+app.post("/api/system/time-reset", async (req, res) => {
+  await syncAuthoritativeDominicanTime().catch(() => {
+  });
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    message: "Reloj del servidor sincronizado con la hora oficial at\xF3mica de Rep\xFAblica Dominicana.",
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
     dominicanTime: rd
   });
 });
@@ -6960,42 +9205,106 @@ app.post("/api/evolution/test-connection", async (req, res) => {
 });
 app.get("/api/evolution/qrcode", async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {
-    const [stateRes, instancesRes] = await Promise.all([
-      fetch(`${serverUrl}/instance/connectionState/${instance}`, {
-        headers: { apikey: apiKey }
-      }).catch(() => null),
-      fetch(`${serverUrl}/instance/fetchInstances`, {
-        headers: { apikey: apiKey }
-      }).catch(() => null)
-    ]);
-    const stateData = stateRes && stateRes.ok ? await stateRes.json() : null;
-    const instancesData = instancesRes && instancesRes.ok ? await instancesRes.json() : [];
-    const instRecord = Array.isArray(instancesData) ? instancesData.find((i) => i.name === instance || i.instanceName === instance) || instancesData[0] : null;
-    const currentState = stateData?.instance?.state || instRecord?.connectionStatus || "unknown";
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(5e3)
+    }).catch(() => null);
+    const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
+    let currentState = stateData?.instance?.state || stateData?.state || "unknown";
+    if (Date.now() - evolutionQrCache.lastMetaFetchAt > 2e4 || !evolutionQrCache.ownerJid) {
+      evolutionQrCache.lastMetaFetchAt = Date.now();
+      const instancesRes = await fetch(
+        `${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
+        {
+          headers: { apikey: apiKey },
+          signal: AbortSignal.timeout(4500)
+        }
+      ).catch(() => null);
+      if (instancesRes && instancesRes.ok) {
+        const instancesData = await instancesRes.json().catch(() => []);
+        const instRecord = Array.isArray(instancesData) ? instancesData.find((i) => i.name === instance || i.instanceName === instance) || instancesData[0] : null;
+        if (instRecord) {
+          evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
+          evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
+          evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
+          if (currentState === "unknown" && instRecord.connectionStatus) {
+            currentState = instRecord.connectionStatus;
+          }
+        }
+      }
+    }
+    const forceConnect = req.query.forceConnect === "true";
     const isConnected = currentState === "open";
-    let qrBase64 = null;
-    let pairingCode = null;
-    if (!isConnected || req.query.forceConnect === "true") {
-      const connectRes = await fetch(`${serverUrl}/instance/connect/${instance}`, {
-        headers: { apikey: apiKey }
+    if (isConnected && !forceConnect) {
+      if (evolutionLastKnownState !== "open") {
+        evolutionLastKnownState = "open";
+        botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
+        isFirstEvolutionSync = true;
+        broadcastEvent("evolution_status", { connected: true, state: "open" });
+      }
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
+      return res.json({
+        success: true,
+        instance,
+        state: "open",
+        connected: true,
+        ownerJid: evolutionQrCache.ownerJid,
+        profileName: evolutionQrCache.profileName,
+        profilePicUrl: evolutionQrCache.profilePicUrl,
+        qrBase64: null,
+        pairingCode: null
+      });
+    }
+    clearAllChatsOnWhatsAppDisconnect(currentState);
+    const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
+    if (forceConnect || !evolutionQrCache.qrBase64 || qrAgeMs > 4e4) {
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
+        headers: { apikey: apiKey },
+        signal: AbortSignal.timeout(7e3)
       }).catch(() => null);
       if (connectRes && connectRes.ok) {
-        const connectData = await connectRes.json();
-        qrBase64 = connectData?.base64 || connectData?.qrcode?.base64 || null;
-        pairingCode = connectData?.pairingCode || connectData?.code || null;
+        const connectData = await connectRes.json().catch(() => ({}));
+        if (connectData?.instance?.state === "open" || connectData?.state === "open") {
+          evolutionLastKnownState = "open";
+          appConfig.evolution.connected = true;
+          evolutionQrCache.qrBase64 = null;
+          botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
+          isFirstEvolutionSync = true;
+          return res.json({
+            success: true,
+            instance,
+            state: "open",
+            connected: true,
+            ownerJid: evolutionQrCache.ownerJid,
+            profileName: evolutionQrCache.profileName,
+            profilePicUrl: evolutionQrCache.profilePicUrl,
+            qrBase64: null,
+            pairingCode: null
+          });
+        }
+        const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
+        const newPairing = connectData?.pairingCode || connectData?.code || null;
+        if (newQr) {
+          evolutionQrCache.qrBase64 = newQr;
+          evolutionQrCache.pairingCode = newPairing;
+          evolutionQrCache.generatedAt = Date.now();
+        }
       }
     }
     res.json({
       success: true,
       instance,
       state: currentState,
-      connected: isConnected,
-      ownerJid: instRecord?.ownerJid || null,
-      profileName: instRecord?.profileName || null,
-      profilePicUrl: instRecord?.profilePicUrl || null,
-      qrBase64,
-      pairingCode
+      connected: false,
+      ownerJid: evolutionQrCache.ownerJid,
+      profileName: evolutionQrCache.profileName,
+      profilePicUrl: evolutionQrCache.profilePicUrl,
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode
     });
   } catch (err) {
     res.status(500).json({
@@ -7006,22 +9315,36 @@ app.get("/api/evolution/qrcode", async (req, res) => {
 });
 app.post("/api/evolution/logout", async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {
-    await fetch(`${serverUrl}/instance/logout/${instance}`, {
+    evolutionQrCache.qrBase64 = null;
+    evolutionQrCache.pairingCode = null;
+    evolutionQrCache.generatedAt = 0;
+    clearAllChatsOnWhatsAppDisconnect("close");
+    await fetch(`${baseUrl}/instance/logout/${instance}`, {
       method: "DELETE",
-      headers: { apikey: apiKey }
-    });
-    await new Promise((r) => setTimeout(r, 1200));
-    const connectRes = await fetch(`${serverUrl}/instance/connect/${instance}`, {
-      headers: { apikey: apiKey }
-    });
-    const connectData = connectRes.ok ? await connectRes.json() : {};
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(6e3)
+    }).catch(() => null);
+    await new Promise((r) => setTimeout(r, 1500));
+    const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(7e3)
+    }).catch(() => null);
+    const connectData = connectRes && connectRes.ok ? await connectRes.json().catch(() => ({})) : {};
+    const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
+    const newPairing = connectData?.pairingCode || null;
+    if (newQr) {
+      evolutionQrCache.qrBase64 = newQr;
+      evolutionQrCache.pairingCode = newPairing;
+      evolutionQrCache.generatedAt = Date.now();
+    }
     res.json({
       success: true,
       state: "connecting",
       connected: false,
-      qrBase64: connectData?.base64 || connectData?.qrcode?.base64 || null,
-      pairingCode: connectData?.pairingCode || null,
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode,
       message: "Sesi\xF3n desvinculada. Escanea el nuevo c\xF3digo QR con WhatsApp."
     });
   } catch (err) {
@@ -7033,14 +9356,38 @@ app.post("/api/evolution/logout", async (req, res) => {
 });
 app.post("/api/evolution/restart", async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {
-    const r = await fetch(`${serverUrl.replace(/\/$/, "")}/instance/restart/${instance}`, {
+    evolutionQrCache.qrBase64 = null;
+    evolutionQrCache.generatedAt = 0;
+    const r = await fetch(`${baseUrl}/instance/restart/${instance}`, {
       method: "POST",
-      headers: { apikey: apiKey }
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(1e4)
     });
+    let data = {};
+    try {
+      data = await r.json();
+    } catch {
+    }
+    const newQr = data?.base64 || data?.qrcode?.base64 || null;
+    const newPairing = data?.pairingCode || data?.code || null;
+    if (newQr) {
+      evolutionQrCache.qrBase64 = newQr;
+      evolutionQrCache.pairingCode = newPairing;
+      evolutionQrCache.generatedAt = Date.now();
+      broadcastEvent("evolution_qr", {
+        qrBase64: newQr,
+        pairingCode: newPairing,
+        state: "connecting",
+        connected: false
+      });
+    }
     res.json({
       success: r.ok,
-      message: r.ok ? `Instancia "${instance}" reiniciada correctamente.` : `Evolution API devolvi\xF3 estado ${r.status} al reiniciar.`
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode,
+      message: r.ok ? `Instancia "${instance}" reiniciada correctamente.${newQr ? " C\xF3digo QR actualizado." : ""}` : `Evolution API devolvi\xF3 estado ${r.status} al reiniciar.`
     });
   } catch (err) {
     res.status(500).json({
@@ -7075,11 +9422,19 @@ app.get("/api/conversations", async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
-  if (conversations.length === 0) {
-    await syncEvolutionChats();
+  if (conversations.length === 0 && (evolutionLastKnownState === "open" || evolutionLastKnownState === "unknown")) {
+    loadPersistedConversations();
+  }
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== "open" && evolutionLastKnownState !== "unknown") {
+    conversations = [];
+  } else if (conversations.length === 0) {
+    syncEvolutionChats().catch(() => {
+    });
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
-    await syncEvolutionChats();
+    lastEvolutionChatsSync = 0;
+    syncEvolutionChats().catch(() => {
+    });
   } else if (now - lastEvolutionChatsSync > 15e3) {
     syncEvolutionChats().catch(() => {
     });
@@ -7102,6 +9457,9 @@ app.get("/api/conversations/:sessionId/messages", async (req, res) => {
     const sessionId = decodeURIComponent(rawSessionId).trim();
     if (!sessionId || sessionId === "undefined" || sessionId === "null") {
       return res.json({ success: true, sessionId: "", messages: [] });
+    }
+    if (!appConfig.evolution.connected && evolutionLastKnownState !== "open" && evolutionLastKnownState !== "unknown") {
+      return res.json({ success: true, sessionId, messages: [] });
     }
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
@@ -7144,6 +9502,9 @@ app.get("/api/messages", async (req, res) => {
     if (!sessionId || sessionId === "undefined" || sessionId === "null") {
       return res.json({ success: true, sessionId: "", messages: [] });
     }
+    if (!appConfig.evolution.connected && evolutionLastKnownState !== "open" && evolutionLastKnownState !== "unknown") {
+      return res.json({ success: true, sessionId, messages: [] });
+    }
     const messages = await loadEvolutionMessagesForChat(sessionId);
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
@@ -7167,8 +9528,42 @@ app.post("/api/conversations/:sessionId/toggle-ai", (req, res) => {
   const { enabled } = req.body;
   conv.aiEnabled = enabled !== void 0 ? Boolean(enabled) : !conv.aiEnabled;
   aiEnabledBySession.set(conv.sessionId, conv.aiEnabled);
+  if (conv.customerPhone) {
+    aiEnabledBySession.set(conv.customerPhone, conv.aiEnabled);
+    aiEnabledBySession.set(`${conv.customerPhone}@s.whatsapp.net`, conv.aiEnabled);
+  }
+  const related = relatedJidsBySession.get(conv.sessionId);
+  if (related) {
+    for (const r of related) {
+      aiEnabledBySession.set(r, conv.aiEnabled);
+      const rClean = r.replace(/@.*$/, "").replace(/\D/g, "");
+      if (rClean) aiEnabledBySession.set(rClean, conv.aiEnabled);
+      const relConv = conversations.find((c) => c.sessionId === r);
+      if (relConv) relConv.aiEnabled = conv.aiEnabled;
+    }
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  for (const k of contactKeys) {
+    aiEnabledBySession.set(k, conv.aiEnabled);
+  }
   const lead = customers.find((c) => c.phone === conv.customerPhone || c.lidJid === conv.sessionId);
   if (lead) lead.aiEnabled = conv.aiEnabled;
+  savePersistedConversations();
+  if (!conv.aiEnabled) {
+    const keys = getConversationContactKeys(conv);
+    persistentJobQueue = persistentJobQueue.filter((j) => {
+      const match = keys.some((k) => j.conversationId === k || j.customerPhone === k);
+      return !match;
+    });
+    savePersistentJobQueue();
+    releaseBotLock(conv);
+  }
+  broadcastEvent("chat_ai_toggled", {
+    sessionId: conv.sessionId,
+    customerPhone: conv.customerPhone,
+    aiEnabled: conv.aiEnabled
+  });
+  broadcastEvent("conversations_update", { count: conversations.length });
   res.json({
     success: true,
     aiEnabled: conv.aiEnabled,
@@ -7323,7 +9718,7 @@ app.post("/api/ai/transcribe-audio", async (req, res) => {
     return res.status(400).json({ success: false, message: "messageId requerido" });
   }
   try {
-    const media = await fetchMediaBase64FromEvolution(messageId, false);
+    const media = await fetchMediaBase64FromEvolution(messageId, false, sessionId);
     if (!media) {
       return res.status(404).json({ success: false, message: "No se pudo descargar el audio desde Evolution API" });
     }
@@ -7332,9 +9727,11 @@ app.post("/api/ai/transcribe-audio", async (req, res) => {
     if (sessionId) {
       const conv = conversations.find((c) => c.sessionId === sessionId);
       const msg = conv?.messages.find((m) => m.evolutionMessageId === messageId);
-      if (msg) {
+      if (conv && msg) {
         msg.transcription = transcript;
         msg.content = `\u{1F3A4} "${transcript}"`;
+        conv.lastMessagePreview = `\u{1F3A4} "${transcript}"`;
+        broadcastEvent("message_updated", { sessionId: conv.sessionId, message: msg });
       }
     }
     res.json({ success: true, transcription: transcript });
@@ -7348,7 +9745,7 @@ app.post("/api/ai/analyze-media", async (req, res) => {
     return res.status(400).json({ success: false, message: "messageId requerido" });
   }
   try {
-    const media = await fetchMediaBase64FromEvolution(messageId, false);
+    const media = await fetchMediaBase64FromEvolution(messageId, false, sessionId);
     if (!media) {
       return res.status(404).json({ success: false, message: "No se pudo descargar la imagen desde Evolution API" });
     }
@@ -7364,8 +9761,9 @@ Indica en espa\xF1ol de forma concisa (m\xE1ximo 3 l\xEDneas):
     if (sessionId) {
       const conv = conversations.find((c) => c.sessionId === sessionId);
       const msg = conv?.messages.find((m) => m.evolutionMessageId === messageId);
-      if (msg) {
+      if (conv && msg) {
         msg.aiAnalysis = analysis;
+        broadcastEvent("message_updated", { sessionId: conv.sessionId, message: msg });
       }
     }
     res.json({ success: true, analysis });
@@ -7806,11 +10204,46 @@ Responde \xDANICAMENTE con el objeto JSON.`;
     res.status(500).json({ success: false, message: err.message });
   }
 });
+function isWhatsAppStatusInquiry(rawText, isStatusReply = false) {
+  if (isStatusReply) return true;
+  const cleaned = (rawText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\b(estado|estados|historia|historias|story|stories|subieron|publicaron|publicacion|lo que subieron|la que subieron|el que subieron|foto del estado|video del estado)\b/i.test(cleaned);
+}
+function formatActiveWhatsAppStatusesPrompt() {
+  const list = (appConfig.activeWhatsAppStatuses || []).filter((s) => s.active !== false);
+  if (list.length === 0) {
+    return "\u{1F4F1} ESTADOS DE WHATSAPP: Actualmente no hay estados manuales espec\xEDficos cargados en el CRM. Si el cliente pregunta por un estado de WhatsApp sin especificar el modelo, preg\xFAntale cort\xE9smente qu\xE9 laptop o producto vio en nuestro estado o p\xEDdele una captura de pantalla \u{1F4F8} para confirmarle disponibilidad y precio de una vez.";
+  }
+  let text = `=== \u{1F4F1} ESTADOS DE WHATSAPP ACTIVOS DE TODO LAPTO (STORIES PUBLICADOS HOY) ===
+`;
+  text += `El equipo de Todo Lapto tiene actualmente subidos los siguientes productos y promociones a sus estados de WhatsApp:
+
+`;
+  list.forEach((s, idx) => {
+    const priceStr = typeof s.price === "number" ? `RD$${s.price.toLocaleString()}` : s.price || "";
+    text += `*Estado #${idx + 1}:* ${s.title || s.productName}
+`;
+    if (s.productName) text += `   \u2022 Producto: ${s.productName}
+`;
+    if (priceStr) text += `   \u2022 Precio en Estado: ${priceStr}
+`;
+    if (s.description) text += `   \u2022 Detalles / Especificaciones: ${s.description}
+`;
+    text += "\n";
+  });
+  text += `\u{1F449} INSTRUCCI\xD3N CR\xCDTICA DE ESTADOS:
+1. Si el cliente pregunta "\xBFCu\xE1nto cuesta la que subieron al estado?", "Vi su estado", "La laptop de la historia", o cita un estado:
+   - Identifica a cu\xE1l de los estados activos se refiere seg\xFAn el modelo, precio o caracter\xEDsticas mencionadas.
+   - Si se refiere a una de ellas: conf\xEDrmala de inmediato con entusiasmo: "\xA1Hola! S\xED, la que viste en nuestro estado es la [Producto] por [Precio]. [Breve detalle]. La tenemos disponible en nuestra tienda f\xEDsica de la Av. Charles de Gaulle #133 y tambi\xE9n con env\xEDo a domicilio en Santo Domingo contra entrega \u{1F69A}. \xBFTe gustar\xEDa apartarla?".
+   - Si no especific\xF3 cu\xE1l de las opciones vio: menciona las opciones activas brevemente (ej. "\xA1Hola! Hoy en nuestro estado tenemos la HP ProBook x360 en RD$7,500 y la Lenovo ThinkPad T480 en RD$14,500. \xBFCu\xE1l de esas dos fue la que te interes\xF3?") o p\xEDdele que te env\xEDe una captura de pantalla \u{1F4F8}.`;
+  return text;
+}
 function isSimpleConversationalMessage(rawText, hasQuote = false) {
   if (hasQuote) return false;
+  if (isWhatsAppStatusInquiry(rawText)) return false;
   const cleaned = (rawText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
   if (!cleaned || cleaned.length > 65) return false;
-  const commercialOrProductRegex = /\b(laptop|lapto|laptos|portatil|notebook|computadora|pc|mouse|raton|impresora|epson|canon|brother|teclado|monitor|pantalla|bocina|parlante|audifono|auricular|headset|diadema|disco|ssd|nvme|ram|memoria|cargador|bateria|router|modem|ups|inversor|mochila|bulto|maletin|camara|webcam|cable|hdmi|vga|usb|adaptador|dell|hp|lenovo|thinkpad|latitude|chromebook|asus|acer|macbook|apple|precio|cuanto|cuesta|vale|catalogo|disponible|stock|barat[oa]|economic[oa]|usad[oa]|nuev[oa]|reacondicionad[oa]|reparacion|reparan|arreglan|garantia|envio|delivery|tienda|ubicacion|direccion|horario|abierto|cerrado|comprar|apartar|pedido|cotizacion|transferencia|cuenta|banco|anuncio|foto|vacante|empleo|trabajo|estudio|oficina|gamer|juego|\d{3,})\b/i;
+  const commercialOrProductRegex = /\b(laptop|lapto|laptos|portatil|notebook|computadora|pc|mouse|raton|impresora|epson|canon|brother|teclado|monitor|pantalla|bocina|parlante|audifono|auricular|headset|diadema|disco|ssd|nvme|ram|memoria|cargador|bateria|router|modem|ups|inversor|mochila|bulto|maletin|camara|webcam|cable|hdmi|vga|usb|adaptador|dell|hp|lenovo|thinkpad|latitude|chromebook|asus|acer|macbook|apple|precio|cuanto|cuesta|vale|catalogo|disponible|stock|barat[oa]|economic[oa]|usad[oa]|nuev[oa]|reacondicionad[oa]|reparacion|reparan|arreglan|garantia|envio|delivery|tienda|ubicacion|direccion|horario|abierto|cerrado|comprar|apartar|pedido|cotizacion|transferencia|cuenta|banco|anuncio|foto|vacante|empleo|trabajo|estudio|oficina|gamer|juego|estado|estados|historia|historias|story|stories|subieron|publicacion|audio|voz|\d{3,})\b/i;
   if (commercialOrProductRegex.test(cleaned)) {
     return false;
   }
@@ -7854,40 +10287,523 @@ function buildInstantConversationalReply(conv, rawText = "") {
   }
   return `${greetingWord}${namePart}! \u{1F60A} Bienvenido a *Todo Lapto* \u{1F4BB}. \xBFEn qu\xE9 te podemos colaborar hoy? \xBFBuscas alguna laptop, impresora o accesorio en espec\xEDfico?`;
 }
-function resolveDirectStoreQuestion(rawText, conv) {
+function cleanQueryForStoreCheck(str) {
+  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\[nota de voz[^\]]*\]/gi, " ").replace(/\[audio[^\]]*\]/gi, " ").replace(/\[foto[^\]]*\]/gi, " ").replace(/\[detalles[^\]]*\]/gi, " ").replace(/\[contenido visual[^\]]*\]/gi, " ").replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, " ").replace(/[🎤📷🔍]/g, " ").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
+}
+function isCustomerSellingOrStoreBuyingQuery(text) {
+  const c = cleanQueryForStoreCheck(text);
+  if (!c || c.length > 180) return false;
+  if (/\b(donde|en\s+que\s+lugar)\s+compran\b/i.test(c)) return false;
+  if (/\b(quiero|quisiera|deseo|necesito|voy\s+a|para)\s+comprar\b/i.test(c) && !/\bcompran\b/i.test(c)) {
+    return false;
+  }
+  return /\b(ustedes|uds|todolapto|todo\s*lapto)\s+(me\s+)?compran\b/i.test(c) || /\bme\s+compra[ns]?\b/i.test(c) || /\bcompran\b[\s\S]*\b(articulos?|equipos?|pc|pcs|laptops?|laptos?|computadoras?|impresoras?|monitores?|celulares?|tablets?|piezas?|repuestos?|usad[oa]s?|segunda|cosas?|eso)\b/i.test(
+    c
+  ) || /\b(quiero|les|te)\s+vender(les|te)?\b/i.test(c) || /\b(tengo|vendo)\s+(?:una?|unos?|mi)\s+(?:pc|laptop|lapto|computadora|equipo|articulo|impresora|monitor|tablet)\b/i.test(c) || /\b(reciben|aceptan|toman)\s+(?:equipos?|articulos?|laptops?|pc|computadoras?|impresoras?)\s*(?:usad[oa]s?|como\s+parte\s+de\s+pago|en\s+parte\s+de\s+pago|de\s+cambio)\b/i.test(
+    c
+  ) || /\b(trade[\s-]*in|intercambio\s+de\s+(?:equipos?|laptops?|pc)|cuanto\s+(?:me\s+)?(?:dan|ofrecen|pagan)\s+por\s+(?:mi|una?))\b/i.test(
+    c
+  );
+}
+function resolveDirectStoreQuestion(rawText, conv, quotedText) {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
   const namePart = customerName ? `, ${customerName}` : "";
-  const cleaned = (rawText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[¡!¿?.,;:"'()\-_*~]/g, " ").replace(/\s+/g, " ").trim();
-  if (!cleaned || cleaned.length > 80) return null;
-  if (/\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy)\b/i.test(
-    cleaned
-  ) || /^(abierto|abiertos|horario)\??$/i.test(cleaned)) {
+  const cleanedRaw = cleanQueryForStoreCheck(rawText);
+  const cleanedQuote = cleanQueryForStoreCheck(quotedText || "");
+  const combined = `${cleanedQuote} ${cleanedRaw}`.trim();
+  const candidates = [cleanedRaw, cleanedQuote, combined].filter((c) => Boolean(c) && c.length <= 140);
+  if (candidates.length === 0) return null;
+  if (candidates.some((c) => isCustomerSellingOrStoreBuyingQuery(c))) {
+    return "\u{1F64F} Actualmente no compramos art\xEDculos ni equipos usados, solo vendemos. Pero si buscas algo nuevo o reacondicionado, tenemos muy buenas opciones \u2014 \xBFqu\xE9 tipo de equipo o laptop necesitas?";
+  }
+  const isHoursQuery = candidates.some(
+    (c) => /\b(estan abiertos|estan abierto|ta abierto|tan abierto|abren hoy|a que hora abren|hasta que hora|cual es el horario|que horario tienen|horario de atencion|horario de trabajo|abren los domingos|abren los sabados|esta abierta la tienda|estan laborando|laboran hoy|laboran|estan trabajando|trabajan hoy)\b/i.test(c) || /^(abierto|abiertos|horario|laborando)\??$/i.test(c)
+  );
+  if (isHoursQuery) {
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
     if (rdNow.isOpen) {
-      return `\xA1Claro que s\xED${namePart}! Estamos abiertos ahora mismo en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el env\xEDo directo a tu direcci\xF3n. \u{1F6D2}`;
+      return `\xA1Claro que s\xED${namePart}! Estamos abiertos y laborando ahora mismo en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el env\xEDo directo a tu direcci\xF3n con pago contra entrega en Santo Domingo. \u{1F6D2}`;
     } else {
-      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido por aqu\xED para despacharlo a primera hora. \u{1F6D2}`;
+      return `Actualmente nos encontramos fuera de horario${namePart}. Abrimos ${rdNow.nextOpeningStr} en nuestra tienda f\xEDsica en la **Av. Charles de Gaulle No. 133**. Con gusto te tomamos tu pedido o consulta por aqu\xED para despacharlo a primera hora. \u{1F6D2}`;
     }
   }
-  if (/\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(
-    cleaned
-  ) || /^(ubicacion|direccion)\??$/i.test(cleaned)) {
-    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la estaci\xF3n del telef\xE9rico). \xBFTienes pensado pasar por la tienda hoy o prefieres que coordinemos el env\xEDo a domicilio? \u{1F4CD}`;
+  const isLocationQuery = candidates.some(
+    (c) => /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(c) || /^(ubicacion|direccion)\??$/i.test(c)
+  );
+  if (isLocationQuery) {
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total). \xBFTienes pensado pasar por la tienda hoy o prefieres que coordinemos el env\xEDo a domicilio? \u{1F4CD}`;
   }
-  if (/\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(
-    cleaned
-  ) || /^(envio|envios|delivery)\??$/i.test(cleaned)) {
+  const isShippingQuery = candidates.some(
+    (c) => /\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(c) || /^(envio|envios|delivery)\??$/i.test(c)
+  );
+  if (isShippingQuery) {
     return `S\xED, realizamos env\xEDos a todo el pa\xEDs${namePart}. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. \xBFEn qu\xE9 sector o provincia te encuentras? \u{1F69A}`;
   }
-  if (/\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(
-    cleaned
-  ) || /^(garantia)\??$/i.test(cleaned)) {
-    return `Todos nuestros equipos cuentan con **garant\xEDa certificada de 6 meses por escrito** y soporte t\xE9cnico directo en Todo Lapto. \xBFBuscas alguna laptop o equipo en espec\xEDfico? \u{1F6E1}\uFE0F`;
+  const isWarrantyQuery = candidates.some(
+    (c) => /\b(tienen garantia|cuanto de garantia|que tiempo de garantia|garantia tienen|dan garantia)\b/i.test(c) || /^(garantia)\??$/i.test(c)
+  );
+  if (isWarrantyQuery) {
+    return `Todos nuestros equipos reacondicionados cuentan con **garant\xEDa certificada de 6 meses por escrito** y los nuevos con **1 a\xF1o de garant\xEDa** con soporte t\xE9cnico directo en Todo Lapto. \xBFBuscas alguna laptop o equipo en espec\xEDfico? \u{1F6E1}\uFE0F`;
   }
-  if (/\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(
+  const isPaymentQuery = candidates.some(
+    (c) => /\b(metodos de pago|formas de pago|tienen cuenta|numero de cuenta|cuentas de banco|aceptan transferencia|aceptan tarjeta)\b/i.test(c) || /^(cuenta|cuentas|banco|transferencia)\??$/i.test(c)
+  );
+  if (isPaymentQuery) {
+    return `Aceptamos pago contra entrega (efectivo o transferencia al recibir tu equipo en Santo Domingo) y transferencias bancarias a nuestras cuentas de **Banreservas, Banco Popular y BHD**. \xBFQu\xE9 m\xE9todo te resulta m\xE1s c\xF3modo? \u{1F4B3}`;
+  }
+  return null;
+}
+function extractLatestSentCatalogItems(conv) {
+  const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
+  const laptopsInStock = [...inStock.filter((p) => p.category === "laptop")].sort(
+    (a, b) => a.list_price - b.list_price
+  );
+  if (conv?.messages && conv.messages.length > 0) {
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const m = conv.messages[i];
+      if (m.sender === "customer" || !m.content) continue;
+      if (m.content.includes("*1.* *") && m.content.includes("*2.* *")) {
+        const parsed = [];
+        const lineRegex = /\*(\d{1,2})\.\*\s*\*([^*\n]+)\*/g;
+        let match;
+        while ((match = lineRegex.exec(m.content)) !== null) {
+          const num = parseInt(match[1], 10);
+          const rawName = match[2].trim();
+          const nameLower = rawName.toLowerCase();
+          const matchedProd = inStock.find((p) => p.name.trim().toLowerCase() === nameLower) || inStock.find(
+            (p) => p.name.toLowerCase().includes(nameLower) || nameLower.includes(p.name.toLowerCase())
+          );
+          parsed.push({
+            number: num,
+            name: rawName,
+            product: matchedProd
+          });
+        }
+        const validCount = parsed.filter((it) => Boolean(it.product)).length;
+        const headerCountMatch = m.content.match(/\*\((\d+)\s+(?:modelos|opciones)\s+disponibles/i);
+        const expectedCount = headerCountMatch ? parseInt(headerCountMatch[1], 10) : parsed.length;
+        if (parsed.length >= 2 && validCount >= Math.ceil(parsed.length * 0.8) && parsed.length >= Math.min(expectedCount, 5)) {
+          if (expectedCount > parsed.length && parsed.length < 15) {
+            continue;
+          }
+          return parsed;
+        }
+      }
+    }
+  }
+  return laptopsInStock.map((p, idx) => ({
+    number: idx + 1,
+    name: p.name,
+    product: p
+  }));
+}
+function resolveCatalogItemAndModelReference(conv, rawUserText, quotedText = "") {
+  const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
+  if (inStock.length === 0) return null;
+  const laptopsInStock = [...inStock.filter((p) => p.category === "laptop")].sort(
+    (a, b) => a.list_price - b.list_price
+  );
+  const catalogItems = extractLatestSentCatalogItems(conv);
+  const totalItems = catalogItems.length;
+  const isMultiItemQuotedCatalog = quotedText.includes("*1.*") && quotedText.includes("*2.*") && quotedText.includes("*3.*");
+  const effectiveQuoteForMatch = isMultiItemQuotedCatalog ? "" : quotedText;
+  const isPointerBump = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|aquella|aquel|dime|y\s*esto|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero)\s*[.?!]*$/i.test(
+    (rawUserText || "").trim()
+  );
+  const normUser = normalizePhoneticProductText(
+    isPointerBump && effectiveQuoteForMatch ? `${rawUserText} ${effectiveQuoteForMatch}` : rawUserText || ""
+  ).trim();
+  const lower = normUser.toLowerCase();
+  const accentFreeLower = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const pickCatalogIndex = (idx, label) => {
+    if (idx < 0 || idx >= catalogItems.length) return null;
+    const entry = catalogItems[idx];
+    const prod = entry.product || inStock.find((p) => p.name.toLowerCase() === entry.name.toLowerCase()) || laptopsInStock[idx];
+    if (!prod) return null;
+    return {
+      product: prod,
+      itemNumber: entry.number || idx + 1,
+      totalItems,
+      referenceLabel: label,
+      matchedByPositionOrNumber: true
+    };
+  };
+  if (/\b(la\s*penultima|el\s*penultimo|penultima\s*opcion|penultimo\s*modelo|penultima|penultimo)\b/i.test(accentFreeLower)) {
+    const res = pickCatalogIndex(totalItems - 2, `pen\xFAltima opci\xF3n (#${totalItems - 1})`);
+    if (res) return res;
+  }
+  if (/\b(la\s*ultima|el\s*ultimo|ultima\s*opcion|ultimo\s*modelo|la\s*del\s*final|el\s*del\s*final|ultima|ultimo)\b/i.test(accentFreeLower)) {
+    const res = pickCatalogIndex(totalItems - 1, `\xFAltima opci\xF3n (#${totalItems})`);
+    if (res) return res;
+  }
+  const ordinalPatterns = [
+    { regex: /\b(la\s*primera|el\s*primero|primera\s*opcion|primer\s*modelo|la\s*1ra|la\s*1era|el\s*1ro|la\s*uno|el\s*uno|primera|primero)\b/i, index: 0, label: "primera opci\xF3n (#1)" },
+    { regex: /\b(la\s*segunda|el\s*segundo|segunda\s*opcion|segundo\s*modelo|la\s*2da|el\s*2do|la\s*dos|el\s*dos|segunda|segundo)\b/i, index: 1, label: "segunda opci\xF3n (#2)" },
+    { regex: /\b(la\s*tercera|el\s*tercero|tercera\s*opcion|tercer\s*modelo|la\s*3ra|la\s*3era|el\s*3ro|la\s*tres|el\s*tres|tercera|tercero)\b/i, index: 2, label: "tercera opci\xF3n (#3)" },
+    { regex: /\b(la\s*cuarta|el\s*cuarto|cuarta\s*opcion|cuarto\s*modelo|la\s*4ta|el\s*4to|la\s*cuatro|el\s*cuatro|cuarta|cuarto)\b/i, index: 3, label: "cuarta opci\xF3n (#4)" },
+    { regex: /\b(la\s*quinta|el\s*quinto|quinta\s*opcion|quinto\s*modelo|la\s*5ta|el\s*5to|la\s*cinco|el\s*cinco|quinta|quinto)\b/i, index: 4, label: "quinta opci\xF3n (#5)" },
+    { regex: /\b(la\s*sexta|el\s*sexto|sexta\s*opcion|sexto\s*modelo|la\s*6ta|el\s*6to|la\s*seis|el\s*seis|sexta|sexto)\b/i, index: 5, label: "sexta opci\xF3n (#6)" },
+    { regex: /\b(la\s*septima|el\s*septimo|septima\s*opcion|la\s*7ma|el\s*7mo|la\s*siete|el\s*siete|septima|septimo)\b/i, index: 6, label: "s\xE9ptima opci\xF3n (#7)" },
+    { regex: /\b(la\s*octava|el\s*octavo|octava\s*opcion|la\s*8va|el\s*8vo|la\s*ocho|el\s*ocho|octava|octavo)\b/i, index: 7, label: "octava opci\xF3n (#8)" },
+    { regex: /\b(la\s*novena|el\s*noveno|novena\s*opcion|la\s*9na|el\s*9no|la\s*nueve|el\s*nueve|novena|noveno)\b/i, index: 8, label: "novena opci\xF3n (#9)" },
+    { regex: /\b(la\s*decima|el\s*decimo|decima\s*opcion|la\s*10ma|el\s*10mo|la\s*diez|el\s*diez|decima|decimo)\b/i, index: 9, label: "d\xE9cima opci\xF3n (#10)" }
+  ];
+  for (const ord of ordinalPatterns) {
+    if (ord.regex.test(accentFreeLower)) {
+      const res = pickCatalogIndex(ord.index, ord.label);
+      if (res) return res;
+    }
+  }
+  const standaloneNumMatch = accentFreeLower.match(
+    /^\s*(?:quiero|me\s*gusta|me\s*interesa|dame|apartame|precio\s*de|info\s*de|informacion\s*de)?\s*(?:la|el|opcion|modelo|numero|item|#)?\s*#?(\d{1,2})\s*[.!?]?\s*$/i
+  );
+  const quotedSnippetNumMatch = effectiveQuoteForMatch.match(/^\s*\*(\d{1,2})\.\*\s*\*/);
+  const embeddedNumMatch = standaloneNumMatch || accentFreeLower.match(
+    /\b(?:la|el|opcion|modelo|numero|#)\s*#?(\d{1,2})\b(?!\s*(?:gb|tb|ram|ssd|hdd|pulgadas|mil|k|pesos|dop|generacion|gen|nucleos|meses|anos|unidades|horas|am|pm))/i
+  ) || quotedSnippetNumMatch;
+  if (embeddedNumMatch) {
+    const num = parseInt(embeddedNumMatch[1], 10);
+    const maxLen = Math.max(totalItems, laptopsInStock.length);
+    if (num >= 1 && num <= maxLen) {
+      const byNum = catalogItems.find((it) => it.number === num) || catalogItems[num - 1];
+      const prod = byNum?.product || (byNum ? inStock.find((p) => p.name.toLowerCase() === byNum.name.toLowerCase()) : void 0) || laptopsInStock[num - 1];
+      if (prod) {
+        return {
+          product: prod,
+          itemNumber: num,
+          totalItems: maxLen,
+          referenceLabel: `opci\xF3n #${num}`,
+          matchedByPositionOrNumber: true
+        };
+      }
+    }
+  }
+  const combinedSearch = normalizePhoneticProductText(`${rawUserText} ${effectiveQuoteForMatch}`).toLowerCase();
+  const modelCodeMatches = [];
+  const ignoredTokens = /* @__PURE__ */ new Set([
+    "laptop",
+    "lapto",
+    "notebook",
+    "chrobook",
+    "chromebook",
+    "touch",
+    "pro",
+    "con",
+    "para",
+    "todo",
+    "en",
+    "uno",
+    "impresora",
+    "color",
+    "wifi",
+    "smart",
+    "app",
+    "copia",
+    "escaner",
+    "usb",
+    "type",
+    "sata",
+    "solid",
+    "state",
+    "ssd",
+    "hdd",
+    "ram",
+    "gb",
+    "tb",
+    "negro",
+    "gris",
+    "plata",
+    "azul",
+    "rojo",
+    "blanco",
+    "de",
+    "la",
+    "el",
+    "los",
+    "las",
+    "un",
+    "una",
+    "me",
+    "te",
+    "le",
+    "lo",
+    "se",
+    "es",
+    "al",
+    "del",
+    "por",
+    "sin",
+    "mas",
+    "muy",
+    "eso",
+    "esa"
+  ]);
+  for (const p of inStock) {
+    const pLower = p.name.toLowerCase();
+    const pTokens = pLower.replace(/[^\w0-9\s-]/g, " ").split(/\s+/).filter((t) => (t.length >= 3 || t.length >= 2 && /\d/.test(t)) && !ignoredTokens.has(t));
+    let score = 0;
+    let matchedDistinctCode = false;
+    for (const tk of pTokens) {
+      const escaped = tk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\b${escaped}\\b`, "i").test(combinedSearch)) {
+        const isAlphanumericModel = /\d/.test(tk) && !/^\d+(?:gb|tb|mm|w|v)$/i.test(tk);
+        score += isAlphanumericModel ? 10 : 4;
+        if (isAlphanumericModel) matchedDistinctCode = true;
+      }
+    }
+    if (matchedDistinctCode || score >= 8) {
+      const catEntry = catalogItems.find((it) => it.product?.id === p.id || it.name.toLowerCase() === pLower);
+      modelCodeMatches.push({
+        product: p,
+        score,
+        itemNumber: catEntry?.number
+      });
+    }
+  }
+  if (modelCodeMatches.length > 0) {
+    modelCodeMatches.sort((a, b) => b.score - a.score);
+    const best = modelCodeMatches[0];
+    return {
+      product: best.product,
+      itemNumber: best.itemNumber,
+      totalItems,
+      referenceLabel: best.itemNumber ? `opci\xF3n #${best.itemNumber}` : best.product.name,
+      matchedByPositionOrNumber: false
+    };
+  }
+  if (!effectiveQuoteForMatch && isDiscountInquiry(rawUserText) && conv?.messages && conv.messages.length >= 2) {
+    for (let i = conv.messages.length - 2; i >= Math.max(0, conv.messages.length - 4); i--) {
+      const prevMsg = conv.messages[i];
+      const rawPrevText = (prevMsg.transcription || prevMsg.content || "").trim();
+      const prevText = rawPrevText.replace(/^🎤\s*"?|"?$/g, "").trim();
+      if (!prevText || prevText === "Nota de voz de WhatsApp" || prevText.includes("Cat\xE1logo completo de") || /^([.?!👆⬆️⬇️👉👀]+)$/.test(prevText)) continue;
+      if (prevMsg.sender === "customer") {
+        const prevResolved = resolveCatalogItemAndModelReference(
+          { ...conv, messages: conv.messages.slice(0, i + 1) },
+          prevText,
+          prevMsg.quotedMessage?.text || ""
+        );
+        if (prevResolved) return prevResolved;
+      } else {
+        for (const p of inStock) {
+          if (prevText.toLowerCase().includes(p.name.toLowerCase())) {
+            const catEntry = catalogItems.find((it) => it.product?.id === p.id);
+            return {
+              product: p,
+              itemNumber: catEntry?.number,
+              totalItems,
+              referenceLabel: catEntry?.number ? `opci\xF3n #${catEntry.number}` : p.name,
+              matchedByPositionOrNumber: false
+            };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+function resolveDirectProductSelectionOrDiscountReply(conv, targetCustomerMsg, baseCustomerText) {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const rawQText = (targetCustomerMsg.quotedMessage?.text || "").trim();
+  const qText = rawQText.replace(/^🎤\s*"?|"?$/g, "").trim();
+  const cleanUserText = (baseCustomerText || "").replace(/^🎤\s*"?|"?$/g, "").trim();
+  const isPointerBump = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|aquella|aquel|dime|dime\s*a\s*ver|y\s*esto|y\s*esa|y\s*esta|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero)\s*[.?!]*$/i.test(
+    cleanUserText
+  );
+  if (qText && !isPositionalOrNumberSelection(cleanUserText) && !hasSpecificModelCodeInText(cleanUserText)) {
+    if (resolveDirectStoreQuestion(cleanUserText, conv, qText)) {
+      return null;
+    }
+    const quotedFamily = detectGenericProductFamily(qText);
+    if (quotedFamily && quotedFamily.id !== "laptop" && isPointerBump) {
+      return null;
+    }
+    if (/\b(impresora|impresoras|monitor|monitores|mouse|teclado|cargador|disco|ssd|ram|mochila)\b/i.test(qText) && isPointerBump) {
+      return null;
+    }
+  }
+  const wantsDiscount = isDiscountInquiry(cleanUserText) || Boolean(qText) && isPointerBump && isDiscountInquiry(qText);
+  const resolved = resolveCatalogItemAndModelReference(
+    conv,
+    cleanUserText,
+    qText
+  );
+  if (wantsDiscount) {
+    const cleanPhone = (conv?.customerPhone || "").replace(/\D/g, "");
+    const stdPhone = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+    const effectiveMsgPreview = qText ? `${cleanUserText} (En referencia a: "${qText.slice(0, 100)}")` : cleanUserText;
+    if (resolved?.product) {
+      const p = resolved.product;
+      const numBadge = resolved.itemNumber ? ` (Opci\xF3n #${resolved.itemNumber})` : "";
+      const priceStr = `RD$${p.list_price.toLocaleString()}`;
+      const alertText2 = `\u{1F514} *\u{1F4B0} CLIENTE SOLICITA DESCUENTO \u2014 ASESOR REQUERIDO*
+
+\u{1F464} Cliente: ${conv?.customerName || "WhatsApp"}
+\u{1F4F1} Tel\xE9fono: ${stdPhone || "No disponible"}
+\u{1F4BB} Equipo solicitado: *${p.name}*${numBadge}
+\u{1F4B0} Precio en cat\xE1logo: ${priceStr} (Stock: ${p.virtual_available})
+\u{1F4AC} Mensaje del cliente: "${effectiveMsgPreview}"
+
+\u{1F449} Por favor comun\xEDcate con el cliente para asistirlo con el descuento.`;
+      const reply2 = `\xA1Claro que s\xED${namePart}! \u{1F60A} La *${p.name}* tiene un precio en cat\xE1logo de *${priceStr}* (${p.virtual_available} unidad(es) disponible(s)).
+
+Ya le pas\xE9 tu consulta a uno de nuestros *asesores de ventas* \u{1F468}\u200D\u{1F4BC} para que te escriba por esta misma v\xEDa en unos minutos y te ayude personalmente con el descuento. \xA1Estamos a tu orden! \u{1F64C}`;
+      return { reply: reply2, advisorAlertText: alertText2 };
+    }
+    const alertText = `\u{1F514} *\u{1F4B0} CLIENTE SOLICITA DESCUENTO \u2014 ASESOR REQUERIDO*
+
+\u{1F464} Cliente: ${conv?.customerName || "WhatsApp"}
+\u{1F4F1} Tel\xE9fono: ${stdPhone || "No disponible"}
+\u{1F4AC} Mensaje del cliente: "${effectiveMsgPreview}"
+
+\u{1F449} Por favor comun\xEDcate con el cliente para asistirlo con su solicitud de descuento.`;
+    const reply = `\xA1Claro que s\xED${namePart}! \u{1F60A} Ya le pas\xE9 tu solicitud a uno de nuestros *asesores de ventas* \u{1F468}\u200D\u{1F4BC} para que te atienda personalmente por aqu\xED en unos minutos y te ayude con el descuento. \xA1Estamos a tu orden! \u{1F64C}`;
+    return { reply, advisorAlertText: alertText };
+  }
+  if (resolved?.product && (!isPointerBump || Boolean(qText))) {
+    const p = resolved.product;
+    const condBadge = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
+    const specsLine = p.specsSummary || p.description_sale ? `
+\u2699\uFE0F *Especificaciones:* ${p.specsSummary || p.description_sale}` : "";
+    const useLine = p.useCases && p.useCases.length > 0 ? `
+\u{1F3AF} *Ideal para:* ${p.useCases.join(" \xB7 ")}` : "";
+    const urlLine = p.website_url ? `
+\u{1F517} https://todolapto.com.do${p.website_url}` : "";
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const storeLine = rdNow.isOpen ? `\u{1F4CD} La tenemos disponible ahora mismo en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133* (abiertos hasta las 6:00 PM) o con env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.` : `\u{1F4CD} La tenemos disponible en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133* (abrimos ${rdNow.nextOpeningStr}) y contamos con env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.`;
+    const reply = `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes los detalles de la *${p.name}*:
+
+\u{1F4BB} *${p.name}*
+\u{1F4B0} *Precio:* *RD$${p.list_price.toLocaleString()}* | \u{1F4E6} *Stock:* ${p.virtual_available} unidad(es) disponible(s)
+\u{1F3F7}\uFE0F *Condici\xF3n:* ${condBadge}${specsLine}${useLine}${urlLine}
+
+${storeLine}
+
+\xBFDeseas que te la apartemos para pasar por la tienda o prefieres que coordinemos el env\xEDo a tu direcci\xF3n? \u{1F6D2}`;
+    return { reply };
+  }
+  return null;
+}
+function resolveQuotedMessageDirectReply(conv, targetCustomerMsg) {
+  const quoted = targetCustomerMsg.quotedMessage;
+  if (!quoted) return null;
+  const rawQText = (quoted.text || quoted.aiAnalysis || "").trim();
+  const qText = rawQText.replace(/^🎤\s*"?|"?$/g, "").trim();
+  const rawUserText = (targetCustomerMsg.transcription || targetCustomerMsg.content || "").trim();
+  const userText = rawUserText.replace(/^🎤\s*"?|"?$/g, "").trim();
+  const lowerUser = userText.toLowerCase();
+  const lowerQuote = qText.toLowerCase();
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const isShortOrPointer = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero|dime|dime\s*a\s*ver|y\s*esto)\s*[.?!]*$/i.test(userText);
+  const isStickerOrLaughter = targetCustomerMsg.type === "sticker" || userText.includes("[El cliente envi\xF3 un STICKER") || userText.includes("[cliente envi\xF3 un sticker") || /^(jajaja|jejeje|jaja|jeje|😂|🤣|😹|xd|gracioso|lol)+$/i.test(userText.replace(/\s+/g, ""));
+  if (isStickerOrLaughter) {
+    return `\xA1Jajaja! \u{1F602} \xA1Saludos${namePart}! \xBFEn qu\xE9 te podemos colaborar hoy? Cu\xE9ntanos si buscas alguna laptop, impresora o accesorio y con gusto te pasamos las opciones disponibles de inmediato. \u{1F4BB}\u2728`;
+  }
+  const isConversationalAck = /^(ahhh?\s*bueno|ps\s*mejor|pues\s*mejor|ok|okay|esta\s*bien|ta\s*bien|perfecto|excelente|entendido|listo|de\s*acuerdo|ya\s*veo|comprendo|chevere|así\s*mismo)\b/i.test(lowerUser);
+  if (isConversationalAck && lowerUser.length < 50) {
+    return `\xA1As\xED mismo es! \u{1F44D} Quedamos atentos por aqu\xED para cuando gustes apartar tu pedido o pasar por nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133*. \xA1Siempre a la orden en Todo Lapto${namePart}! \u{1F60A}`;
+  }
+  const isGreetingQuote = lowerQuote.includes("bienvenido a *todo lapto*") || lowerQuote.includes("en qu\xE9 te podemos ayudar hoy");
+  if (isGreetingQuote) {
+    if (isSimpleConversationalMessage(userText, false) || lowerUser.length < 15) {
+      return `\xA1A tu orden${namePart}! \u{1F60A} Dime si andas buscando alguna laptop, impresora, monitor o accesorio o tu presupuesto y te paso las opciones disponibles de inmediato. \u{1F4BB}\u2728`;
+    }
+  }
+  const storeQuotedReply = resolveDirectStoreQuestion(userText, conv, qText);
+  if (storeQuotedReply) {
+    return storeQuotedReply;
+  }
+  if (qText && (isShortOrPointer || lowerUser.length <= 25)) {
+    const quotedCatalogReply = resolveDirectCatalogReply(qText, conv, false);
+    if (quotedCatalogReply) {
+      return quotedCatalogReply;
+    }
+  }
+  const isMultiItemCatalogQuote = lowerQuote.includes("*1.*") && lowerQuote.includes("*2.*") && lowerQuote.includes("*3.*");
+  if (isMultiItemCatalogQuote) {
+    const resolvedFromCatalog = resolveCatalogItemAndModelReference(conv, userText, "");
+    if (resolvedFromCatalog?.product) {
+      const sel = resolveDirectProductSelectionOrDiscountReply(conv, targetCustomerMsg, userText);
+      if (sel?.reply) return sel.reply;
+    }
+    const isShortOrPointer2 = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero|dime)\s*[.?!]*$/i.test(userText);
+    if (isShortOrPointer2) {
+      return `\xA1Claro que s\xED${namePart}! \u{1F60A} \xBFCu\xE1l de los modelos de la lista (por ejemplo *la #1*, *la #8* o *la \xFAltima*) es el que te interesa para pasarte los detalles o apart\xE1rtelo de inmediato? \u{1F4BB}\u{1F6D2}`;
+    }
+    return null;
+  }
+  const resolvedQuotedProd = resolveCatalogItemAndModelReference(conv, userText, qText);
+  if (resolvedQuotedProd?.product) {
+    const matchedProd = resolvedQuotedProd.product;
+    const conditionText = matchedProd.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionada Clase A (Garant\xEDa 6 meses)";
+    const specsLine = matchedProd.specsSummary || matchedProd.description_sale || "";
+    const priceFormatted = `RD$${matchedProd.list_price.toLocaleString()}`;
+    const urlLine = matchedProd.website_url ? `
+\u{1F517} https://todolapto.com.do${matchedProd.website_url}` : "";
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const scheduleSuffix = rdNow.isOpen ? "Estamos abiertos ahora mismo en nuestra tienda f\xEDsica de la *Av. Charles de Gaulle No. 133* hasta las 6:00 PM." : `Nuestra tienda f\xEDsica en la *Av. Charles de Gaulle No. 133* abre ${rdNow.nextOpeningStr}.`;
+    return `\xA1Claro que s\xED${namePart}! \u{1F60A} Con respecto a la *${matchedProd.name}*:
+
+\u{1F4B0} *Precio:* *${priceFormatted}* (${matchedProd.virtual_available} unidad(es) en stock real)
+\u{1F3F7}\uFE0F *Condici\xF3n:* ${conditionText}
+\u2699\uFE0F *Especificaciones:* ${specsLine}${urlLine}
+
+\u{1F3EA} ${scheduleSuffix} Contamos con retiro directo en tienda y servicio de env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.
+
+\xBFDeseas que te la apartemos para pasar a buscarla o prefieres env\xEDo a tu direcci\xF3n? \u{1F6D2}`;
+  }
+  return null;
+}
+function resolveDirectCatalogReply(rawText, conv, hasQuote = false) {
+  if (hasQuote) return null;
+  const cleaned = (rawText || "").trim();
+  if (!cleaned || cleaned.length > 160) return null;
+  if (isCustomerSellingOrStoreBuyingQuery(cleaned)) {
+    return null;
+  }
+  if (isSimpleConversationalMessage(cleaned)) {
+    return null;
+  }
+  if (/\b(apartar|ap[aá]rtame|lo\s*quiero|la\s*quiero|me\s*llevo|comprar|hacer\s*pedido|mi\s*direcci[oó]n|env[ií]amelo|m[aá]ndamelo|calle|sector|avenida|residencial|urbanizaci[oó]n|contra\s*entrega|ya\s*transfer[ií]|comprobante)\b/i.test(
     cleaned
   )) {
-    return `Aceptamos pago contra entrega (efectivo o transferencia al recibir tu equipo en Santo Domingo) y transferencias bancarias a nuestras cuentas de **Banreservas, Banco Popular y BHD**. \xBFQu\xE9 m\xE9todo te resulta m\xE1s c\xF3modo? \u{1F4B3}`;
+    return null;
+  }
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const highlight = getRelevantProductsHighlight(cleaned, "");
+  if (!highlight) return null;
+  const catalogBlock = highlight.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+  if (catalogBlock && catalogBlock[1]?.trim()) {
+    return catalogBlock[1].trim();
+  }
+  const markerIdx = highlight.indexOf("):\n\n");
+  if (markerIdx !== -1) {
+    const listPart = highlight.slice(markerIdx + 4).trim();
+    if (listPart) {
+      return `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes las opciones disponibles en stock real en *Todo Lapto*:
+
+${listPart}`;
+    }
+  }
+  const directMatchMarker = "encontrados) ===\n";
+  const directIdx = highlight.indexOf(directMatchMarker);
+  if (directIdx !== -1) {
+    const listPart = highlight.slice(directIdx + directMatchMarker.length).trim();
+    if (listPart) {
+      return `\xA1Claro que s\xED${namePart}! \u{1F60A} Aqu\xED tienes las opciones disponibles en stock real en *Todo Lapto*:
+
+${listPart}
+
+*\xBFCu\xE1l de estas opciones te interesa? Te lo aparto ahora mismo para entrega o retiro en tienda.* \u{1F6D2}`;
+    }
+  }
+  if (highlight.includes("=== \u26A0\uFE0F SIN STOCK ACTUAL PARA")) {
+    const genericFamily = detectGenericProductFamily(cleaned.toLowerCase());
+    const famLabel = genericFamily?.label || "ese producto";
+    return `Por el momento no tenemos unidades disponibles de *${famLabel}* en stock f\xEDsico${namePart}. \xBFBuscas alg\xFAn otro equipo, laptop o accesorio en el que te podamos colaborar hoy? \u{1F60A}`;
   }
   return null;
 }
@@ -7918,8 +10834,11 @@ function buildMasterSalesSystemInstruction(conv, latestQuery = "") {
   const rawTemplate = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
   const cleanPhone = (conv?.customerPhone || "").replace(/\D/g, "");
   const detectedPhone = cleanPhone.length >= 10 && cleanPhone.length <= 13 ? cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone : "NO DISPONIBLE";
-  const quotedContext = lastMsg?.quotedMessage?.text || "";
-  const recentConversationText = (conv?.messages || []).filter((m) => m.sender === "customer").slice(-6).reverse().map((m) => m.transcription || m.content || "").join("\n");
+  const quotedContext = [
+    lastMsg?.quotedMessage?.text || "",
+    lastMsg?.quotedMessage?.aiAnalysis || ""
+  ].filter(Boolean).join("\n");
+  const recentConversationText = (conv?.messages || []).filter((m) => m.sender === "customer").slice(-6).reverse().map((m) => [m.transcription || m.content || "", m.aiAnalysis || ""].filter(Boolean).join(" ")).join("\n");
   const relevantHighlight = getRelevantProductsHighlight(latestQuery, quotedContext, recentConversationText);
   const inStock = products.filter((p) => p.virtual_available > 0 && p.list_price > 1);
   const inStockCount = inStock.length;
@@ -7964,12 +10883,13 @@ Si el cliente expresa intenci\xF3n de comprar, apartar, cotizar o hacer un pedid
 - Pedidos previos en CRM: ${customerOrders.length > 0 ? customerOrders.map((o) => `${o.id} (${o.products} - RD$${o.totalAmount.toLocaleString()} - Estado: ${o.status})`).join("; ") : "Ninguno a\xFAn"}${orderPhoneValidationDirective}`;
   const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
-  const filledInstruction = rdTimePromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + crmCustomerContext;
+  const statusPromptBlock = formatActiveWhatsAppStatusesPrompt();
+  const filledInstruction = rdTimePromptBlock + "\n\n" + statusPromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + crmCustomerContext;
   return filledInstruction;
 }
 function buildChatHistoryTurns(conv) {
   if (!conv || !conv.messages || conv.messages.length === 0) return [];
-  const recent = conv.messages.slice(-18);
+  const recent = conv.messages.slice(-8);
   const turns = [];
   for (const m of recent) {
     if (isInternalOrNoiseContent(m.content)) continue;
@@ -7989,8 +10909,19 @@ function buildChatHistoryTurns(conv) {
     if (role === "assistant" && text.includes("Cat\xE1logo completo de laptops") && text.includes("USB-4 TASBEL HUB")) {
       continue;
     }
-    if (role === "assistant" && text.includes("Cat\xE1logo completo de laptops") && text.length > 1200) {
-      text = text.slice(0, 400) + "\n... [Cat\xE1logo completo de laptops enviado previamente]";
+    if (role === "assistant" && (text.includes("Cat\xE1logo completo") || text.includes("cat\xE1logo completo") || text.includes("opciones disponibles")) && text.length > 600) {
+      const compactLines = [];
+      const itemRegex = /\*(\d{1,2})\.\*\s*\*([^*\n]+)\*[\s\S]*?(RD\$[\d,]+)/g;
+      let mItem;
+      while ((mItem = itemRegex.exec(text)) !== null) {
+        compactLines.push(`*${mItem[1]}.* ${mItem[2].trim()} (${mItem[3]})`);
+      }
+      if (compactLines.length >= 2) {
+        text = `[Cat\xE1logo numerado enviado previamente al cliente (${compactLines.length} opciones, donde #1 es la primera y #${compactLines.length} es la \xFAltima)]:
+` + compactLines.join("\n");
+      } else {
+        text = text.slice(0, 600) + "\n... [Cat\xE1logo de opciones enviado previamente al cliente]";
+      }
     }
     if (turns.length > 0 && turns[turns.length - 1].role === role) {
       turns[turns.length - 1].content += `
@@ -8144,36 +11075,86 @@ async function processAndExecuteCrmTools(rawAiResponse, conv) {
   }
   return { cleanText, toolsExecuted };
 }
-async function triggerSalesBotReplyForConversation(conv, triggerSource) {
+async function triggerSalesBotReplyForConversation(conv, triggerSource, correlationId, ownerId) {
+  if (isServerShuttingDown) {
+    return { success: false, error: "Servidor en proceso de apagado controlado (graceful shutdown)" };
+  }
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
     console.log(`\u{1F6E1}\uFE0F [Bot bloqueado]: Se ignor\xF3 generaci\xF3n autom\xE1tica para grupo (${conv.sessionId})`);
-    return { success: false, error: "Los grupos de WhatsApp est\xE1n expresamente excluidos de las respuestas del bot" };
+    return {
+      success: false,
+      skipped: true,
+      error: "Los grupos de WhatsApp est\xE1n expresamente excluidos de las respuestas del bot"
+    };
   }
   const initialLastMsg = conv.messages[conv.messages.length - 1];
+  const initialMsgId = normalizeMsgIdKey(initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "");
+  const effCorrelationId = correlationId || generateCorrelationId(initialMsgId);
+  const effOwnerId = ownerId || `${triggerSource}-${process.pid}-${Date.now()}`;
   const initialSkip = shouldSkipBotReply(conv, initialLastMsg, triggerSource);
   if (initialSkip.skip) {
-    return { success: false, error: initialSkip.reason };
+    return { success: false, skipped: true, error: initialSkip.reason, correlationId: effCorrelationId };
   }
-  if (!acquireBotLock(conv, triggerSource)) {
-    return { success: false, error: "Ya se est\xE1 generando una respuesta para este chat" };
+  if (!acquireBotLock(conv, triggerSource, effOwnerId)) {
+    return {
+      success: false,
+      error: "Ya se est\xE1 generando una respuesta para este chat (bloqueo activo)",
+      correlationId: effCorrelationId
+    };
   }
+  recordDiagnosticStage({
+    correlationId: effCorrelationId,
+    stage: "LOCK_ACQUIRED",
+    module: "concurrency",
+    customer: conv.customerName,
+    conversationId: conv.sessionId,
+    messageId: initialMsgId,
+    details: `Bloqueo exclusivo adquirido por ${effOwnerId} (${triggerSource})`
+  });
   const startTime = Date.now();
-  const initialMsgId = normalizeMsgIdKey(initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "");
+  const contactKeys = getConversationContactKeys(conv);
   if (initialMsgId && triggerSource !== "manual_crm_trigger") {
-    const contactKeys = getConversationContactKeys(conv);
-    markMessageIdProcessed(initialMsgId, contactKeys);
+    markMessageIdProcessed(initialMsgId, contactKeys, {
+      correlationId: effCorrelationId,
+      conversationId: conv.sessionId,
+      responseSent: false
+    });
   }
+  const previousCorrelationContext = activeCorrelationIdContext;
+  activeCorrelationIdContext = effCorrelationId;
   try {
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || "";
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting = initialLastMsg?.type === "text" && !initialLastMsg?.quotedMessage && isSimpleConversationalMessage(initialText, initialHasQuote);
-    const typingPresenceMs = isInitialSimpleGreeting ? 3500 : 5500;
+    const typingPresenceMs = 400;
     sendEvolutionTypingPresence(conv, typingPresenceMs).catch(() => {
     });
-    if (products.length === 0 && !isInitialSimpleGreeting) {
-      await syncOdooInventory();
+    if (!isInitialSimpleGreeting) {
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: "ODOO_REQUEST_STARTED",
+        service: "Odoo ERP",
+        module: "odoo",
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        details: products.length === 0 ? "Sincronizando inventario inicial de Odoo ERP" : `Consultando inventario en memoria (${products.length} productos activos)`
+      });
+      if (products.length === 0) {
+        await syncOdooInventory();
+      }
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: "ODOO_REQUEST_COMPLETED",
+        service: "Odoo ERP",
+        module: "odoo",
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        details: `Inventario verificado (${products.length} productos disponibles)`
+      });
     }
-    const needsHistoryHydration = !conv.messages || conv.messages.length === 0 || Boolean(initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text);
+    const needsHistoryHydration = !conv.messages || conv.messages.length < 3 || Boolean(initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text);
     if (needsHistoryHydration) {
       await loadEvolutionMessagesForChat(conv.sessionId);
     } else if (!conv.messagesLoaded && !isInitialSimpleGreeting) {
@@ -8182,73 +11163,291 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource) {
     }
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (!lastMsg) {
-      return { success: false, error: "Sin mensajes en la conversaci\xF3n" };
+      return { success: false, skipped: true, error: "Sin mensajes en la conversaci\xF3n", correlationId: effCorrelationId };
     }
     if (lastMsg.sender !== "customer" && triggerSource !== "manual_crm_trigger") {
-      return { success: false, error: "El \xFAltimo mensaje ya fue respondido por el equipo o el bot" };
+      return {
+        success: false,
+        skipped: true,
+        error: "El \xFAltimo mensaje ya fue respondido por el equipo o el bot",
+        correlationId: effCorrelationId
+      };
     }
     const targetCustomerMsg = lastMsg.sender === "customer" ? lastMsg : [...conv.messages].reverse().find((m) => m.sender === "customer") || lastMsg;
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
     if (targetCustomerMsg.type === "audio" && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.transcription) {
-      try {
-        const media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false);
-        if (media) {
-          const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
-          if (trText) {
-            targetCustomerMsg.transcription = trText;
-            targetCustomerMsg.content = `\u{1F3A4} "${trText}"`;
-            transcriptionsByMsgId.set(targetCustomerMsg.evolutionMessageId, trText);
-          }
-        }
-      } catch (e) {
-        console.log("[Auto-Transcribe Audio Info]:", e?.message || e);
+      console.log(`\u{1F3A4} [Audio Processing]: Descargando audio para transcribir con Whisper (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+      let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+      if (!media) {
+        await new Promise((r) => setTimeout(r, 800));
+        media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+      }
+      if (!media || !media.base64) {
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: "MEDIA_DOWNLOADED",
+          service: "Evolution API",
+          module: "media",
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          success: false,
+          severity: "HIGH",
+          details: "No se pudo descargar el archivo de audio desde Evolution API"
+        });
+        throw new Error("No se pudo descargar la nota de voz desde Evolution API para transcribirla");
+      }
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: "MEDIA_DOWNLOADED",
+        service: "Evolution API",
+        module: "media",
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: targetCustomerMsg.evolutionMessageId,
+        details: `Audio descargado (${media.mimetype})`
+      });
+      const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
+      if (trText) {
+        targetCustomerMsg.transcription = trText;
+        targetCustomerMsg.content = `\u{1F3A4} "${trText}"`;
+        saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
+        conv.lastMessagePreview = `\u{1F3A4} "${trText}"`;
+        broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: "MEDIA_TRANSCRIBED",
+          service: "AI Engine",
+          module: "whisper",
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`
+        });
+        console.log(`\u2705 [Audio Whisper Transcrito]: "${trText}"`);
       }
     }
+    if (targetCustomerMsg.quotedMessage && targetCustomerMsg.quotedMessage.id && (!targetCustomerMsg.quotedMessage.text || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz citada" || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz de WhatsApp" || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz anterior")) {
+      const qCleanId = targetCustomerMsg.quotedMessage.id.replace(/^evo-/, "");
+      let qTr = transcriptionsByMsgId.get(qCleanId) || transcriptionsByMsgId.get(`evo-${qCleanId}`);
+      if (!qTr) {
+        const parentInConv = conv.messages.find(
+          (m) => m.evolutionMessageId === qCleanId || m.id === `evo-${qCleanId}` || m.id === qCleanId
+        );
+        if (parentInConv?.transcription) {
+          qTr = parentInConv.transcription;
+        }
+      }
+      if (!qTr) {
+        try {
+          const qMedia = await fetchMediaBase64FromEvolution(qCleanId, false, conv.sessionId);
+          if (qMedia?.base64) {
+            qTr = await transcribeAudioWithOpenAI(qMedia.base64, qMedia.mimetype);
+            if (qTr) {
+              saveTranscriptionForId(qCleanId, qTr);
+            }
+          }
+        } catch {
+        }
+      }
+      if (qTr) {
+        targetCustomerMsg.quotedMessage.text = `\u{1F3A4} "${qTr}"`;
+        targetCustomerMsg.quotedMessage.type = "audio";
+        saveQuotedMessageForId(targetCustomerMsg.evolutionMessageId || targetCustomerMsg.id, targetCustomerMsg.quotedMessage);
+        broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+      }
+    }
+    let detectedImageQuery = "";
     if (targetCustomerMsg.type === "image" && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.aiAnalysis) {
       try {
-        const media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false);
-        if (media) {
-          const analysis = await analyzeImageWithOpenAI(
-            media.base64,
-            media.mimetype,
-            "Analiza esta imagen enviada por el cliente a Todo Lapto. Indica si es un comprobante de pago (banco, monto, referencia), una foto de laptop/producto, o un equipo para reparaci\xF3n, y describe todos los detalles visibles."
-          );
-          if (analysis) {
-            targetCustomerMsg.aiAnalysis = analysis;
-            aiAnalysisByMsgId.set(targetCustomerMsg.evolutionMessageId, analysis);
+        console.log(`\u{1F4F7} [Image Processing]: Descargando imagen para clasificar con Visi\xF3n (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+        let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        if (!media) {
+          await new Promise((r) => setTimeout(r, 800));
+          media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+        }
+        if (media && media.base64) {
+          recordDiagnosticStage({
+            correlationId: effCorrelationId,
+            stage: "MEDIA_DOWNLOADED",
+            service: "Evolution API",
+            module: "media",
+            customer: conv.customerName,
+            conversationId: conv.sessionId,
+            messageId: targetCustomerMsg.evolutionMessageId,
+            details: `Imagen descargada (${media.mimetype})`
+          });
+          const visionResult = await analyzeCustomerImageWithVision(media.base64, media.mimetype);
+          targetCustomerMsg.aiAnalysis = visionResult.interpretedText;
+          aiAnalysisByMsgId.set(targetCustomerMsg.evolutionMessageId, visionResult.interpretedText);
+          if (visionResult.suggestedQuery) {
+            detectedImageQuery = visionResult.suggestedQuery;
           }
+          recordDiagnosticStage({
+            correlationId: effCorrelationId,
+            stage: "MEDIA_TRANSCRIBED",
+            service: "AI Engine",
+            module: "vision",
+            customer: conv.customerName,
+            conversationId: conv.sessionId,
+            messageId: targetCustomerMsg.evolutionMessageId,
+            details: `Imagen analizada (${visionResult.imageType}): ${visionResult.interpretedText.slice(0, 120)}`
+          });
+          broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+          console.log(`\u2705 [Image Vision (${visionResult.imageType})]: ${visionResult.interpretedText}`);
         }
       } catch (e) {
-        console.log("[Auto-Analyze Image Info]:", e?.message || e);
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: "MEDIA_TRANSCRIBED",
+          service: "AI Engine",
+          module: "vision",
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          success: false,
+          severity: "HIGH",
+          details: `Error al analizar imagen: ${e?.message || e}`
+        });
       }
     }
-    const baseCustomerText = targetCustomerMsg.transcription || (targetCustomerMsg.aiAnalysis ? `${targetCustomerMsg.content || "\u{1F4F7} [Imagen enviada]"}
-[Contenido de la imagen: ${targetCustomerMsg.aiAnalysis}]` : targetCustomerMsg.content) || "Hola, me gustar\xEDa recibir informaci\xF3n.";
-    const hasQuote = Boolean(targetCustomerMsg.quotedMessage?.text?.trim());
-    const isSimpleMsg = isSimpleConversationalMessage(baseCustomerText, hasQuote);
-    const quotedBlock = hasQuote ? `
+    if (targetCustomerMsg.quotedMessage) {
+      const qId = targetCustomerMsg.quotedMessage.id;
+      const isQuotedIdInChatHistory = qId ? conv.messages.some(
+        (m) => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.id === `evo-${qId}`)
+      ) : true;
+      if (!targetCustomerMsg.quotedMessage.isStatusReply && !isQuotedIdInChatHistory && (targetCustomerMsg.quotedMessage.type === "image" || targetCustomerMsg.quotedMessage.type === "video")) {
+        targetCustomerMsg.quotedMessage.isStatusReply = true;
+        targetCustomerMsg.quotedMessage.author = "Estado de WhatsApp de Todo Lapto (Story)";
+      }
+      if (!targetCustomerMsg.quotedMessage.aiAnalysis && (targetCustomerMsg.quotedMessage.mediaBase64 || targetCustomerMsg.quotedMessage.isStatusReply || targetCustomerMsg.quotedMessage.type === "image" || targetCustomerMsg.quotedMessage.type === "video")) {
+        try {
+          let qBase64 = targetCustomerMsg.quotedMessage.mediaBase64;
+          let qMime = targetCustomerMsg.quotedMessage.mediaMimeType || "image/jpeg";
+          if (!qBase64 && qId) {
+            const fetchedQuoted = await fetchMediaBase64FromEvolution(
+              qId,
+              false,
+              targetCustomerMsg.quotedMessage.isStatusReply ? "status@broadcast" : conv.sessionId
+            );
+            if (fetchedQuoted?.base64) {
+              qBase64 = fetchedQuoted.base64;
+              qMime = fetchedQuoted.mimetype || "image/jpeg";
+            }
+          }
+          if (qBase64) {
+            console.log(`\u{1F4F1} [Status/Quoted Vision]: Analizando imagen del Estado de WhatsApp con GPT-4o Vision...`);
+            const statusVisionPrompt = `Analiza esta imagen de un Estado de WhatsApp (Story) o publicaci\xF3n de Todo Lapto sobre la cual el cliente est\xE1 preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
+Extrae con m\xE1xima precisi\xF3n:
+1. Qu\xE9 producto, laptop, marca y modelo exacto (ej. Dell Latitude, Lenovo ThinkPad, HP ProBook, impresora, monitor, etc.) aparece en el estado.
+2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoci\xF3n escrita dentro de la imagen o flyer del estado.
+3. Si es una foto real sin texto, describe la marca, l\xEDnea, color y caracter\xEDsticas visibles del equipo.`;
+            const qAnalysis = await analyzeImageWithOpenAI(qBase64, qMime, statusVisionPrompt);
+            if (qAnalysis) {
+              targetCustomerMsg.quotedMessage.aiAnalysis = qAnalysis;
+              broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+              console.log(`\u2705 [Status Vision Analizada]: ${qAnalysis.slice(0, 140)}...`);
+            }
+          }
+        } catch (e) {
+          console.log("[Quoted/Status Vision Info]:", e?.message || e);
+        }
+      }
+    }
+    const isStatusReply = Boolean(targetCustomerMsg.quotedMessage?.isStatusReply);
+    const mentionsStatus = isWhatsAppStatusInquiry(
+      targetCustomerMsg.transcription || targetCustomerMsg.content || "",
+      isStatusReply
+    );
+    let baseCustomerText = "";
+    if (targetCustomerMsg.type === "audio") {
+      baseCustomerText = targetCustomerMsg.transcription ? targetCustomerMsg.transcription : targetCustomerMsg.quotedMessage?.text || targetCustomerMsg.quotedMessage?.aiAnalysis ? "El cliente envi\xF3 un audio sobre la consulta citada" : "Hola, buenas";
+    } else if (targetCustomerMsg.type === "image") {
+      const caption = targetCustomerMsg.content && targetCustomerMsg.content !== "\u{1F4F7} Foto" ? targetCustomerMsg.content : "";
+      baseCustomerText = targetCustomerMsg.aiAnalysis ? caption ? `${caption}
+${targetCustomerMsg.aiAnalysis}` : targetCustomerMsg.aiAnalysis : caption || "El cliente envi\xF3 una imagen adjunta";
+    } else {
+      baseCustomerText = targetCustomerMsg.content || "Hola, me gustar\xEDa recibir informaci\xF3n.";
+    }
+    const hasQuote = Boolean(
+      targetCustomerMsg.quotedMessage?.text?.trim() || targetCustomerMsg.quotedMessage?.aiAnalysis?.trim()
+    );
+    const isSimpleMsg = !isStatusReply && !mentionsStatus && targetCustomerMsg.type !== "audio" && targetCustomerMsg.type !== "image" && isSimpleConversationalMessage(baseCustomerText, hasQuote);
+    let quotedBlock = "";
+    if (isStatusReply) {
+      const statusText = targetCustomerMsg.quotedMessage?.text || "\u{1F4F7} [Foto / Oferta publicada en el Estado de WhatsApp de Todo Lapto]";
+      const statusVisionDetail = targetCustomerMsg.quotedMessage?.aiAnalysis ? `
+\u{1F50D} [Contenido visual detectado por IA en la imagen/flyer del Estado]:
+${targetCustomerMsg.quotedMessage.aiAnalysis}
+` : "";
+      quotedBlock = `
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F4CC} [ATENCI\xD3N M\xC1XIMA \u2014 EL CLIENTE EST\xC1 PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP (STORY) DE TODO LAPTO]
+El cliente vio un Estado de WhatsApp subido por Todo Lapto y escribi\xF3 su pregunta directamente desde ese estado (en vez de escribir sin contexto en el chat).
+
+\u{1F4C4} Texto / pie de foto del Estado al que responde el cliente:
+"""
+${statusText}
+"""${statusVisionDetail}
+\u{1F4AC} Pregunta o mensaje del cliente sobre ESTE estado:
+"${baseCustomerText}"
+
+\u{1F3AF} INSTRUCCI\xD3N OBLIGATORIA PARA CONTESTAR EN BASE A LO QUE PREGUNTA EL CLIENTE DE ESE ESTADO:
+1. Contesta DIRECTAMENTE a lo que el cliente est\xE1 preguntando ("${baseCustomerText}") sobre el equipo o promoci\xF3n de ese estado:
+   - Si pregunta por el precio ("\xBFPrecio?", "\xBFCu\xE1nto cuesta?", "\xBFEn cu\xE1nto sale?", "Info"): ind\xEDcale el precio exacto en RD$, el modelo y las especificaciones clave del equipo del estado (cruz\xE1ndolo con el inventario en tiempo real o los estados activos).
+   - Si pregunta si est\xE1 disponible ("\xBFTodav\xEDa la tienen?", "\xBFDisponible?"): conf\xEDrmale disponibilidad inmediata en stock de ese equipo del estado.
+   - Si hace una pregunta espec\xEDfica sobre el equipo del estado ("\xBFCu\xE1nta RAM tiene?", "\xBFEs t\xE1ctil?", "\xBFTiene garant\xEDa?", "\xBFHacen env\xEDo?"): responde exactamente esa pregunta sobre el equipo del estado.
+2. NO env\xEDes el cat\xE1logo completo de 38 laptops cuando el cliente est\xE1 preguntando por el equipo espec\xEDfico de un estado; enf\xF3cate en el producto del estado por el que pregunt\xF3.
+3. Cierra de forma cordial ofreciendo retiro en nuestra tienda f\xEDsica de la Av. Charles de Gaulle #133 o env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+`;
+    } else if (mentionsStatus) {
+      quotedBlock = `
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F4F1} [ATENCI\xD3N \u2014 EL CLIENTE PREGUNTA POR UN ESTADO DE WHATSAPP / HISTORIA SUBIDA HOY]
+El cliente menciona que vio un estado o publicaci\xF3n de Todo Lapto ("${baseCustomerText}").
+Consulta la lista de ESTADOS DE WHATSAPP ACTIVOS inyectada en tu instrucci\xF3n del sistema:
+- Si se refiere a uno de los modelos publicados en el estado de hoy, responde directamente a lo que pregunta sobre ese modelo con su precio y stock.
+- Si no especific\xF3 cu\xE1l de las opciones vio, menci\xF3nale brevemente los modelos destacados del estado de hoy o p\xEDdele que te responda directamente desde el estado o env\xEDe captura \u{1F4F8}.
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+`;
+    } else if (hasQuote) {
+      const quotedVisionDetail = targetCustomerMsg.quotedMessage?.aiAnalysis ? `
+\u{1F50D} [Contenido visual de la imagen citada]:
+${targetCustomerMsg.quotedMessage.aiAnalysis}
+` : "";
+      quotedBlock = `
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 \u{1F4CC} [ATENCI\xD3N M\xC1XIMA \u2014 EL CLIENTE EST\xC1 CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACI\xD3N]
 Autor del mensaje citado: ${targetCustomerMsg.quotedMessage.author || "Todo Lapto"}
 Contenido del mensaje anterior que el cliente est\xE1 citando:
 """
-${targetCustomerMsg.quotedMessage.text}
-"""
-
+${targetCustomerMsg.quotedMessage.text || "\u{1F4F7} [Imagen citada]"}
+"""${quotedVisionDetail}
 Mensaje actual del cliente sobre esta cita anterior:
 "${baseCustomerText}"
 
 \u26A0\uFE0F REGLAS OBLIGATORIAS PARA ESTA CITA:
-1. El cliente pregunta o se refiere a lo conversado anteriormente (la visita acordada a la tienda f\xEDsica de la Charles de Gaulle No. 133 o las opciones de laptops). NO est\xE1 citando un error ni pidiendo un cat\xE1logo nuevo.
-2. EST\xC1 ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CAT\xC1LOGO COMPLETO AQU\xCD.
-3. Responde de forma c\xE1lida, humana y concisa (m\xE1ximo 2 a 4 l\xEDneas):
-   - Confirma de inmediato que s\xED recuerdas: "\xA1Claro que s\xED, ${conv.customerName}! Recuerdo perfectamente [lo que conversamos sobre tu visita a la tienda / las opciones de laptops que te mostr\xE9]."
-   - Confirma que las opciones siguen disponibles en nuestra tienda de la Av. Charles de Gaulle No. 133.
-   - Haz una pregunta directa para cerrar o coordinar: "\xBFTienes pensado pasar hoy por la tienda para apartarte el equipo, o prefieres que coordinemos el env\xEDo directo a tu direcci\xF3n?"
-4. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa informaci\xF3n...", pedir que repitan lo dicho, o enviar mensajes evasivos. Tienes todo el contexto citado e inventario en tiempo real.
+1. Toma como referencia TANTO el mensaje citado como el mensaje nuevo del cliente (el motivo por el que lo cit\xF3: "${baseCustomerText}"). Responde combinando ambos de forma directa y natural.
+2. SI EL MENSAJE CITADO ES UNA PREGUNTA OPERATIVA (ej. "\xBFEst\xE1n laborando?", "\xBFAbren hoy?", "\xBFCu\xE1l es el horario?", "\xBFD\xF3nde est\xE1n ubicados?", "\xBFHacen env\xEDos?", "\xBFTienen garant\xEDa?"): Responde DIRECTA y EXACTAMENTE a esa pregunta citada informando el estado de la tienda f\xEDsica en la Av. Charles de Gaulle #133. EST\xC1 TERMINANTEMENTE PROHIBIDO enviar cat\xE1logos o listas de productos cuando el cliente cita una pregunta operativa.
+3. SI EL MENSAJE CITADO O EL NUEVO ES UNA NOTA DE VOZ O IMAGEN: Interpreta su contenido junto con la cita y responde directo al punto. Si la nota de voz fue corta o solo envi\xF3 "?" / ".", atiende directamente la consulta o pregunta citada.
+4. SI CITA UN PRODUCTO O LAPTOP: Confirma precio, stock y specs de ese producto citado y responde al motivo de su mensaje. EST\xC1 ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CAT\xC1LOGO COMPLETO AQU\xCD.
+5. TONO 100% HUMANO Y NATURAL: Responde exactamente como una persona normal atendiendo por WhatsApp (c\xE1lido, directo y conciso). EST\xC1 TERMINANTEMENTE PROHIBIDO decir frases rob\xF3ticas o de sistema como "Reconozco tus mensajes y notas de voz citadas", "Reconozco tu mensaje citado", "Vi que citaste", "Seg\xFAn tu nota de voz citada" o mencionar que eres un bot que reconoce audios o citas.
+6. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa informaci\xF3n...", pedir que repitan lo dicho, o enviar mensajes evasivos. Tienes todo el contexto citado e inventario en tiempo real.
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+`;
+    }
+    const quotedContentStr = targetCustomerMsg.quotedMessage?.text || targetCustomerMsg.quotedMessage?.aiAnalysis || "";
+    const quotedParticipantStr = targetCustomerMsg.quotedMessage?.author || "";
+    const n8nContextBlock = hasQuote || isStatusReply ? `\u{1F4CB} [DATOS NORMALIZADOS DE LA ENTRADA (PARIDAD N8N)]:
+- chat_input: "${baseCustomerText}"
+- has_quoted_message: ${hasQuote || isStatusReply}
+- quoted_message_content: "${quotedContentStr}"
+- quoted_participant: "${quotedParticipantStr}"
+
 ` : "";
-    const customerMessageText = quotedBlock ? `${quotedBlock}
-Consulta del cliente: "${baseCustomerText}"` : baseCustomerText;
+    const customerMessageText = quotedBlock ? `${n8nContextBlock}${quotedBlock}
+Consulta del cliente: "${baseCustomerText}"` : `${n8nContextBlock}${baseCustomerText}`;
     const systemInstruction = buildMasterSalesSystemInstruction(conv, customerMessageText);
     const fullHistoryTurns = buildChatHistoryTurns(conv);
     if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === "user") {
@@ -8256,7 +11455,7 @@ Consulta del cliente: "${baseCustomerText}"` : baseCustomerText;
     }
     const historyTurns = isSimpleMsg ? fullHistoryTurns.slice(-4) : fullHistoryTurns;
     console.log(
-      `\u{1F916} [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? "S\xCD" : "NO"}" | Motor=OpenAI (${appConfig.aiProvider?.model || "gpt-4o-mini"})`
+      `\u{1F916} [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? "S\xCD" : "NO"}" | Motor=OpenAI (${appConfig.aiProvider?.model || "gpt-4o-mini"}) | Corr=${effCorrelationId}`
     );
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
     const liveTimePromptNotice = `[\u{1F552} HORA OFICIAL EN REP\xDABLICA DOMINICANA (AMERICA/SANTO_DOMINGO UTC-4)]:
@@ -8283,8 +11482,53 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     let toolsExecuted = [];
     let providerUsed = "openai";
     let modelUsed = appConfig.aiProvider?.model || "gpt-4o-mini";
-    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv);
-    if (storeAnswer) {
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "AI_REQUEST_STARTED",
+      service: "AI Engine",
+      module: "openai",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Generando respuesta para: "${baseCustomerText.slice(0, 100)}"`
+    });
+    const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+      conv,
+      targetCustomerMsg,
+      baseCustomerText
+    );
+    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+    const directQuotedReply = hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
+    const genericFamily = detectGenericProductFamily(baseCustomerText);
+    const catalogBlockMatch = systemInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) || (genericFamily ? getRelevantProductsHighlight(baseCustomerText, targetCustomerMsg.quotedMessage?.text || "", "").match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) : null);
+    const isGenericCategoryInquiry = !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && (Boolean(genericFamily) || /\b(lapto|laptops|laptop|computadora|computadoras|pc|portatil|portatiles|impresora|impresoras|mouse|raton|ratones|teclado|teclados|monitor|monitores|pantalla|pantallas|bocina|bocinas|audifono|audifonos|tablet|tablets|cargador|cargadores|disco|discos|ssd|ram|mochila|mochilas|router|repetidor|tienen|cuales|catalogo|lista)\b/i.test(
+      baseCustomerText
+    ));
+    if (directSelectionOrDiscount) {
+      aiReply = directSelectionOrDiscount.reply;
+      providerUsed = "openai";
+      modelUsed = directSelectionOrDiscount.advisorAlertText ? "discount-advisor-escalation" : "catalog-selection-engine";
+      if (directSelectionOrDiscount.advisorAlertText) {
+        toolsExecuted = ["notificar_equipo"];
+        sendEvolutionMessage(
+          appConfig.evolution.teamPhone,
+          directSelectionOrDiscount.advisorAlertText
+        ).catch(() => {
+        });
+      }
+    } else if (directQuotedReply) {
+      aiReply = directQuotedReply;
+      providerUsed = "openai";
+      modelUsed = "quoted-context-engine";
+    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
+      const fullCatalog = catalogBlockMatch[1].trim();
+      aiReply = storeAnswer ? `${storeAnswer}
+
+${fullCatalog}` : fullCatalog;
+      providerUsed = "openai";
+      modelUsed = "full-catalog-engine";
+    } else if (storeAnswer) {
       aiReply = storeAnswer;
     } else if (isSimpleMsg) {
       aiReply = buildInstantConversationalReply(conv, baseCustomerText);
@@ -8296,7 +11540,40 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
         allowFallback: false
       });
       const processed = await processAndExecuteCrmTools(aiResult.text || "", conv);
-      aiReply = processed.cleanText.trim();
+      let candidateReply = processed.cleanText.trim();
+      if (isGenericCategoryInquiry && catalogBlockMatch && isCatalogSectionPresent && candidateReply.length < 500 && catalogBlockMatch[1].length > 800) {
+        candidateReply = catalogBlockMatch[1].trim();
+      }
+      if (!isGenericCategoryInquiry && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 5)) {
+        const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
+        if (fallbackQuote) {
+          candidateReply = fallbackQuote;
+        } else {
+          const resolvedCtx = resolveCatalogItemAndModelReference(
+            conv,
+            baseCustomerText,
+            targetCustomerMsg.quotedMessage?.text || ""
+          );
+          if (resolvedCtx?.product) {
+            const p = resolvedCtx.product;
+            const posBadge = resolvedCtx.itemNumber ? ` (opci\xF3n *#${resolvedCtx.itemNumber}* de la lista)` : "";
+            const condBadge = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
+            candidateReply = `\xA1Claro que s\xED${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! Te confirmo los detalles de la *${p.name}*${posBadge}:
+
+\u{1F4BB} *${p.name}*
+\u{1F4B0} *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_
+\u{1F4E6} *Disponibilidad:* ${p.virtual_available} unidad(es) en stock real
+\u{1F3F7}\uFE0F *Condici\xF3n:* ${condBadge}
+\u2699\uFE0F *Especificaciones:* ${p.specsSummary || p.description_sale || "Excelente estado y rendimiento garantizado"}
+${p.website_url ? `\u{1F517} https://todolapto.com.do${p.website_url}
+` : ""}
+\xBFDeseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el env\xEDo a domicilio? \u{1F69A}`;
+          } else {
+            candidateReply = `\xA1Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! \u{1F60A} Estoy atento a tu mensaje. Conf\xEDrmame por favor cu\xE1l de los modelos te llam\xF3 la atenci\xF3n o c\xF3mo deseas que te ayudemos (retiro en tienda en la *Av. Charles de Gaulle No. 133* o env\xEDo a domicilio). \u{1F4BB}\u2728`;
+          }
+        }
+      }
+      aiReply = candidateReply;
       toolsExecuted = processed.toolsExecuted;
       providerUsed = aiResult.providerUsed;
       modelUsed = aiResult.modelUsed;
@@ -8304,7 +11581,38 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     if (!aiReply) {
       throw new Error("No se pudo generar el texto de respuesta.");
     }
-    const targetDelayMs = isSimpleMsg ? 3500 : isCatalogSectionPresent ? 5500 : 3500;
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "AI_REQUEST_COMPLETED",
+      service: "AI Engine",
+      module: "openai",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Respuesta IA generada (${aiReply.length} caracteres, modelo: ${modelUsed})`
+    });
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "RESPONSE_VALIDATED",
+      service: "Backend",
+      module: "validator",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Respuesta validada y sanitizada (${toolsExecuted.length} herramientas ejecutadas)`
+    });
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "WHATSAPP_SEND_STARTED",
+      service: "Evolution API",
+      module: "evolution",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Enviando respuesta a WhatsApp (${conv.customerPhone || conv.sessionId})`
+    });
+    const targetDelayMs = 150;
     const sendRes = await sendEvolutionMessageToConversation(
       conv,
       aiReply,
@@ -8314,8 +11622,51 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     const sentOk = sendRes.ok;
     const durationMs = Date.now() - startTime;
     if (!sentOk) {
-      throw new Error("No se pudo entregar el mensaje a WhatsApp v\xEDa Evolution API.");
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: "WHATSAPP_SEND_COMPLETED",
+        service: "Evolution API",
+        module: "evolution",
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        success: false,
+        severity: "HIGH",
+        details: "No se pudo entregar a WhatsApp (Evolution API desconectado o socket cerrado)"
+      });
+      recordBotAuditLog({
+        customerName: conv.customerName,
+        customerPhone: conv.customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || "",
+        incomingText: baseCustomerText,
+        decision: "error",
+        reason: `No se pudo entregar a WhatsApp (Evolution API desconectado o n\xFAmero inv\xE1lido)`,
+        replyText: aiReply,
+        durationMs
+      });
+      return {
+        success: false,
+        reply: aiReply,
+        providerUsed,
+        modelUsed,
+        toolsExecuted,
+        sentToWhatsApp: false,
+        correlationId: effCorrelationId,
+        error: "No se pudo entregar a WhatsApp porque la sesi\xF3n de Evolution API est\xE1 desconectada. Por favor verifica o escanea el c\xF3digo QR."
+      };
     }
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "WHATSAPP_SEND_COMPLETED",
+      service: "Evolution API",
+      module: "evolution",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: sendRes.messageId || initialMsgId,
+      details: `Entregado exitosamente a WhatsApp en ${durationMs}ms`
+    });
     const assistantMessage = {
       id: sendRes.messageId ? `evo-${sendRes.messageId}` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       evolutionMessageId: sendRes.messageId,
@@ -8326,11 +11677,24 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       status: "sent"
     };
     if (sendRes.messageId) {
-      const contactKeys = getConversationContactKeys(conv);
-      markMessageIdProcessed(sendRes.messageId, contactKeys);
+      markMessageIdProcessed(sendRes.messageId, contactKeys, {
+        correlationId: effCorrelationId,
+        conversationId: conv.sessionId,
+        responseSent: true
+      });
     }
-    recordLocalMessage(conv.sessionId, assistantMessage, conv.customerPhone);
-    conv.messages.push(assistantMessage);
+    if (initialMsgId) {
+      markMessageIdProcessed(initialMsgId, contactKeys, {
+        correlationId: effCorrelationId,
+        conversationId: conv.sessionId,
+        responseSent: true,
+        orderOrQuoteCreated: toolsExecuted.some((t) => t === "odoo_crear_cotizacion" || t === "registrar_pedido")
+      });
+    }
+    if (!isDuplicateChatMessage(conv.messages, assistantMessage)) {
+      recordLocalMessage(conv.sessionId, assistantMessage, conv.customerPhone);
+      conv.messages.push(assistantMessage);
+    }
     conv.lastTimestamp = assistantMessage.timestamp;
     conv.lastMessagePreview = aiReply;
     conv.lastMessageType = "text";
@@ -8360,13 +11724,24 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       replyText: aiReply,
       durationMs
     });
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: "MESSAGE_COMPLETED",
+      service: "Backend",
+      module: "pipeline",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Flujo completo finalizado con \xE9xito en ${durationMs}ms`
+    });
     return {
       success: true,
       reply: aiReply,
       providerUsed,
       modelUsed,
       toolsExecuted,
-      sentToWhatsApp: sentOk
+      sentToWhatsApp: sentOk,
+      correlationId: effCorrelationId
     };
   } catch (err) {
     const durationMs = Date.now() - startTime;
@@ -8382,50 +11757,292 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       durationMs
     });
     console.log(`[Sales Bot Notice for ${conv.customerName}]:`, err.message);
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, correlationId: effCorrelationId };
   } finally {
-    releaseBotLock(conv);
+    activeCorrelationIdContext = previousCorrelationContext;
+    releaseBotLock(conv, effOwnerId);
+  }
+}
+var activeQueueConversations = /* @__PURE__ */ new Set();
+async function executeSingleQueueJob(job) {
+  const convKey = job.conversationId || job.customerPhone || job.id;
+  if (activeQueueConversations.has(convKey)) {
+    return;
+  }
+  if (isSyntheticTestArtifact(job.messageId) || isSyntheticTestArtifact(job.conversationId) || isSyntheticTestArtifact(job.customer)) {
+    persistentJobQueue = persistentJobQueue.filter((j) => j.id !== job.id);
+    savePersistentJobQueue();
+    return;
+  }
+  let conv = findConversationByAnyId(job.conversationId) || (job.customerPhone ? findConversationByAnyId(job.customerPhone) : void 0);
+  if (!conv && job.conversationId && job.conversationId.includes("@")) {
+    const cleanPhone = (job.customerPhone || job.conversationId.replace(/@.*$/, "")).replace(/\D/g, "");
+    conv = {
+      sessionId: job.conversationId,
+      customerPhone: cleanPhone,
+      customerName: job.customer || `Cliente +${cleanPhone}`,
+      aiEnabled: true,
+      unreadCount: 1,
+      lastTimestamp: job.receivedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      lastMessagePreview: "Mensaje recibido por WhatsApp",
+      lastMessageType: job.contentType || "text",
+      intentStatus: "explorando",
+      detectedProducts: [],
+      messages: [],
+      messagesLoaded: false,
+      isLiveEvolution: true
+    };
+    conversations.unshift(conv);
+    await loadEvolutionMessagesForChat(conv.sessionId).catch(() => {
+    });
+  }
+  if (!conv) {
+    job.status = "FAILED";
+    job.lastError = `Conversaci\xF3n no encontrada en memoria (${job.conversationId})`;
+    savePersistentJobQueue();
+    return;
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  if (conv.aiEnabled === false || !appConfig.globalAiActive || contactKeys.some((k) => aiEnabledBySession.get(k) === false)) {
+    job.status = "COMPLETED";
+    job.lastError = "IA pausada manualmente en este chat para permitir atenci\xF3n humana";
+    savePersistentJobQueue();
+    return;
+  }
+  if (contactKeys.some((k) => isBotLockActive(k))) {
+    return;
+  }
+  activeQueueConversations.add(convKey);
+  job.status = "PROCESSING";
+  job.attempts = (job.attempts || 0) + 1;
+  savePersistentJobQueue();
+  let timeoutHandle = null;
+  try {
+    if (job.attempts > 1) {
+      unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+    }
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve({
+          success: false,
+          error: `Tiempo m\xE1ximo de ejecuci\xF3n excedido (${JOB_MAX_EXECUTION_MS / 1e3}s timeout)`
+        });
+      }, JOB_MAX_EXECUTION_MS);
+    });
+    const result = await Promise.race([
+      triggerSalesBotReplyForConversation(conv, "persistent_queue_worker", job.correlationId, job.id),
+      timeoutPromise
+    ]);
+    if (result.success || result.skipped) {
+      job.status = "COMPLETED";
+      job.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+      job.lastError = void 0;
+      job.nextRetryAt = void 0;
+      savePersistentJobQueue();
+      return;
+    }
+    unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+    const errMsg = result.error || "Error desconocido al procesar tarea de cola";
+    job.lastError = errMsg;
+    if (job.attempts < (job.maxAttempts || JOB_DEFAULT_MAX_ATTEMPTS)) {
+      const backoffScheduleMs = [5e3, 15e3, 45e3];
+      const delayMs = backoffScheduleMs[Math.min(job.attempts - 1, backoffScheduleMs.length - 1)] || 15e3;
+      job.status = "RETRY";
+      job.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+      recordSystemApiLog({
+        service: "Backend",
+        action: `Cola Persistente \u2014 Reintento Programado (${job.attempts}/${job.maxAttempts})`,
+        method: "QUEUE",
+        statusCode: 429,
+        success: false,
+        durationMs: 0,
+        correlationId: job.correlationId,
+        severity: "MEDIUM",
+        module: "queue",
+        customer: job.customer,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+        requestPreview: `Reintento en ${delayMs / 1e3}s para mensaje ${job.messageId}`,
+        error: errMsg
+      });
+    } else {
+      job.status = "DEAD_LETTER";
+      job.nextRetryAt = void 0;
+      recordSystemApiLog({
+        service: "Backend",
+        action: `Cola Persistente \u2014 Tarea en DEAD_LETTER (${job.attempts}/${job.maxAttempts})`,
+        method: "QUEUE",
+        statusCode: 500,
+        success: false,
+        durationMs: 0,
+        correlationId: job.correlationId,
+        severity: "CRITICAL",
+        module: "queue",
+        customer: job.customer,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+        requestPreview: `Agotados los ${job.maxAttempts} intentos para mensaje ${job.messageId}`,
+        error: errMsg
+      });
+    }
+    savePersistentJobQueue();
+  } catch (err) {
+    unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+    job.lastError = err?.message || String(err);
+    if (job.attempts < (job.maxAttempts || JOB_DEFAULT_MAX_ATTEMPTS)) {
+      const delayMs = job.attempts === 1 ? 5e3 : job.attempts === 2 ? 15e3 : 45e3;
+      job.status = "RETRY";
+      job.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+    } else {
+      job.status = "DEAD_LETTER";
+    }
+    savePersistentJobQueue();
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    activeQueueConversations.delete(convKey);
+  }
+}
+async function processPersistentQueueTick() {
+  if (isServerShuttingDown || isQueueWorkerRunning) return;
+  if (!appConfig.globalAiActive) return;
+  isQueueWorkerRunning = true;
+  try {
+    const now = Date.now();
+    const readyJobs = [...persistentJobQueue].reverse().filter((job) => {
+      if (job.status === "PENDING" || job.status === "RECEIVED") return true;
+      if (job.status === "RETRY") {
+        if (!job.nextRetryAt) return true;
+        return new Date(job.nextRetryAt).getTime() <= now;
+      }
+      return false;
+    });
+    if (readyJobs.length === 0) return;
+    const jobsToLaunch = [];
+    const seenConvs = /* @__PURE__ */ new Set();
+    for (const job of readyJobs) {
+      const cKey = job.conversationId || job.customerPhone || job.id;
+      if (seenConvs.has(cKey) || activeQueueConversations.has(cKey)) continue;
+      seenConvs.add(cKey);
+      jobsToLaunch.push(job);
+      if (jobsToLaunch.length >= 5) break;
+    }
+    await Promise.all(jobsToLaunch.map((j) => executeSingleQueueJob(j)));
+  } finally {
+    isQueueWorkerRunning = false;
   }
 }
 app.post("/api/ai/generate-reply", async (req, res) => {
-  const { sessionId, userMessage } = req.body;
+  const { sessionId, userMessage, quotedStatusText, isStatusReply: reqIsStatusReply } = req.body;
   const conv = conversations.find((c) => c.sessionId === sessionId);
-  const lastMsg = conv?.messages[conv.messages.length - 1];
-  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || "Hola";
-  const hasQuote = Boolean(lastMsg?.quotedMessage?.text?.trim());
   if (products.length === 0) {
     await syncOdooInventory();
   }
   if (conv && !conv.messagesLoaded) {
     await loadEvolutionMessagesForChat(conv.sessionId);
   }
-  const quotedBlock = hasQuote ? `
+  const lastMsg = conv?.messages ? [...conv.messages].reverse().find((m) => m.sender === "customer") || conv.messages[conv.messages.length - 1] : void 0;
+  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || "Hola";
+  const effectiveQuotedText = quotedStatusText || req.body.quotedText || lastMsg?.quotedMessage?.text || "";
+  const isStatusReply = Boolean(reqIsStatusReply || req.body.isStatusReply || quotedStatusText || lastMsg?.quotedMessage?.isStatusReply);
+  const hasQuote = Boolean(effectiveQuotedText.trim());
+  let quotedBlock = "";
+  if (isStatusReply) {
+    quotedBlock = `
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F4CC} [ATENCI\xD3N M\xC1XIMA \u2014 EL CLIENTE EST\xC1 PREGUNTANDO DIRECTAMENTE DESDE UN ESTADO DE WHATSAPP (STORY) DE TODO LAPTO]
+El cliente vio un Estado de WhatsApp subido por Todo Lapto y escribi\xF3 su pregunta directamente desde ese estado (en vez de escribir sin contexto en el chat).
+
+\u{1F4C4} Contenido del Estado de WhatsApp al que responde el cliente:
+"""
+${effectiveQuotedText || "\u{1F4F7} [Foto / Oferta publicada en el Estado de WhatsApp de Todo Lapto]"}
+"""
+
+\u{1F4AC} Pregunta o mensaje del cliente sobre ESTE estado:
+"${baseText}"
+
+\u{1F3AF} INSTRUCCI\xD3N OBLIGATORIA PARA CONTESTAR EN BASE A LO QUE PREGUNTA EL CLIENTE DE ESE ESTADO:
+1. Contesta DIRECTAMENTE a lo que el cliente est\xE1 preguntando ("${baseText}") sobre el equipo o promoci\xF3n de ese estado:
+   - Si pregunta por el precio ("\xBFPrecio?", "\xBFCu\xE1nto cuesta?", "\xBFEn cu\xE1nto sale?", "Info"): ind\xEDcale el precio exacto en RD$, el modelo y las especificaciones clave del equipo del estado.
+   - Si pregunta si est\xE1 disponible ("\xBFTodav\xEDa la tienen?", "\xBFDisponible?"): conf\xEDrmale disponibilidad inmediata en stock de ese equipo del estado.
+   - Si hace una pregunta espec\xEDfica sobre el equipo del estado ("\xBFCu\xE1nta RAM tiene?", "\xBFEs t\xE1ctil?", "\xBFTiene garant\xEDa?", "\xBFHacen env\xEDo?"): responde exactamente esa pregunta sobre el equipo del estado.
+2. NO env\xEDes el cat\xE1logo completo de 38 laptops cuando el cliente est\xE1 preguntando por el equipo espec\xEDfico de un estado; enf\xF3cate en el producto del estado por el que pregunt\xF3.
+3. Cierra de forma cordial ofreciendo retiro en nuestra tienda f\xEDsica de la Av. Charles de Gaulle #133 o env\xEDo a domicilio con pago contra entrega en Santo Domingo \u{1F69A}.
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+`;
+  } else if (hasQuote) {
+    quotedBlock = `
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 \u{1F4CC} [ATENCI\xD3N M\xC1XIMA \u2014 EL CLIENTE EST\xC1 CITANDO UN MENSAJE ANTERIOR DE LA CONVERSACI\xD3N]
-Autor del mensaje citado: ${lastMsg.quotedMessage.author || "Todo Lapto"}
+Autor del mensaje citado: ${lastMsg?.quotedMessage?.author || "Todo Lapto"}
 Contenido del mensaje anterior que el cliente est\xE1 citando:
 """
-${lastMsg.quotedMessage.text}
+${effectiveQuotedText}
 """
 Mensaje actual del cliente sobre la cita: "${baseText}"
 
 \u26A0\uFE0F REGLAS OBLIGATORIAS:
-1. El cliente pregunta o se refiere a lo conversado anteriormente (la visita acordada a la tienda f\xEDsica de la Charles de Gaulle No. 133 o las opciones de laptops). NO est\xE1 pidiendo un cat\xE1logo nuevo.
+1. Toma como referencia TANTO el mensaje citado como el mensaje nuevo ("${baseText}") para responder el motivo exacto por el que lo cit\xF3.
 2. EST\xC1 ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CAT\xC1LOGO COMPLETO AQU\xCD.
-3. Responde de forma c\xE1lida, humana y concisa (m\xE1ximo 2 a 4 l\xEDneas) confirmando que s\xED recuerdas lo conversado, confirmando disponibilidad en tienda y preguntando si pasar\xE1 hoy por la tienda o prefiere coordinar env\xEDo.
+3. Responde como un asesor humano normal por WhatsApp (c\xE1lido y conciso). NUNCA digas "Reconozco tus mensajes citados", "Vi que citaste", "Sobre tu nota de voz citada" ni hables de que reconoces citas o audios.
 4. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa informaci\xF3n...", pedir que repitan lo dicho, o enviar mensajes evasivos.
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
-` : "";
+`;
+  }
   const queryText = quotedBlock ? `${quotedBlock}
 Consulta del cliente: "${baseText}"` : baseText;
-  const systemInstruction = buildMasterSalesSystemInstruction(conv, queryText);
+  const searchQueryText = effectiveQuotedText ? `${effectiveQuotedText}
+${baseText}` : baseText;
+  const systemInstruction = buildMasterSalesSystemInstruction(conv, searchQueryText);
   const fullHistoryTurns = buildChatHistoryTurns(conv);
   if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === "user") {
     fullHistoryTurns.pop();
   }
   const historyTurns = fullHistoryTurns;
+  const effectiveLastMsg = conv && (lastMsg || hasQuote) ? {
+    ...lastMsg || {},
+    id: lastMsg?.id || `draft-${Date.now()}`,
+    sender: "customer",
+    type: lastMsg?.type || "text",
+    content: baseText,
+    timestamp: lastMsg?.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+    quotedMessage: lastMsg?.quotedMessage?.text ? lastMsg.quotedMessage : hasQuote ? {
+      id: "",
+      text: effectiveQuotedText,
+      author: "Todo Lapto",
+      type: "text",
+      isStatusReply
+    } : void 0
+  } : void 0;
   try {
-    const storeAnswer = resolveDirectStoreQuestion(baseText, conv);
+    if (conv && effectiveLastMsg) {
+      const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+        conv,
+        effectiveLastMsg,
+        baseText
+      );
+      if (directSelectionOrDiscount) {
+        return res.json({
+          success: true,
+          reply: directSelectionOrDiscount.reply,
+          toolsExecuted: directSelectionOrDiscount.advisorAlertText ? ["notificar_equipo"] : [],
+          providerUsed: "openai",
+          modelUsed: directSelectionOrDiscount.advisorAlertText ? "discount-advisor-escalation" : "catalog-selection-engine"
+        });
+      }
+      if (hasQuote) {
+        const directQuotedReply = resolveQuotedMessageDirectReply(conv, effectiveLastMsg);
+        if (directQuotedReply) {
+          return res.json({
+            success: true,
+            reply: directQuotedReply,
+            toolsExecuted: [],
+            providerUsed: "openai",
+            modelUsed: "quoted-context-engine"
+          });
+        }
+      }
+    }
+    const storeAnswer = resolveDirectStoreQuestion(baseText, conv, effectiveQuotedText);
     if (storeAnswer) {
       return res.json({
         success: true,
@@ -8433,6 +12050,16 @@ Consulta del cliente: "${baseText}"` : baseText;
         toolsExecuted: [],
         providerUsed: "deterministic",
         modelUsed: "store-direct"
+      });
+    }
+    const directCatalogAnswer = resolveDirectCatalogReply(baseText, conv, hasQuote);
+    if (directCatalogAnswer) {
+      return res.json({
+        success: true,
+        reply: directCatalogAnswer,
+        toolsExecuted: [],
+        providerUsed: "openai",
+        modelUsed: "full-catalog-engine"
       });
     }
     if (isSimpleConversationalMessage(baseText, hasQuote)) {
@@ -8483,7 +12110,7 @@ app.post("/api/conversations/:sessionId/auto-reply", async (req, res) => {
   }
   const result = await triggerSalesBotReplyForConversation(conv, "manual_crm_trigger");
   if (!result.success) {
-    return res.status(500).json({ success: false, message: result.error || "Error al generar respuesta con OpenAI" });
+    return res.status(200).json({ success: false, message: result.error || "Error al generar respuesta", reply: result.reply });
   }
   res.json(result);
 });
@@ -8519,104 +12146,215 @@ var handleEvolutionWebhook = async (req, res) => {
   res.status(200).json({ received: true });
   const body = req.body || {};
   const rawEvent = (body?.event || body?.type || "").toString().trim().toLowerCase().replace(/[-_]/g, ".");
+  if (rawEvent === "qrcode.updated") {
+    const qrBase64 = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.qrcode?.base64 || null;
+    const pairingCode = body?.data?.qrcode?.pairingCode || body?.data?.pairingCode || null;
+    if (qrBase64) {
+      evolutionQrCache.qrBase64 = qrBase64;
+      evolutionQrCache.pairingCode = pairingCode;
+      evolutionQrCache.generatedAt = Date.now();
+      broadcastEvent("evolution_qr", {
+        qrBase64,
+        pairingCode,
+        state: "connecting",
+        connected: false
+      });
+    }
+    return;
+  }
+  if (rawEvent === "connection.update") {
+    const newState = (body?.data?.state || body?.data?.connection || body?.data?.status || body?.state || body?.connection || "").toString().toLowerCase();
+    if (newState === "open" || newState === "connected") {
+      evolutionLastKnownState = "open";
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime();
+      isFirstEvolutionSync = true;
+      broadcastEvent("evolution_status", { connected: true, state: "open" });
+    } else if (newState === "close" || newState === "connecting" || newState === "closed" || newState === "logged_out") {
+      clearAllChatsOnWhatsAppDisconnect(newState);
+    }
+    return;
+  }
   const isMessageUpsert = rawEvent === "messages.upsert" || rawEvent === "messages_upsert" || rawEvent === "message" || rawEvent.endsWith(".upsert") && !rawEvent.includes("update");
-  const messageData = Array.isArray(body?.data) ? body.data[0] : Array.isArray(body?.data?.messages) ? body.data.messages[0] : body?.data || body?.message || body;
-  const key = messageData?.key;
-  if (!isMessageUpsert || !key || key.fromMe) {
+  if (!isMessageUpsert) {
     return;
   }
-  const messageId = normalizeMsgIdKey(key.id);
-  const now = Date.now();
-  if (messageId) {
-    const prevWebhookTs = seenWebhookDeliveryIds.get(messageId);
-    if (prevWebhookTs && now - prevWebhookTs < 12e4) {
-      return;
-    }
-    seenWebhookDeliveryIds.set(messageId, now);
-    if (seenWebhookDeliveryIds.size > 1e3) {
-      const oldestKey = seenWebhookDeliveryIds.keys().next().value;
-      if (oldestKey) seenWebhookDeliveryIds.delete(oldestKey);
-    }
-  }
-  if (isMessageIdAlreadyProcessed(messageId)) {
+  if (body?.data?.type === "append" || body?.type === "append") {
     return;
   }
-  const remoteJid = key.remoteJid || "";
-  const rawAlt = key.remoteJidAlt || "";
-  const participant = key.participant || "";
-  if (isWhatsAppGroup(remoteJid) || isWhatsAppGroup(rawAlt) || isWhatsAppGroup(participant)) {
-    return;
-  }
-  if (remoteJid.endsWith("@lid") && rawAlt.endsWith("@s.whatsapp.net")) {
-    const altPhone = rawAlt.replace(/@.*$/, "").replace(/\D/g, "");
-    if (altPhone) {
-      lidToPhoneMap.set(remoteJid, altPhone);
-      lidToPhoneMap.set(remoteJid.replace(/@.*$/, ""), altPhone);
+  lastWebhookReceivedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const rawBatchList = Array.isArray(body?.data) ? body.data : Array.isArray(body?.data?.messages) ? body.data.messages : Array.isArray(body?.messages) ? body.messages : [body?.data || body?.message || body];
+  const instanceName = body?.instance || appConfig.evolution?.instance || "todolapto";
+  let enqueuedAny = false;
+  for (const messageData of rawBatchList) {
+    const key = messageData?.key;
+    if (!key || key.fromMe) {
+      continue;
     }
-  }
-  const senderNumber = (rawAlt.endsWith("@s.whatsapp.net") ? rawAlt : remoteJid.endsWith("@lid") && lidToPhoneMap.get(remoteJid) ? lidToPhoneMap.get(remoteJid) : remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
-  const pushName = messageData.pushName || "Cliente WhatsApp";
-  const parsedIncoming = parseSingleEvolutionMessage(messageData, pushName);
-  if (!parsedIncoming) return;
-  let conv = conversations.find(
-    (c) => c.sessionId === remoteJid || rawAlt && c.sessionId === rawAlt || senderNumber && senderNumber.length <= 12 && c.customerPhone === senderNumber || relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
-  );
-  const canonicalNewJid = senderNumber && senderNumber.length >= 10 && senderNumber.length <= 12 ? `${senderNumber}@s.whatsapp.net` : remoteJid;
-  if (!conv) {
-    conv = {
-      sessionId: canonicalNewJid,
-      customerPhone: senderNumber,
-      customerName: pushName,
-      aiEnabled: true,
-      unreadCount: 1,
-      lastTimestamp: parsedIncoming.timestamp,
-      lastMessagePreview: parsedIncoming.content,
-      lastMessageType: parsedIncoming.type,
-      intentStatus: "explorando",
-      detectedProducts: [],
-      messages: [parsedIncoming],
-      messagesLoaded: false,
-      isLiveEvolution: true
-    };
-    const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
-    if (remoteJid) jSet.add(remoteJid);
-    if (rawAlt) jSet.add(rawAlt);
-    relatedJidsBySession.set(conv.sessionId, jSet);
-    conversations.unshift(conv);
-  } else {
-    const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
-    if (remoteJid) jSet.add(remoteJid);
-    if (rawAlt) jSet.add(rawAlt);
-    relatedJidsBySession.set(conv.sessionId, jSet);
-    conv.unreadCount += 1;
-    conv.lastTimestamp = parsedIncoming.timestamp;
-    conv.lastMessagePreview = parsedIncoming.content;
-    conv.lastMessageType = parsedIncoming.type;
-    if (!conv.messages.some(
-      (m) => parsedIncoming.evolutionMessageId && m.evolutionMessageId === parsedIncoming.evolutionMessageId || parsedIncoming.id && m.id === parsedIncoming.id
-    )) {
-      conv.messages.push(parsedIncoming);
+    const messageId = normalizeMsgIdKey(key.id);
+    if (isSyntheticTestArtifact(messageId) || isSyntheticTestArtifact(key.remoteJid)) {
+      continue;
     }
-  }
-  broadcastEvent("new_message", { sessionId: conv.sessionId, message: parsedIncoming });
-  broadcastEvent("conversations_update", { count: conversations.length });
-  if (appConfig.supabase?.autoSync !== false) {
-    autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {
+    const rawMsgTs = Number(messageData?.messageTimestamp || 0);
+    const msgTimeMs = rawMsgTs > 0 ? rawMsgTs < 1e12 ? rawMsgTs * 1e3 : rawMsgTs : Date.now();
+    if (Date.now() - msgTimeMs > 3 * 60 * 1e3) {
+      markMessageIdProcessed(messageId, [key.remoteJid || ""]);
+      continue;
+    }
+    const now = Date.now();
+    const correlationId = generateCorrelationId(messageId);
+    recordDiagnosticStage({
+      correlationId,
+      stage: "WEBHOOK_RECEIVED",
+      service: "Evolution API",
+      module: "webhook",
+      messageId,
+      details: `Evento ${rawEvent} recibido desde instancia ${instanceName}`
     });
+    if (messageId) {
+      const prevWebhookTs = seenWebhookDeliveryIds.get(messageId);
+      if (prevWebhookTs && now - prevWebhookTs < 12e4) {
+        recordDiagnosticStage({
+          correlationId,
+          stage: "WEBHOOK_VALIDATED",
+          service: "Evolution API",
+          module: "webhook",
+          messageId,
+          details: `Webhook duplicado ignorado por idempotencia HTTP (${messageId})`
+        });
+        continue;
+      }
+      seenWebhookDeliveryIds.set(messageId, now);
+      if (seenWebhookDeliveryIds.size > 1e3) {
+        const oldestKey = seenWebhookDeliveryIds.keys().next().value;
+        if (oldestKey) seenWebhookDeliveryIds.delete(oldestKey);
+      }
+    }
+    if (isMessageIdAlreadyProcessed(messageId)) {
+      recordDiagnosticStage({
+        correlationId,
+        stage: "WEBHOOK_VALIDATED",
+        service: "Evolution API",
+        module: "webhook",
+        messageId,
+        details: `Mensaje ${messageId} ya registrado como procesado en registro de idempotencia`
+      });
+      continue;
+    }
+    const remoteJid = key.remoteJid || "";
+    const rawAlt = key.remoteJidAlt || "";
+    const participant = key.participant || "";
+    if (isWhatsAppGroup(remoteJid) || isWhatsAppGroup(rawAlt) || isWhatsAppGroup(participant)) {
+      continue;
+    }
+    recordDiagnosticStage({
+      correlationId,
+      stage: "WEBHOOK_VALIDATED",
+      service: "Evolution API",
+      module: "webhook",
+      messageId,
+      details: `Webhook validado para JID ${remoteJid}`
+    });
+    if (remoteJid.endsWith("@lid") && rawAlt.endsWith("@s.whatsapp.net")) {
+      const altPhone = rawAlt.replace(/@.*$/, "").replace(/\D/g, "");
+      if (altPhone) {
+        lidToPhoneMap.set(remoteJid, altPhone);
+        lidToPhoneMap.set(remoteJid.replace(/@.*$/, ""), altPhone);
+      }
+    }
+    const senderNumber = (rawAlt.endsWith("@s.whatsapp.net") ? rawAlt : remoteJid.endsWith("@lid") && lidToPhoneMap.get(remoteJid) ? lidToPhoneMap.get(remoteJid) : remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
+    const pushName = messageData.pushName || "Cliente WhatsApp";
+    const parsedIncoming = parseSingleEvolutionMessage(messageData, pushName);
+    if (!parsedIncoming) continue;
+    recordDiagnosticStage({
+      correlationId,
+      stage: "MESSAGE_NORMALIZED",
+      service: "Backend",
+      module: "normalizer",
+      customer: pushName,
+      conversationId: remoteJid,
+      messageId,
+      details: `Mensaje normalizado (tipo: ${parsedIncoming.type}, texto: "${(parsedIncoming.content || "").slice(0, 80)}")`
+    });
+    let conv = conversations.find(
+      (c) => c.sessionId === remoteJid || rawAlt && c.sessionId === rawAlt || senderNumber && senderNumber.length <= 12 && c.customerPhone === senderNumber || relatedJidsBySession.get(c.sessionId)?.has(remoteJid) || !isGenericContactName(pushName) && !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase()
+    );
+    const canonicalNewJid = senderNumber && senderNumber.length >= 10 && senderNumber.length <= 12 ? `${senderNumber}@s.whatsapp.net` : remoteJid;
+    if (!conv) {
+      conv = {
+        sessionId: canonicalNewJid,
+        customerPhone: senderNumber,
+        customerName: pushName,
+        aiEnabled: true,
+        unreadCount: 1,
+        lastTimestamp: parsedIncoming.timestamp,
+        lastMessagePreview: parsedIncoming.content,
+        lastMessageType: parsedIncoming.type,
+        intentStatus: "explorando",
+        detectedProducts: [],
+        messages: [parsedIncoming],
+        messagesLoaded: false,
+        isLiveEvolution: true
+      };
+      const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
+      if (remoteJid) jSet.add(remoteJid);
+      if (rawAlt) jSet.add(rawAlt);
+      relatedJidsBySession.set(conv.sessionId, jSet);
+      conversations.unshift(conv);
+    } else {
+      const jSet = relatedJidsBySession.get(conv.sessionId) || /* @__PURE__ */ new Set([conv.sessionId]);
+      if (remoteJid) jSet.add(remoteJid);
+      if (rawAlt) jSet.add(rawAlt);
+      relatedJidsBySession.set(conv.sessionId, jSet);
+      conv.unreadCount += 1;
+      conv.lastTimestamp = parsedIncoming.timestamp;
+      conv.lastMessagePreview = parsedIncoming.content;
+      conv.lastMessageType = parsedIncoming.type;
+      if (!isDuplicateChatMessage(conv.messages, parsedIncoming)) {
+        hydrateQuotedMessageById(parsedIncoming, conv.messages, conv.customerName || pushName);
+        conv.messages.push(parsedIncoming);
+      }
+    }
+    recordLocalMessage(conv.sessionId, parsedIncoming, conv.customerPhone);
+    broadcastEvent("new_message", { sessionId: conv.sessionId, message: parsedIncoming });
+    broadcastEvent("conversations_update", { count: conversations.length });
+    if (appConfig.supabase?.autoSync !== false) {
+      autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {
+      });
+    }
+    recordDiagnosticStage({
+      correlationId,
+      stage: "MESSAGE_PERSISTED",
+      service: "Backend",
+      module: "storage",
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId,
+      details: `Mensaje persistido en conversaci\xF3n ${conv.sessionId} antes de invocar IA`
+    });
+    if (appConfig.globalAiActive && conv.aiEnabled) {
+      const skipCheck = shouldSkipBotReply(conv, parsedIncoming, "evolution_webhook");
+      if (skipCheck.skip) {
+        console.log(`\u{1F6E1}\uFE0F [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
+        continue;
+      }
+      enqueueInboundMessageJob({
+        messageId: messageId || parsedIncoming.id,
+        conversationId: conv.sessionId,
+        customer: conv.customerName,
+        customerPhone: conv.customerPhone,
+        instance: instanceName,
+        contentType: parsedIncoming.type,
+        correlationId
+      });
+      enqueuedAny = true;
+    }
   }
-  if (appConfig.globalAiActive && conv.aiEnabled) {
-    const skipCheck = shouldSkipBotReply(conv, parsedIncoming, "evolution_webhook");
-    if (skipCheck.skip) {
-      console.log(`\u{1F6E1}\uFE0F [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
-      return;
-    }
-    const contactKeys = getConversationContactKeys(conv);
-    if (contactKeys.some((k) => isBotLockActive(k))) {
-      console.log(`\u{1F6E1}\uFE0F [Webhook Skip]: Respuesta ya en proceso para ${conv.customerName}`);
-      return;
-    }
-    triggerSalesBotReplyForConversation(conv, "evolution_webhook").catch((err) => {
-      console.log(`[Sales Bot Webhook Trigger Info for ${conv.customerName}]:`, err?.message || err);
+  if (enqueuedAny) {
+    processPersistentQueueTick().catch((err) => {
+      console.log("[Persistent Queue Tick Info]:", err?.message || err);
     });
   }
 };
@@ -8656,7 +12394,11 @@ app.post("/api/evolution/register-webhook", async (req, res) => {
           byEvents: false,
           base64: false,
           events: [
-            "MESSAGES_UPSERT"
+            "MESSAGES_UPSERT",
+            "CONNECTION_UPDATE",
+            "QRCODE_UPDATED",
+            "MESSAGES_UPDATE",
+            "SEND_MESSAGE"
           ]
         }
       }),
@@ -8690,13 +12432,46 @@ async function ensureEvolutionWebhookRegistered(preferredUrl) {
     }).catch(() => null);
     let isEnabled = false;
     let registeredUrl = "";
+    let registeredEvents = [];
     if (findRes && findRes.ok) {
       const data = await findRes.json().catch(() => null);
       isEnabled = Boolean(data?.enabled);
       registeredUrl = data?.url || "";
+      registeredEvents = Array.isArray(data?.events) ? data.events : [];
     }
-    const targetUrl = (preferredUrl || appConfig.evolution.webhookUrl || "https://todolapto.com/api/webhook/evolution").trim();
-    if (isEnabled && registeredUrl === targetUrl) {
+    const requiredEvents = [
+      "MESSAGES_UPSERT",
+      "CONNECTION_UPDATE",
+      "QRCODE_UPDATED",
+      "MESSAGES_UPDATE",
+      "SEND_MESSAGE"
+    ];
+    const hasAllEvents = requiredEvents.every((ev) => registeredEvents.includes(ev));
+    const configuredWebhook = (preferredUrl || appConfig.evolution.webhookUrl || "").trim();
+    if (!configuredWebhook) {
+      if (isEnabled) {
+        console.log(`\u{1F6E1}\uFE0F [Webhook Guard]: Desactivando webhook fantasma en Evolution API para evitar duplicados.`);
+        await fetch(`${baseUrl}/webhook/set/${instance}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: appConfig.evolution.apiKey
+          },
+          body: JSON.stringify({
+            webhook: {
+              enabled: false,
+              url: "https://disabled-webhook.local",
+              events: []
+            }
+          }),
+          signal: AbortSignal.timeout(6e3)
+        }).catch(() => {
+        });
+      }
+      return;
+    }
+    const targetUrl = configuredWebhook;
+    if (isEnabled && registeredUrl === targetUrl && hasAllEvents) {
       console.log(`[Webhook]: Webhook ya registrado y activo en Evolution API (${targetUrl})`);
       return;
     }
@@ -8712,7 +12487,7 @@ async function ensureEvolutionWebhookRegistered(preferredUrl) {
           url: targetUrl,
           byEvents: false,
           base64: false,
-          events: ["MESSAGES_UPSERT"]
+          events: requiredEvents
         }
       }),
       signal: AbortSignal.timeout(6e3)
@@ -8780,7 +12555,7 @@ async function startServer() {
   }
   if (viteMounted && viteServer) {
     app.get("*", async (req, res, next) => {
-      if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
+      if (req.path.startsWith("/api") || req.path.startsWith("/webhook")) {
         return next();
       }
       try {
@@ -8855,7 +12630,7 @@ async function startServer() {
       return res.status(204).end();
     });
     app.get("*", (req, res) => {
-      if (req.path.startsWith("/api/") || req.path.startsWith("/webhook/")) {
+      if (req.path.startsWith("/api") || req.path.startsWith("/webhook")) {
         return res.status(404).json({ error: "Endpoint no encontrado" });
       }
       const reqPath = decodeURIComponent(req.path || "/");
@@ -8905,20 +12680,35 @@ async function startServer() {
     console.log(
       `\u{1F680} Vendem\xE1 CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || "default(3000)"} (PID: ${process.pid})`
     );
-    setTimeout(() => {
+    setTimeout(async () => {
+      await syncAuthoritativeDominicanTime().catch(() => {
+      });
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
       syncEvolutionChats().then(() => ensureEvolutionWebhookRegistered()).catch((e) => console.log("Initial Evolution sync info:", e?.message || e));
       syncOdooInventory().then(() => syncOdooCustomers()).catch((e) => console.log("Initial Odoo sync info:", e?.message || e));
       hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).catch((e) => console.log("Initial Supabase sync info:", e?.message || e));
+      processPersistentQueueTick().catch(() => {
+      });
     }, 600);
-    setInterval(() => {
+    syncAuthoritativeDominicanTime().catch(() => {
+    });
+    registerBackgroundInterval(() => {
+      syncAuthoritativeDominicanTime().catch(() => {
+      });
+    }, 6e4);
+    registerBackgroundInterval(() => {
+      processPersistentQueueTick().catch(() => {
+      });
+    }, 2500);
+    registerBackgroundInterval(() => {
       syncEvolutionChats().catch(() => {
       });
     }, 3e3);
-    setInterval(() => {
+    registerBackgroundInterval(() => {
       syncOdooInventory().catch(() => {
       });
     }, 1e3 * 60 * 30);
-    setInterval(() => {
+    registerBackgroundInterval(() => {
       syncOdooCustomers().catch(() => {
       });
     }, 1e3 * 60 * 30);
@@ -8931,15 +12721,41 @@ async function startServer() {
     server.listen(PORT, onListening);
   }
   const shutdown = (signal) => {
-    console.log(`[Server] Received ${signal}. Closing gracefully...`);
+    if (isServerShuttingDown) return;
+    isServerShuttingDown = true;
+    console.log(`[Server] Received ${signal}. Starting controlled graceful shutdown...`);
+    for (const timer of backgroundIntervals) {
+      clearInterval(timer);
+    }
+    backgroundIntervals.length = 0;
+    try {
+      for (const job of persistentJobQueue) {
+        if (job.status === "PROCESSING" || job.status === "RECEIVED") {
+          job.status = "RETRY";
+          job.nextRetryAt = (/* @__PURE__ */ new Date()).toISOString();
+          job.lastError = `Interrumpido por apagado controlado (${signal}); reanudar\xE1 al iniciar`;
+        }
+      }
+      savePersistentJobQueue();
+      savePersistedConfig(false);
+    } catch (e) {
+      console.warn("[Server Shutdown Persistence Warning]:", e?.message || e);
+    }
+    for (const client of sseClients) {
+      try {
+        client.end();
+      } catch {
+      }
+    }
+    sseClients.clear();
     server.close(() => {
-      console.log("[Server] HTTP server closed cleanly.");
+      console.log("[Server] HTTP server and persistent state closed cleanly.");
       process.exit(0);
     });
     setTimeout(() => {
       console.error("[Server] Forcing shutdown after timeout.");
       process.exit(1);
-    }, 4e3).unref();
+    }, 4500).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
@@ -8949,5 +12765,8 @@ var server_default = app;
 export {
   app,
   server_default as default,
+  isMaskedSecret,
+  maskSecretValue,
+  sanitizeSecretsInText,
   startServer
 };

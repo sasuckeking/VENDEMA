@@ -230,9 +230,13 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
 
         // 1. Try Backend API
         try {
+          const token = localStorage.getItem('vendema_auth_token');
           const res = await fetch('/api/users', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify({
               nombre: newUserObj.nombre,
               username: newUserObj.username,
@@ -277,9 +281,13 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
         };
 
         try {
+          const token = localStorage.getItem('vendema_auth_token');
           await fetch(`/api/users/${selectedUser.id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify({
               nombre: updatedUserObj.nombre,
               whatsapp: updatedUserObj.whatsapp,
@@ -316,7 +324,11 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
     }
 
     try {
-      await fetch(`/api/users/${u.id}`, { method: 'DELETE' }).catch(() => {});
+      const token = localStorage.getItem('vendema_auth_token');
+      await fetch(`/api/users/${u.id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).catch(() => {});
       const remaining = users.filter(item => item.id !== u.id && item.username !== u.username);
       setUsers(remaining);
       try {

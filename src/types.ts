@@ -264,6 +264,7 @@ export type BotDecisionType =
   | 'blocked_in_flight'
   | 'blocked_already_answered'
   | 'blocked_group'
+  | 'blocked_manual_pause'
   | 'error';
 
 export interface BotAuditLogEntry {
@@ -283,7 +284,76 @@ export interface BotAuditLogEntry {
   durationMs: number;
 }
 
-export type ApiLogService = 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
+export type ApiLogService = 'Backend' | 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
+
+export type DiagnosticStage =
+  | 'WEBHOOK_RECEIVED'
+  | 'WEBHOOK_VALIDATED'
+  | 'MESSAGE_NORMALIZED'
+  | 'MESSAGE_PERSISTED'
+  | 'QUEUE_CREATED'
+  | 'LOCK_ACQUIRED'
+  | 'MEDIA_DOWNLOADED'
+  | 'MEDIA_TRANSCRIBED'
+  | 'AI_REQUEST_STARTED'
+  | 'AI_REQUEST_COMPLETED'
+  | 'ODOO_REQUEST_STARTED'
+  | 'ODOO_REQUEST_COMPLETED'
+  | 'RESPONSE_VALIDATED'
+  | 'WHATSAPP_SEND_STARTED'
+  | 'WHATSAPP_SEND_COMPLETED'
+  | 'MESSAGE_COMPLETED';
+
+export type LogSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
+
+export type QueueJobStatus =
+  | 'RECEIVED'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'RETRY'
+  | 'DEAD_LETTER';
+
+export interface QueueJobEntry {
+  id: string;
+  correlationId: string;
+  messageId: string;
+  conversationId: string;
+  customer: string;
+  customerPhone: string;
+  instance: string;
+  contentType: string;
+  receivedAt: string;
+  status: QueueJobStatus;
+  attempts: number;
+  maxAttempts: number;
+  nextRetryAt?: string;
+  lastError?: string;
+  errorCategory?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface ConversationLockEntry {
+  conversationId: string;
+  owner: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export type ServiceHealthStatus = 'CONNECTED' | 'DISCONNECTED' | 'DEGRADED' | 'UNKNOWN';
+
+export interface ServiceHealthProbe {
+  service: 'Backend' | 'Supabase' | 'Evolution API' | 'OpenAI' | 'Odoo';
+  status: ServiceHealthStatus;
+  latencyMs: number;
+  responseTimeMs?: number;
+  lastCheckedAt: string;
+  failureType?: 'NONE' | 'CONNECTION_ERROR' | 'AUTH_ERROR' | 'TIMEOUT' | 'RATE_LIMIT' | 'INVALID_CONFIG' | 'UPSTREAM_ERROR';
+  details?: string;
+  error?: string;
+}
 
 export interface SystemApiLog {
   id: string;
@@ -299,4 +369,13 @@ export interface SystemApiLog {
   requestPreview?: string;
   responseSnippet?: string;
   error?: string;
+  correlationId?: string;
+  stage?: DiagnosticStage;
+  severity?: LogSeverity;
+  module?: string;
+  customer?: string;
+  conversationId?: string;
+  messageId?: string;
+  errorCategory?: string;
 }
+

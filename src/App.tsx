@@ -92,13 +92,13 @@ export default function App() {
         url: 'https://todolapto.com.do/jsonrpc',
         db: 'odoo',
         uid: 22,
-        apiKey: '1dffd1433a7f49b6ec715fddf766c67f08f57c41',
+        apiKey: '',
         connected: true,
       },
       evolution: {
         serverUrl: 'https://evolution-evolution-api.blrfh6.easypanel.host',
         instance: 'todolapto',
-        apiKey: '52700613C062-421C-B800-FBC560B54BB4',
+        apiKey: '',
         teamPhone: '18492588738',
         adminPhone: '18496260800',
         connected: true,
@@ -150,13 +150,13 @@ export default function App() {
         return false;
       });
 
-      // 2. If oldMsg is an optimistic local message (no evolutionMessageId), pair it with at most ONE unclaimed real message
-      if (existsIdx < 0 && !oldMsg.evolutionMessageId) {
+      // 2. Semantic content proximity match (prevent identical messages sent/received within 45s from duplicating)
+      if (existsIdx < 0) {
         existsIdx = combined.findIndex((inc, idx) => {
           if (claimedIncomingIndices.has(idx)) return false;
           if (
-            inc.sender !== 'customer' &&
-            oldMsg.sender !== 'customer' &&
+            inc.sender === oldMsg.sender &&
+            inc.type === oldMsg.type &&
             oldText.length > 0 &&
             (inc.content || '').trim() === oldText &&
             Math.abs(new Date(inc.timestamp).getTime() - oldTime) < 45000
@@ -193,19 +193,32 @@ export default function App() {
     }
     combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    // Discard any lingering optimistic local msg- records that match a confirmed WhatsApp message
+    // Strict deduplication pass: discard duplicate IDs or identical content within 45s
     const deduped: Conversation['messages'] = [];
-    const seenConfirmedKeys = new Set<string>();
+    const seenIds = new Set<string>();
+
     for (const m of combined) {
-      if (m.evolutionMessageId) {
-        seenConfirmedKeys.add(`${m.sender}::${(m.content || '').trim()}`);
-      }
-    }
-    for (const m of combined) {
-      if (!m.evolutionMessageId && (m.id.startsWith('msg-') || m.id.startsWith('sim-'))) {
-        const key = `${m.sender}::${(m.content || '').trim()}`;
-        if (seenConfirmedKeys.has(key)) continue;
-      }
+      const evoId = m.evolutionMessageId || '';
+      const mId = m.id || '';
+      if (evoId && seenIds.has(evoId)) continue;
+      if (mId && seenIds.has(mId)) continue;
+
+      const mText = (m.content || '').trim();
+      const mTime = new Date(m.timestamp).getTime();
+
+      const isSemanticDupe = deduped.some(
+        d =>
+          d.sender === m.sender &&
+          d.type === m.type &&
+          mText.length > 0 &&
+          (d.content || '').trim() === mText &&
+          Math.abs(new Date(d.timestamp).getTime() - mTime) < 45000
+      );
+
+      if (isSemanticDupe) continue;
+
+      if (evoId) seenIds.add(evoId);
+      if (mId) seenIds.add(mId);
       deduped.push(m);
     }
 
@@ -415,23 +428,37 @@ export default function App() {
         candidateList.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
       }
 
-      // Strict final deduplication pass: eliminate all duplicate contacts
+      // Strict final deduplication pass: eliminate all duplicate contacts and merge matching LID/phone sessions
       const finalDedup: Conversation[] = [];
-      const seenPhones = new Set<string>();
-      const seenNames = new Set<string>();
-      const seenSessions = new Set<string>();
+      const seenPhones = new Map<string, number>();
+      const seenNames = new Map<string, number>();
 
       for (const c of candidateList) {
-        if (seenSessions.has(c.sessionId)) continue;
         const phone = c.customerPhone && c.customerPhone.length <= 12 ? c.customerPhone : '';
         const nameKey = !isGenericContactName(c.customerName) ? c.customerName.trim().toLowerCase() : '';
 
-        if (phone && seenPhones.has(phone)) continue;
-        if (!phone && nameKey && seenNames.has(nameKey)) continue;
+        const existingIdx = (phone && seenPhones.has(phone))
+          ? seenPhones.get(phone)!
+          : (nameKey && seenNames.has(nameKey))
+          ? seenNames.get(nameKey)!
+          : -1;
 
-        seenSessions.add(c.sessionId);
-        if (phone) seenPhones.add(phone);
-        if (nameKey) seenNames.add(nameKey);
+        if (existingIdx >= 0) {
+          const existing = finalDedup[existingIdx];
+          existing.messages = mergeMessagesList(existing.messages, c.messages);
+          if (existing.sessionId.endsWith('@lid') && (c.sessionId.endsWith('@s.whatsapp.net') || phone)) {
+            existing.sessionId = c.sessionId;
+            existing.customerPhone = phone || existing.customerPhone;
+          }
+          if (isGenericContactName(existing.customerName) && !isGenericContactName(c.customerName)) {
+            existing.customerName = c.customerName;
+          }
+          continue;
+        }
+
+        const newIdx = finalDedup.length;
+        if (phone) seenPhones.set(phone, newIdx);
+        if (nameKey) seenNames.set(nameKey, newIdx);
         finalDedup.push(c);
       }
 
@@ -545,7 +572,13 @@ export default function App() {
             if (savedAiRaw) {
               const savedAi = JSON.parse(savedAiRaw);
               const serverAi = loadedConfig.aiProvider || {};
-              const needsPushToServer = Boolean(savedAi.openaiApiKey && !serverAi.openaiApiKey);
+              const isSavedRealKey = Boolean(
+                savedAi.openaiApiKey &&
+                !String(savedAi.openaiApiKey).includes('••••') &&
+                !String(savedAi.openaiApiKey).includes('****')
+              );
+              const isServerMissingKey = !serverAi.openaiApiKey;
+              const needsPushToServer = isSavedRealKey && isServerMissingKey;
 
               const validModels = ['gpt-4o-mini', 'gpt-4o', 'o3-mini'];
               const resolvedModel = validModels.includes(serverAi.model)
@@ -559,42 +592,17 @@ export default function App() {
                 ...serverAi,
                 provider: 'openai' as const,
                 model: resolvedModel,
-                openaiApiKey: (serverAi.openaiApiKey || savedAi.openaiApiKey || '').trim(),
+                openaiApiKey: (serverAi.openaiApiKey || (isSavedRealKey ? savedAi.openaiApiKey : '') || '').trim(),
                 deepseekApiKey: '',
                 geminiApiKey: '',
               };
               loadedConfig = { ...loadedConfig, aiProvider: mergedAi };
-              localStorage.setItem('vendema_ai_provider_config', JSON.stringify(mergedAi));
 
               if (needsPushToServer) {
                 fetch('/api/ai/save-credentials', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(mergedAi),
-                }).catch(() => {});
-              }
-            } else if (loadedConfig.aiProvider) {
-              localStorage.setItem('vendema_ai_provider_config', JSON.stringify(loadedConfig.aiProvider));
-            }
-          } catch {}
-
-          try {
-            const savedSupabaseRaw = localStorage.getItem('vendema_supabase_config');
-            if (savedSupabaseRaw) {
-              const savedSupabase = JSON.parse(savedSupabaseRaw);
-              const currentSupabase = loadedConfig.supabase || { url: '', anonKey: '', connected: false, autoSync: true };
-              const mergedSupabase = {
-                ...currentSupabase,
-                url: savedSupabase.url || currentSupabase.url || '',
-                anonKey: savedSupabase.anonKey || currentSupabase.anonKey || '',
-                autoSync: savedSupabase.autoSync !== undefined ? savedSupabase.autoSync : (currentSupabase.autoSync ?? true),
-              };
-              if (mergedSupabase.url && (!currentSupabase.url || currentSupabase.url === '')) {
-                loadedConfig = { ...loadedConfig, supabase: mergedSupabase };
-                fetch('/api/config', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ supabase: mergedSupabase }),
+                  body: JSON.stringify({ ...mergedAi, openaiApiKey: savedAi.openaiApiKey.trim() }),
                 }).catch(() => {});
               }
             }
@@ -614,7 +622,10 @@ export default function App() {
       }
       if (convData?.success && convData.conversations) {
         mergeConversations(convData.conversations);
-        if (!selectedSessionRef.current && convData.conversations.length > 0) {
+        if (convData.conversations.length === 0) {
+          selectedSessionRef.current = null;
+          setSelectedSessionId(null);
+        } else if (!selectedSessionRef.current) {
           const firstId = convData.conversations[0].sessionId;
           setSelectedSessionId(firstId);
         }
@@ -673,15 +684,47 @@ export default function App() {
               return c;
             })
           );
+        } else if (payload.type === 'chat_ai_toggled') {
+          setConversations(prev =>
+            prev.map(c => {
+              if (
+                c.sessionId === payload.sessionId ||
+                (payload.customerPhone && c.customerPhone === payload.customerPhone)
+              ) {
+                return { ...c, aiEnabled: payload.aiEnabled };
+              }
+              return c;
+            })
+          );
         } else if (payload.type === 'whatsapp_statuses_updated' && Array.isArray(payload.payload)) {
           setConfig(prev => ({ ...prev, activeWhatsAppStatuses: payload.payload }));
+        } else if (payload.type === 'evolution_status' && payload.payload) {
+          const isConnected = Boolean(payload.payload.connected);
+          setConfig(prev => ({ ...prev, evolution: { ...prev.evolution, connected: isConnected } }));
+          if (!isConnected) {
+            setConversations([]);
+            selectedSessionRef.current = null;
+            setSelectedSessionId(null);
+          }
         } else if (payload.type === 'conversations_update') {
+          const isCleared = Boolean(payload.payload?.cleared);
+          if (isCleared) {
+            setConversations([]);
+            selectedSessionRef.current = null;
+            setSelectedSessionId(null);
+          }
           fetch('/api/conversations')
             .then(r => r.json())
             .then(d => {
-              if (d.success && d.conversations) mergeConversations(d.conversations);
+              if (d.success && d.conversations) {
+                mergeConversations(d.conversations);
+                if (d.conversations.length === 0) {
+                  selectedSessionRef.current = null;
+                  setSelectedSessionId(null);
+                }
+              }
             });
-          if (selectedSessionRef.current) {
+          if (selectedSessionRef.current && !isCleared) {
             handleRefreshMessages(selectedSessionRef.current, true);
           }
         } else if (payload.type === 'config_updated' && payload.payload) {
@@ -711,9 +754,13 @@ export default function App() {
     const nextState = !config.globalAiActive;
     setConfig(prev => ({ ...prev, globalAiActive: nextState }));
     try {
+      const token = localStorage.getItem('vendema_auth_token');
       await fetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ globalAiActive: nextState }),
       });
     } catch (err) {
@@ -722,15 +769,29 @@ export default function App() {
   };
 
   const handleToggleAiForChat = async (sessionId: string) => {
+    const current = conversations.find(c => c.sessionId === sessionId);
+    const nextState = current ? !current.aiEnabled : false;
+    setConversations(prev =>
+      prev.map(c =>
+        c.sessionId === sessionId || (current?.customerPhone && c.customerPhone === current.customerPhone)
+          ? { ...c, aiEnabled: nextState }
+          : c
+      )
+    );
     try {
       const res = await fetch(`/api/conversations/${encodeURIComponent(sessionId)}/toggle-ai`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextState }),
       });
       const data = await res.json();
       if (data.success) {
         setConversations(prev =>
-          prev.map(c => (c.sessionId === sessionId ? { ...c, aiEnabled: data.aiEnabled } : c))
+          prev.map(c =>
+            c.sessionId === sessionId || (current?.customerPhone && c.customerPhone === current.customerPhone)
+              ? { ...c, aiEnabled: data.aiEnabled }
+              : c
+          )
         );
       }
     } catch (err) {
@@ -1002,9 +1063,13 @@ export default function App() {
     });
 
     try {
+      const token = localStorage.getItem('vendema_auth_token');
       const res = await fetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(newConfig),
       });
       const data = await res.json();

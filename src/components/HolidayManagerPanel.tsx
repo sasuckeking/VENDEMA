@@ -25,6 +25,7 @@ import {
 import type { AppConfig, HolidayOverride } from '../types';
 import {
   getDominicanTimeContext,
+  getEffectiveCurrentDate,
   getHolidaysWithOverridesForYear,
   getAvailableHolidayYears,
   formatHumanDateShortRD,
@@ -55,12 +56,12 @@ export const HolidayManagerPanel: React.FC<HolidayManagerPanelProps> = ({
   const overrides = localOverrides;
 
   const [currentRd, setCurrentRd] = useState(() =>
-    getDominicanTimeContext(new Date(), localOverrides)
+    getDominicanTimeContext(getEffectiveCurrentDate(), localOverrides)
   );
 
   useEffect(() => {
     const update = () => {
-      setCurrentRd(getDominicanTimeContext(new Date(), localOverrides));
+      setCurrentRd(getDominicanTimeContext(getEffectiveCurrentDate(), localOverrides));
     };
     update();
     const interval = setInterval(update, 1000);

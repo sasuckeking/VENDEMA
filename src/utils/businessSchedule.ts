@@ -54,6 +54,7 @@ export interface EnrichedHolidayItem {
 // Module-level shared overrides so both backend and frontend components stay in sync
 let globalHolidayOverrides: HolidayOverride[] = [];
 let globalTimeOffsetMs = 0;
+let isSyncingTime = false;
 
 export function setGlobalTimeOffset(offsetMs: number) {
   globalTimeOffsetMs = offsetMs;
@@ -65,6 +66,133 @@ export function getGlobalTimeOffset(): number {
 
 export function getEffectiveCurrentDate(): Date {
   return new Date(Date.now() + globalTimeOffsetMs);
+}
+
+let activeAuthoritativeSyncPromise: Promise<number> | null = null;
+let lastLoggedTimeOffsetSec: number | null = null;
+
+/**
+ * Authoritative Dominican Republic Time Synchronization (UTC-4)
+ * Synchronizes host offset against real internet UTC time headers / time APIs
+ * so America/Santo_Domingo (UTC-4) remains accurate even if the host OS clock or timezone drifts.
+ */
+export async function syncAuthoritativeDominicanTime(): Promise<number> {
+  if (typeof window !== 'undefined') {
+    return syncTimeWithServer();
+  }
+  if (activeAuthoritativeSyncPromise) {
+    return activeAuthoritativeSyncPromise;
+  }
+
+  activeAuthoritativeSyncPromise = (async () => {
+    const httpDateSources = [
+      'https://www.google.com/generate_204',
+      'https://cloudflare.com/cdn-cgi/trace',
+    ];
+
+    for (const url of httpDateSources) {
+      try {
+        const t0 = Date.now();
+        const res = await fetch(url, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(3000),
+        });
+        const t1 = Date.now();
+        const dateHeader = res.headers.get('date');
+        if (dateHeader) {
+          const remoteMs = new Date(dateHeader).getTime();
+          if (Number.isFinite(remoteMs) && remoteMs > 1700000000000) {
+            const midpointLocalMs = Math.round((t0 + t1) / 2);
+            const offsetMs = remoteMs - midpointLocalMs;
+            setGlobalTimeOffset(offsetMs);
+            const offsetSec = Math.round(offsetMs / 1000);
+            if (lastLoggedTimeOffsetSec === null || Math.abs(offsetSec - lastLoggedTimeOffsetSec) > 10) {
+              lastLoggedTimeOffsetSec = offsetSec;
+              const rdNow = getDominicanTimeContext(new Date(midpointLocalMs + offsetMs));
+              console.log(
+                `🕒 [RD Time Sync]: Hora oficial sincronizada (${rdNow.fullDateStr} · ${rdNow.time12WithSeconds} UTC-4 | desfase host=${offsetSec >= 0 ? '+' : ''}${offsetSec}s)`
+              );
+            }
+            return offsetMs;
+          }
+        }
+      } catch {
+        // Try next time source
+      }
+    }
+
+    try {
+      const t0 = Date.now();
+      const res = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=UTC', {
+        signal: AbortSignal.timeout(3500),
+      });
+      const t1 = Date.now();
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { dateTime?: string } | null;
+        if (data?.dateTime) {
+          const isoUtc = data.dateTime.endsWith('Z') ? data.dateTime : `${data.dateTime}Z`;
+          const remoteMs = new Date(isoUtc).getTime();
+          if (Number.isFinite(remoteMs) && remoteMs > 1700000000000) {
+            const midpointLocalMs = Math.round((t0 + t1) / 2);
+            const offsetMs = remoteMs - midpointLocalMs;
+            setGlobalTimeOffset(offsetMs);
+            return offsetMs;
+          }
+        }
+      }
+    } catch {
+      // Keep previous globalTimeOffsetMs if offline
+    }
+
+    return globalTimeOffsetMs;
+  })().finally(() => {
+    activeAuthoritativeSyncPromise = null;
+  });
+
+  return activeAuthoritativeSyncPromise;
+}
+
+/**
+ * Synchronizes client clock with the authoritative Dominican Republic server time.
+ * Calculates drift and updates globalTimeOffsetMs so all UI components and timers
+ * strictly reflect Dominican time (America/Santo_Domingo UTC-4), regardless of client PC timezone settings.
+ */
+export async function syncTimeWithServer(): Promise<number> {
+  if (isSyncingTime) return globalTimeOffsetMs;
+  isSyncingTime = true;
+  try {
+    const startFetch = Date.now();
+    const res = await fetch('/api/system/time-status');
+    const roundTrip = Date.now() - startFetch;
+    if (res.ok) {
+      const data = await res.json();
+      const authoritativeTarget = typeof data.effectiveTimestamp === 'number'
+        ? data.effectiveTimestamp
+        : typeof data.serverTimestamp === 'number'
+        ? data.serverTimestamp
+        : undefined;
+
+      if (typeof authoritativeTarget === 'number') {
+        const adjustedServerTime = authoritativeTarget + Math.round(roundTrip / 2);
+        const offset = adjustedServerTime - Date.now();
+        setGlobalTimeOffset(offset);
+        return offset;
+      }
+    }
+  } catch {
+    // Graceful fallback to client clock if offline
+  } finally {
+    isSyncingTime = false;
+  }
+  return globalTimeOffsetMs;
+}
+
+// Auto-sync in browser environments immediately on import and every 60 seconds
+if (typeof window !== 'undefined') {
+  syncTimeWithServer().catch(() => {});
+  setInterval(() => {
+    syncTimeWithServer().catch(() => {});
+  }, 60000);
 }
 
 export function setGlobalHolidayOverrides(overrides?: HolidayOverride[]) {

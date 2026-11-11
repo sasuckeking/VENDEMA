@@ -1,6 +1,6 @@
 {
-  "summary": "Corrección de contexto y protección anti-baneo en WhatsApp: El bot ya no envía el catálogo de laptops ante saludos ('Saludos', 'Hola'), respondiendo con un saludo cálido que pregunta qué producto necesita. Se incorporó una cadencia humanizada de escritura (3.5s para saludos, 5.5s para catálogos) y cooldown de 7s para evitar bloqueos de spam de Meta/WhatsApp.",
-  "updatedAt": "2026-11-06T12:37:20.492733197Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Auditoría técnica detallada de Vendemá CRM y Plan Maestro de Reestructuración Fase 1 (Estabilidad, Seguridad, Cola Persistente, Concurrencia, Sincronización Atómica, Trazabilidad con correlation_id, Monitor de Salud y 10 Casos de Prueba).",
+  "updatedAt":  "2026-11-08T15:41:41.132801154Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

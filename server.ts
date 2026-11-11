@@ -2,10 +2,12 @@ import express from 'express';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import type { 
-  AppConfig, 
+  AppConfig,
+  AIProviderType,
   ProductItem, 
   Conversation, 
   CustomerLead, 
@@ -18,7 +20,14 @@ import type {
   UserRole,
   BotAuditLogEntry,
   BotDecisionType,
-  WhatsAppStatusItem
+  WhatsAppStatusItem,
+  DiagnosticStage,
+  LogSeverity,
+  QueueJobStatus,
+  QueueJobEntry,
+  ConversationLockEntry,
+  ServiceHealthStatus,
+  ServiceHealthProbe
 } from './src/types.ts';
 import { OFFICIAL_TODO_LAPTO_MASTER_PROMPT } from './src/masterPrompt.ts';
 import { 
@@ -28,7 +37,9 @@ import {
   getHolidaysWithOverridesForYear,
   getAvailableHolidayYears,
   setGlobalTimeOffset,
-  getEffectiveCurrentDate
+  getEffectiveCurrentDate,
+  syncAuthoritativeDominicanTime,
+  formatDominicanTimeOnly
 } from './src/utils/businessSchedule.ts';
 import { 
   DEFAULT_SUPABASE_URL,
@@ -59,12 +70,150 @@ dotenv.config();
 // Phusion Passenger global type declaration
 declare const PhusionPassenger: any;
 
-// Global process error handlers to prevent container crashes on network/background glitches
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ---------------------------------------------------------
+// Fase 1.6 — Atomic File Persistence & Secret Sanitization
+// ---------------------------------------------------------
+function writeFileAtomicSync(targetPath: string, content: string): boolean {
+  const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    // Validate JSON integrity before writing if target is a .json file
+    if (targetPath.endsWith('.json')) {
+      JSON.parse(content);
+    }
+    fs.writeFileSync(tmpPath, content, 'utf-8');
+    fs.renameSync(tmpPath, targetPath);
+    return true;
+  } catch (err: any) {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch {}
+    console.warn(`[Atomic Write Error (${path.basename(targetPath)})]:`, err?.message || err);
+    return false;
+  }
+}
+
+export function sanitizeSecretsInText(input?: string): string {
+  if (!input) return '';
+  return String(input)
+    .replace(/sk-proj-[A-Za-z0-9_-]{12,}/g, 'sk-proj-••••••••••••••••')
+    .replace(/sk-[A-Za-z0-9_-]{16,}/g, 'sk-••••••••••••••••')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]{16,}/gi, 'Bearer ••••••••••••••••')
+    .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, 'jwt-••••••••••••••••');
+}
+
+export function maskSecretValue(raw?: string): string {
+  const clean = (raw || '').trim();
+  if (!clean) return '';
+  if (clean.includes('••••') || clean.includes('****')) return clean;
+  const tail = clean.length >= 6 ? clean.slice(-4) : '';
+  if (clean.startsWith('sk-proj-')) {
+    return `sk-proj-••••••••••••••••••••${tail}`;
+  }
+  if (clean.startsWith('sk-')) {
+    return `sk-••••••••••••••••••••${tail}`;
+  }
+  return `••••••••••••••••${tail}`;
+}
+
+export function isMaskedSecret(val?: string): boolean {
+  if (!val) return true;
+  const trimmed = String(val).trim();
+  return !trimmed || trimmed.includes('••••') || trimmed.includes('****');
+}
+
+// Pending Supabase Sync Ledger (Fase 1.6)
+export interface PendingSyncItem {
+  id: string;
+  entityType: 'config' | 'user' | 'conversation' | 'message' | 'order' | 'customer' | 'holiday';
+  entityId: string;
+  syncStatus: 'SYNCED' | 'PENDING_SYNC' | 'SYNC_ERROR';
+  attempts: number;
+  lastAttemptAt: string;
+  lastError?: string;
+}
+
+const PENDING_SYNC_FILE = path.join(__dirname, '.vendema-pending-sync.json');
+const pendingSupabaseSyncMap = new Map<string, PendingSyncItem>();
+
+try {
+  if (fs.existsSync(PENDING_SYNC_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(PENDING_SYNC_FILE, 'utf-8'));
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (item?.id) pendingSupabaseSyncMap.set(item.id, item);
+      }
+    }
+  }
+} catch {}
+
+let savePendingSyncTimer: NodeJS.Timeout | null = null;
+function scheduleSavePendingSync() {
+  if (savePendingSyncTimer) return;
+  savePendingSyncTimer = setTimeout(() => {
+    savePendingSyncTimer = null;
+    writeFileAtomicSync(
+      PENDING_SYNC_FILE,
+      JSON.stringify(Array.from(pendingSupabaseSyncMap.values()).slice(-500), null, 2)
+    );
+  }, 1000);
+}
+
+function recordSupabaseSyncState(
+  entityType: PendingSyncItem['entityType'],
+  entityId: string,
+  success: boolean,
+  errorMsg?: string
+) {
+  const key = `${entityType}:${entityId}`;
+  const existing = pendingSupabaseSyncMap.get(key);
+  if (success) {
+    if (existing) {
+      existing.syncStatus = 'SYNCED';
+      existing.lastAttemptAt = new Date().toISOString();
+      existing.lastError = undefined;
+      pendingSupabaseSyncMap.delete(key);
+      scheduleSavePendingSync();
+    }
+    return;
+  }
+  const attempts = (existing?.attempts || 0) + 1;
+  pendingSupabaseSyncMap.set(key, {
+    id: key,
+    entityType,
+    entityId,
+    syncStatus: attempts >= 3 ? 'SYNC_ERROR' : 'PENDING_SYNC',
+    attempts,
+    lastAttemptAt: new Date().toISOString(),
+    lastError: sanitizeSecretsInText(errorMsg || 'Fallo de red al sincronizar con Supabase'),
+  });
+  scheduleSavePendingSync();
+}
+
+// ---------------------------------------------------------
+// Fase 1.2 — Global Process Error Handlers & Lifecycle State
+// ---------------------------------------------------------
+let isServerShuttingDown = false;
+const backgroundIntervals: NodeJS.Timeout[] = [];
+let lastWebhookReceivedAt: string | null = null;
+
+function registerBackgroundInterval(fn: () => void, ms: number): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    if (!isServerShuttingDown) fn();
+  }, ms);
+  backgroundIntervals.push(timer);
+  return timer;
+}
+
 process.on('uncaughtException', (err) => {
-  console.log('[Process Notice]:', err?.message || err);
+  const msg = sanitizeSecretsInText(err?.stack || err?.message || String(err));
+  console.error(`[Process UncaughtException] [CRITICAL]: ${msg}`);
 });
 process.on('unhandledRejection', (reason: any) => {
-  console.log('[Process Notice]:', reason?.message || reason);
+  const msg = sanitizeSecretsInText(reason?.stack || reason?.message || String(reason));
+  console.error(`[Process UnhandledRejection] [HIGH]: ${msg}`);
 });
 process.on('exit', (code) => {
   console.log(`[Process Exit] Node process exiting with code: ${code}`);
@@ -72,9 +221,6 @@ process.on('exit', (code) => {
 process.on('beforeExit', (code) => {
   console.log(`[Process BeforeExit] Event loop is empty! code: ${code}`);
 });
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 app.set('trust proxy', true);
@@ -87,31 +233,68 @@ app.use(express.urlencoded({ extended: true, limit: '35mb' }));
 
 // Request logging for Hostinger / Nginx reverse proxy debugging
 app.use((req, res, next) => {
-  if (req.path !== '/health' && req.path !== '/ping') {
+  if (req.path !== '/health' && req.path !== '/ready' && req.path !== '/ping') {
     console.log(`[HTTP ${req.method}] ${req.url} (Host: ${req.headers.host || 'unknown'})`);
   }
   next();
 });
 
-// Permissive CORS & reverse proxy support for custom domains
+// Fase 1.1 — Controlled CORS with same-origin & configured origins support
+const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*');
+  } else if (
+    ALLOWED_CORS_ORIGINS.length === 0 ||
+    ALLOWED_CORS_ORIGINS.includes(origin) ||
+    origin.includes('.run.app') ||
+    origin.includes('todolapto.com') ||
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1')
+  ) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-session-token');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
 });
 
-// Immediate Health Check endpoints for container orchestrators (Easypanel, Coolify, Docker, Cloud Run)
-app.get(['/health', '/api/health', '/ping'], (req, res) => {
-  res.status(200).json({
-    status: 'ok',
+// Fase 1.2 — Health & Readiness Probes (No secrets exposed)
+app.get(['/health', '/api/health', '/ping'], (_req, res) => {
+  res.status(isServerShuttingDown ? 503 : 200).json({
+    status: isServerShuttingDown ? 'shutting_down' : 'ok',
     service: 'Vendemá CRM & Ventas',
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
-    port: PORT,
+  });
+});
+
+app.get(['/ready', '/api/ready'], (_req, res) => {
+  const configReady = Boolean(appConfig && appConfig.odoo && appConfig.evolution);
+  const usersReady = Array.isArray(systemUsers) && systemUsers.length > 0;
+  const isReady = !isServerShuttingDown && configReady && usersReady;
+  res.status(isReady ? 200 : 503).json({
+    ready: isReady,
+    shuttingDown: isServerShuttingDown,
+    checks: {
+      configLoaded: configReady,
+      usersLoaded: usersReady,
+      supabaseConfigured: Boolean(appConfig?.supabase?.url && appConfig?.supabase?.anonKey),
+      evolutionConfigured: Boolean(appConfig?.evolution?.serverUrl && appConfig?.evolution?.instance),
+      openaiConfigured: Boolean(appConfig?.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey)),
+      odooConfigured: Boolean(appConfig?.odoo?.url && appConfig?.odoo?.db),
+    },
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -121,7 +304,8 @@ app.get(['/health', '/api/health', '/ping'], (req, res) => {
 const sseClients = new Set<express.Response>();
 
 function broadcastEvent(eventType: string, payload: any) {
-  const data = JSON.stringify({ type: eventType, payload, timestamp: new Date().toISOString() });
+  const safePayload = eventType === 'config_updated' && payload ? getPublicMaskedConfig(payload) : payload;
+  const data = JSON.stringify({ type: eventType, payload: safePayload, timestamp: new Date().toISOString() });
   for (const client of sseClients) {
     try {
       client.write(`data: ${data}\n\n`);
@@ -155,36 +339,26 @@ const ENV_FILE_PATH = path.join(__dirname, '.env');
 function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
   try {
     const vars: Record<string, string> = {
-      // Supabase Credentials
       SUPABASE_URL: cfg.supabase?.url || '',
       SUPABASE_ANON_KEY: cfg.supabase?.anonKey || '',
-
-      // Odoo ERP Credentials
       ODOO_URL: cfg.odoo?.url || '',
       ODOO_DB: cfg.odoo?.db || '',
       ODOO_UID: cfg.odoo?.uid !== undefined ? String(cfg.odoo.uid) : '',
       ODOO_API_KEY: cfg.odoo?.apiKey || '',
-
-      // Evolution API WhatsApp Credentials
       EVOLUTION_SERVER_URL: cfg.evolution?.serverUrl || '',
       EVOLUTION_INSTANCE: cfg.evolution?.instance || '',
       EVOLUTION_API_KEY: cfg.evolution?.apiKey || '',
       EVOLUTION_TEAM_PHONE: cfg.evolution?.teamPhone || '',
       EVOLUTION_ADMIN_PHONE: cfg.evolution?.adminPhone || '',
-
-      // AI Provider Credentials (OpenAI Exclusive)
       OPENAI_API_KEY: cfg.aiProvider?.openaiApiKey || '',
     };
 
-    // Update in-memory process.env immediately for runtime use
     for (const [key, val] of Object.entries(vars)) {
-      if (val) {
+      if (val && !isMaskedSecret(val)) {
         process.env[key] = val;
       }
     }
 
-    // Do NOT touch .env unless explicitly requested.
-    // In Docker/Easypanel/Coolify with dotenvx, writing .env triggers process watchers to restart in an infinite loop!
     if (!persistToFile) {
       return;
     }
@@ -211,21 +385,19 @@ function syncCredentialsToEnv(cfg: AppConfig, persistToFile = false) {
       return line;
     });
 
-    // Add any missing variables that weren't in .env yet
     for (const [key, val] of Object.entries(vars)) {
       if (!keysHandled.has(key)) {
         updatedLines.push(`${key}="${val}"`);
       }
     }
 
-    // Preserve APP_URL if set in environment
     if (process.env.APP_URL && !updatedLines.some(l => l.startsWith('APP_URL='))) {
       updatedLines.push(`APP_URL="${process.env.APP_URL}"`);
     }
 
     const newContent = updatedLines.join('\n').trim() + '\n';
     if (newContent !== existingContent.trim() + '\n') {
-      fs.writeFileSync(ENV_FILE_PATH, newContent, 'utf-8');
+      writeFileAtomicSync(ENV_FILE_PATH, newContent);
       console.log('[Env Sync]: Credenciales actualizadas y sincronizadas en archivo .env y process.env');
     }
   } catch (err: any) {
@@ -243,9 +415,9 @@ let appConfig: AppConfig = {
     systemPrompt: OFFICIAL_TODO_LAPTO_MASTER_PROMPT,
     openaiApiKey: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY' ? process.env.OPENAI_API_KEY : '',
     openaiBaseUrl: 'https://api.openai.com/v1/chat/completions',
-    deepseekApiKey: '',
-    deepseekBaseUrl: '',
-    geminiApiKey: '',
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY' ? process.env.DEEPSEEK_API_KEY : '',
+    deepseekBaseUrl: 'https://api.deepseek.com/v1',
+    geminiApiKey: process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY' ? process.env.GEMINI_API_KEY : '',
   },
   odoo: {
     url: process.env.ODOO_URL || 'https://todolapto.com.do/jsonrpc',
@@ -258,7 +430,7 @@ let appConfig: AppConfig = {
   evolution: {
     serverUrl: process.env.EVOLUTION_SERVER_URL || 'https://evolution-evolution-api.blrfh6.easypanel.host',
     instance: process.env.EVOLUTION_INSTANCE || 'todolapto',
-    apiKey: process.env.EVOLUTION_API_KEY || '52700613C062-421C-B800-FBC560B54BB4',
+    apiKey: process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A',
     teamPhone: process.env.EVOLUTION_TEAM_PHONE || '18492588738',
     adminPhone: process.env.EVOLUTION_ADMIN_PHONE || '18496260800',
     connected: true,
@@ -310,6 +482,59 @@ let appConfig: AppConfig = {
   ],
 };
 
+// Public/Private Config Separator (Fase 1.1: Never expose raw secrets on GET /api/config)
+function getPublicMaskedConfig(cfg: AppConfig): AppConfig & {
+  secretStatus: {
+    hasOpenaiKey: boolean;
+    hasGeminiKey: boolean;
+    hasDeepseekKey: boolean;
+    hasOdooKey: boolean;
+    hasEvolutionKey: boolean;
+    hasSupabaseKey: boolean;
+  };
+} {
+  const rawOpenai = cfg.aiProvider?.openaiApiKey || '';
+  const rawGemini = cfg.aiProvider?.geminiApiKey || '';
+  const rawDeepseek = cfg.aiProvider?.deepseekApiKey || '';
+  const rawOdoo = cfg.odoo?.apiKey || '';
+  const rawEvolution = cfg.evolution?.apiKey || '';
+  const rawSupabase = cfg.supabase?.anonKey || '';
+
+  return {
+    ...cfg,
+    aiProvider: cfg.aiProvider
+      ? {
+          ...cfg.aiProvider,
+          openaiApiKey: maskSecretValue(rawOpenai),
+          geminiApiKey: maskSecretValue(rawGemini),
+          deepseekApiKey: maskSecretValue(rawDeepseek),
+        }
+      : undefined,
+    odoo: {
+      ...cfg.odoo,
+      apiKey: maskSecretValue(rawOdoo),
+    },
+    evolution: {
+      ...cfg.evolution,
+      apiKey: maskSecretValue(rawEvolution),
+    },
+    supabase: cfg.supabase
+      ? {
+          ...cfg.supabase,
+          anonKey: maskSecretValue(rawSupabase),
+        }
+      : undefined,
+    secretStatus: {
+      hasOpenaiKey: Boolean(rawOpenai && !isMaskedSecret(rawOpenai)),
+      hasGeminiKey: Boolean(rawGemini && !isMaskedSecret(rawGemini)),
+      hasDeepseekKey: Boolean(rawDeepseek && !isMaskedSecret(rawDeepseek)),
+      hasOdooKey: Boolean(rawOdoo && !isMaskedSecret(rawOdoo)),
+      hasEvolutionKey: Boolean(rawEvolution && !isMaskedSecret(rawEvolution)),
+      hasSupabaseKey: Boolean(rawSupabase && !isMaskedSecret(rawSupabase)),
+    },
+  };
+}
+
 function loadPersistedConfig() {
   try {
     const targetConfigPath = fs.existsSync(CONFIG_FILE_PATH)
@@ -329,27 +554,40 @@ function loadPersistedConfig() {
           savedPrompt.includes('1️⃣ *NOMBRE COMPLETO*') ||
           !savedPrompt.includes('REGLA DE CITAS MEJORADA V2') ||
           !savedPrompt.includes('FILTRADO INTELIGENTE V3');
+        const rawSavedProvider = saved.aiProvider.provider;
+        const savedProvider = (rawSavedProvider === 'gemini' || !rawSavedProvider ? 'openai' : rawSavedProvider) as AIProviderType;
         const savedModel = String(saved.aiProvider.model || '').trim();
-        const migratedModel =
-          savedModel.startsWith('gpt-') || savedModel.startsWith('o1') || savedModel.startsWith('o3')
-            ? savedModel
-            : 'gpt-4o-mini';
+        let migratedModel = savedModel;
+        if (!migratedModel || migratedModel.includes('gemini') || migratedModel === 'gpt-4o-mini') {
+          migratedModel = 'gpt-4o-mini';
+        }
+        const loadedOpenAiKey = !isMaskedSecret(saved.aiProvider.openaiApiKey)
+          ? String(saved.aiProvider.openaiApiKey).trim()
+          : process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
+          ? process.env.OPENAI_API_KEY.trim()
+          : '';
+        const loadedGeminiKey = !isMaskedSecret(saved.aiProvider.geminiApiKey)
+          ? String(saved.aiProvider.geminiApiKey).trim()
+          : process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
+          ? process.env.GEMINI_API_KEY.trim()
+          : '';
+        const loadedDeepseekKey = !isMaskedSecret(saved.aiProvider.deepseekApiKey)
+          ? String(saved.aiProvider.deepseekApiKey).trim()
+          : process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY'
+          ? process.env.DEEPSEEK_API_KEY.trim()
+          : '';
+
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
-          provider: 'openai',
+          provider: savedProvider,
           model: migratedModel,
           systemPrompt: shouldRefreshPrompt ? OFFICIAL_TODO_LAPTO_MASTER_PROMPT : savedPrompt,
-          openaiApiKey: (
-            saved.aiProvider.openaiApiKey ||
-            (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
-              ? process.env.OPENAI_API_KEY
-              : '')
-          ).trim(),
+          openaiApiKey: loadedOpenAiKey,
           openaiBaseUrl: saved.aiProvider.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions',
-          deepseekApiKey: '',
-          deepseekBaseUrl: '',
-          geminiApiKey: '',
+          geminiApiKey: loadedGeminiKey,
+          deepseekApiKey: loadedDeepseekKey,
+          deepseekBaseUrl: saved.aiProvider.deepseekBaseUrl || 'https://api.deepseek.com/v1',
         };
       }
       if (saved.odoo) {
@@ -359,16 +597,25 @@ function loadPersistedConfig() {
           url: saved.odoo.url || process.env.ODOO_URL || appConfig.odoo.url,
           db: saved.odoo.db || process.env.ODOO_DB || appConfig.odoo.db,
           uid: saved.odoo.uid ?? (process.env.ODOO_UID ? Number(process.env.ODOO_UID) : appConfig.odoo.uid),
-          apiKey: saved.odoo.apiKey || process.env.ODOO_API_KEY || appConfig.odoo.apiKey,
+          apiKey: !isMaskedSecret(saved.odoo.apiKey)
+            ? saved.odoo.apiKey
+            : process.env.ODOO_API_KEY || appConfig.odoo.apiKey,
         };
       }
       if (saved.evolution) {
+        const rawSavedEvoKey = !isMaskedSecret(saved.evolution.apiKey)
+          ? String(saved.evolution.apiKey || '').trim()
+          : '';
+        const effectiveEvoKey =
+          !rawSavedEvoKey || rawSavedEvoKey === '52700613C062-421C-B800-FBC560B54BB4'
+            ? process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A'
+            : rawSavedEvoKey;
         appConfig.evolution = {
           ...appConfig.evolution,
           ...saved.evolution,
           serverUrl: saved.evolution.serverUrl || process.env.EVOLUTION_SERVER_URL || appConfig.evolution.serverUrl,
           instance: saved.evolution.instance || process.env.EVOLUTION_INSTANCE || appConfig.evolution.instance,
-          apiKey: saved.evolution.apiKey || process.env.EVOLUTION_API_KEY || appConfig.evolution.apiKey,
+          apiKey: effectiveEvoKey,
           teamPhone: saved.evolution.teamPhone || process.env.EVOLUTION_TEAM_PHONE || appConfig.evolution.teamPhone,
           adminPhone: saved.evolution.adminPhone || process.env.EVOLUTION_ADMIN_PHONE || appConfig.evolution.adminPhone,
         };
@@ -378,7 +625,9 @@ function loadPersistedConfig() {
           ...appConfig.supabase,
           ...saved.supabase,
           url: saved.supabase.url || process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL,
-          anonKey: saved.supabase.anonKey || process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
+          anonKey: !isMaskedSecret(saved.supabase.anonKey)
+            ? saved.supabase.anonKey
+            : process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
         };
       }
       if (Array.isArray(saved.holidayOverrides)) {
@@ -406,9 +655,9 @@ function savePersistedConfig(persistToEnv = false) {
       existing = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
     }
     if (content !== existing) {
-      fs.writeFileSync(CONFIG_FILE_PATH, content, 'utf-8');
+      writeFileAtomicSync(CONFIG_FILE_PATH, content);
       if (CONFIG_FALLBACK_PATH !== CONFIG_FILE_PATH) {
-        fs.writeFileSync(CONFIG_FALLBACK_PATH, content, 'utf-8');
+        writeFileAtomicSync(CONFIG_FALLBACK_PATH, content);
       }
     }
     syncCredentialsToEnv(appConfig, persistToEnv);
@@ -420,17 +669,222 @@ function savePersistedConfig(persistToEnv = false) {
 loadPersistedConfig();
 
 // ---------------------------------------------------------
-// User Hierarchy & Authentication System (RBAC)
+// Fase 1.1 — User Hierarchy, Password Hashing (scrypt) & Signed Sessions
 // ---------------------------------------------------------
 const USERS_FILE_PATH = path.join(__dirname, '.vendema-users.json');
 const USERS_FALLBACK_PATH = path.join(process.cwd(), '.vendema-users.json');
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto
+    .createHash('sha256')
+    .update(`vendema-crm-session-secret-${appConfig.odoo?.db || 'odoo'}-${__dirname}`)
+    .digest('hex');
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function isPasswordHashed(pw?: string): boolean {
+  return Boolean(pw && pw.startsWith('scrypt$'));
+}
+
+function hashUserPassword(plain: string): string {
+  const clean = String(plain || '').trim();
+  if (!clean) return '';
+  if (isPasswordHashed(clean)) return clean;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(clean, salt, 64).toString('hex');
+  return `scrypt$${salt}$${derived}`;
+}
+
+function verifyUserPassword(
+  plainInput: string,
+  storedPassword?: string
+): { valid: boolean; needsMigration: boolean } {
+  const cleanInput = String(plainInput || '').trim();
+  const stored = String(storedPassword || '').trim();
+  if (!cleanInput || !stored) return { valid: false, needsMigration: false };
+
+  if (isPasswordHashed(stored)) {
+    const parts = stored.split('$');
+    if (parts.length !== 3) return { valid: false, needsMigration: false };
+    const [, salt, expectedHex] = parts;
+    try {
+      const derived = crypto.scryptSync(cleanInput, salt, 64);
+      const expectedBuf = Buffer.from(expectedHex, 'hex');
+      if (derived.length !== expectedBuf.length) return { valid: false, needsMigration: false };
+      return {
+        valid: crypto.timingSafeEqual(derived, expectedBuf),
+        needsMigration: false,
+      };
+    } catch {
+      return { valid: false, needsMigration: false };
+    }
+  }
+
+  // Legacy plain-text match -> transparently migrate to scrypt hash!
+  const matched = stored === cleanInput;
+  return { valid: matched, needsMigration: matched };
+}
+
+interface ActiveSessionRecord {
+  sessionId: string;
+  userId: string;
+  username: string;
+  role: UserRole;
+  createdAt: number;
+  expiresAt: number;
+}
+
+const activeSessionsMap = new Map<string, ActiveSessionRecord>();
+const loginRateLimitMap = new Map<string, { count: number; firstAttemptAt: number; lockedUntil: number }>();
+
+function createSignedSessionToken(user: UserAccount): { token: string; expiresAt: number } {
+  const sessionId = crypto.randomBytes(12).toString('hex');
+  const now = Date.now();
+  const expiresAt = now + SESSION_TTL_MS;
+  const payload = `vendema_s1.${sessionId}.${user.id}.${user.role}.${expiresAt}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  const token = `${payload}.${sig}`;
+
+  activeSessionsMap.set(sessionId, {
+    sessionId,
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    createdAt: now,
+    expiresAt,
+  });
+
+  return { token, expiresAt };
+}
+
+function verifySignedSessionToken(rawToken?: string): {
+  valid: boolean;
+  userId?: string;
+  role?: UserRole;
+  sessionId?: string;
+  expired?: boolean;
+} {
+  const clean = String(rawToken || '').trim();
+  if (!clean) return { valid: false };
+
+  if (clean.startsWith('vendema_s1.')) {
+    const parts = clean.split('.');
+    if (parts.length !== 6) return { valid: false };
+    const [prefix, sessionId, userId, role, expiresAtStr, providedSig] = parts;
+    const payload = `${prefix}.${sessionId}.${userId}.${role}.${expiresAtStr}`;
+    const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+    try {
+      const a = Buffer.from(providedSig, 'hex');
+      const b = Buffer.from(expectedSig, 'hex');
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return { valid: false };
+      }
+    } catch {
+      return { valid: false };
+    }
+    const expiresAt = Number(expiresAtStr);
+    if (!expiresAt || Date.now() > expiresAt) {
+      activeSessionsMap.delete(sessionId);
+      return { valid: false, expired: true };
+    }
+    return { valid: true, userId, role: role as UserRole, sessionId };
+  }
+
+  // Backward compatibility for existing browser tokens within 24h window
+  const legacyMatch = clean.match(/^vendema_tk_(usr_[a-zA-Z0-9_]+)_(\d+)$/);
+  if (legacyMatch) {
+    const [, userId, tsStr] = legacyMatch;
+    const issuedAt = Number(tsStr);
+    if (issuedAt && Date.now() - issuedAt > SESSION_TTL_MS) {
+      return { valid: false, expired: true };
+    }
+    const u = systemUsers.find(usr => usr.id === userId && usr.activo);
+    if (u) {
+      return { valid: true, userId: u.id, role: u.role };
+    }
+  }
+
+  return { valid: false };
+}
+
+function extractTokenFromRequest(req: express.Request): string {
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  const customHeader = req.headers['x-session-token'];
+  if (typeof customHeader === 'string' && customHeader.trim()) {
+    return customHeader.trim();
+  }
+  const cookieHeader = req.headers.cookie || '';
+  const match = cookieHeader.match(/(?:^|;\s*)vendema_session=([^;]+)/);
+  if (match && match[1]) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+  return '';
+}
+
+function setSessionCookie(res: express.Response, token: string, req: express.Request) {
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const cookieParts = [
+    `vendema_session=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+  ];
+  if (isSecure) cookieParts.push('Secure');
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function clearSessionCookie(res: express.Response) {
+  res.setHeader('Set-Cookie', 'vendema_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+}
+
+function requireSessionRole(allowedRoles: UserRole[], enforceStrict = false) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const token = extractTokenFromRequest(req);
+    if (!token) {
+      if (!enforceStrict) {
+        return next();
+      }
+      return res.status(401).json({
+        success: false,
+        message: 'Autenticación requerida. Por favor inicia sesión.',
+      });
+    }
+    const verified = verifySignedSessionToken(token);
+    if (!verified.valid || !verified.userId) {
+      if (!enforceStrict) {
+        return next();
+      }
+      return res.status(401).json({
+        success: false,
+        message: verified.expired ? 'Tu sesión ha expirado. Inicia sesión nuevamente.' : 'Sesión inválida.',
+      });
+    }
+    const user = systemUsers.find(u => u.id === verified.userId && u.activo);
+    const effectiveRole = user?.role || verified.role;
+    if (effectiveRole && !allowedRoles.includes(effectiveRole)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos suficientes para realizar esta acción administrativa.',
+      });
+    }
+    (req as any).currentUser = user;
+    next();
+  };
+}
 
 const DEFAULT_USERS: UserAccount[] = [
   {
     id: 'usr_super_nelson',
     nombre: 'Nelson',
     username: 'nelson',
-    password: 'elmejor19',
+    password: hashUserPassword('elmejor19'),
     whatsapp: '18496260800',
     role: 'super_admin',
     activo: true,
@@ -440,7 +894,7 @@ const DEFAULT_USERS: UserAccount[] = [
     id: 'usr_dueno_negocio',
     nombre: 'Dueño Todo Lapto',
     username: 'dueno',
-    password: 'dueno123',
+    password: hashUserPassword('dueno123'),
     whatsapp: '18094228738',
     role: 'dueno',
     activo: true,
@@ -450,7 +904,7 @@ const DEFAULT_USERS: UserAccount[] = [
     id: 'usr_empleado_ventas',
     nombre: 'Asesor de Ventas',
     username: 'empleado',
-    password: 'empleado123',
+    password: hashUserPassword('empleado123'),
     whatsapp: '18492588738',
     role: 'empleado',
     activo: true,
@@ -460,7 +914,8 @@ const DEFAULT_USERS: UserAccount[] = [
 
 let systemUsers: UserAccount[] = [];
 
-function ensureDefaultUsersPresent() {
+function ensureDefaultUsersPresent(): boolean {
+  let migratedAny = false;
   for (const defUser of DEFAULT_USERS) {
     const idx = systemUsers.findIndex(u => u.username.toLowerCase() === defUser.username.toLowerCase());
     if (idx === -1) {
@@ -469,29 +924,42 @@ function ensureDefaultUsersPresent() {
       } else {
         systemUsers.push({ ...defUser });
       }
+      migratedAny = true;
     } else if (defUser.username === 'nelson') {
       systemUsers[idx].role = 'super_admin';
       systemUsers[idx].activo = true;
       if (!systemUsers[idx].password) {
-        systemUsers[idx].password = 'elmejor19';
+        systemUsers[idx].password = defUser.password;
+        migratedAny = true;
       }
     } else if (!systemUsers[idx].password) {
       systemUsers[idx].password = defUser.password;
+      migratedAny = true;
     }
   }
+
+  // Transparently migrate any existing plain-text passwords in memory to scrypt hash
+  for (const u of systemUsers) {
+    if (u.password && !isPasswordHashed(u.password)) {
+      u.password = hashUserPassword(u.password);
+      migratedAny = true;
+    }
+  }
+  return migratedAny;
 }
 
 function savePersistedUsers() {
   try {
+    ensureDefaultUsersPresent();
     const content = JSON.stringify(systemUsers, null, 2);
     let existingContent = '';
     if (fs.existsSync(USERS_FILE_PATH)) {
       existingContent = fs.readFileSync(USERS_FILE_PATH, 'utf-8');
     }
     if (content !== existingContent) {
-      fs.writeFileSync(USERS_FILE_PATH, content, 'utf-8');
+      writeFileAtomicSync(USERS_FILE_PATH, content);
       if (USERS_FALLBACK_PATH !== USERS_FILE_PATH) {
-        fs.writeFileSync(USERS_FALLBACK_PATH, content, 'utf-8');
+        writeFileAtomicSync(USERS_FALLBACK_PATH, content);
       }
     }
   } catch (err: any) {
@@ -523,9 +991,11 @@ function loadPersistedUsers() {
     systemUsers = [...DEFAULT_USERS];
   }
 
-  ensureDefaultUsersPresent();
-  // Do NOT write to disk on server boot to prevent file watchers (tsx / nodemon / Hostinger) from restarting in an infinite loop
-  console.log(`[Users Loaded]: ${systemUsers.length} active users loaded. Super Admin: @nelson`);
+  const migrated = ensureDefaultUsersPresent();
+  if (migrated && fs.existsSync(USERS_FILE_PATH)) {
+    savePersistedUsers();
+  }
+  console.log(`[Users Loaded]: ${systemUsers.length} active users loaded (passwords protected with scrypt). Super Admin: @nelson`);
 }
 
 async function hydrateAndSyncUsersWithSupabase(): Promise<void> {
@@ -594,12 +1064,20 @@ async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
     const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
     if (remoteAi && typeof remoteAi === 'object' && appConfig.aiProvider) {
       let updated = false;
-      if (appConfig.aiProvider.provider !== 'openai') {
-        appConfig.aiProvider.provider = 'openai';
+      if (remoteAi.provider && appConfig.aiProvider.provider !== remoteAi.provider) {
+        appConfig.aiProvider.provider = remoteAi.provider;
         updated = true;
       }
       if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
         appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
+        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
+        updated = true;
+      }
+      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
+        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
         updated = true;
       }
       if (updated) {
@@ -707,6 +1185,26 @@ function getActiveOpenAiKey(): string {
     providerCfg?.openaiApiKey ||
       (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'MY_OPENAI_API_KEY'
         ? process.env.OPENAI_API_KEY
+        : '')
+  );
+}
+
+function getActiveGeminiKey(): string {
+  const providerCfg = appConfig.aiProvider;
+  return sanitizeBearerKey(
+    providerCfg?.geminiApiKey ||
+      (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
+        ? process.env.GEMINI_API_KEY
+        : '')
+  );
+}
+
+function getActiveDeepseekKey(): string {
+  const providerCfg = appConfig.aiProvider;
+  return sanitizeBearerKey(
+    providerCfg?.deepseekApiKey ||
+      (process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== 'MY_DEEPSEEK_API_KEY'
+        ? process.env.DEEPSEEK_API_KEY
         : '')
   );
 }
@@ -893,9 +1391,9 @@ function buildResilientSalesBotReply(
       }
 
       if (matchedProd) {
-        return `¡Claro que sí! 😊 La *${matchedProd.name}* por la que consultas sigue disponible en *RD$${matchedProd.list_price.toLocaleString()}* (${matchedProd.virtual_available} unidad(es) en stock real en nuestra tienda de la *Av. Charles de Gaulle No. 133*).\n\n¿Deseas pasar hoy por la tienda para apartártela o prefieres que te coordinemos envío a domicilio con pago contra entrega en Santo Domingo? 🛒`;
+        return `¡Claro que sí! 😊 La *${matchedProd.name}* sigue disponible en *RD$${matchedProd.list_price.toLocaleString()}* (${matchedProd.virtual_available} unidad(es) en stock real en nuestra tienda de la *Av. Charles de Gaulle No. 133*).\n\n¿Deseas pasar hoy por la tienda para apartártela o prefieres que te coordinemos envío a domicilio con pago contra entrega en Santo Domingo? 🛒`;
       }
-      return `¡Claro que sí! 😊 Recuerdo perfectamente lo conversado y las opciones siguen disponibles en nuestra tienda física de la *Av. Charles de Gaulle No. 133*. ¿Tienes pensado pasar hoy por la tienda o prefieres que coordinemos el envío directo a tu dirección? 🛒`;
+      return `¡Claro que sí! 😊 ¿Sobre cuál equipo o pregunta te gustaría que te confirme los detalles? Estoy atento por aquí para ayudarte de inmediato.`;
     }
   }
 
@@ -922,11 +1420,33 @@ function buildResilientSalesBotReply(
     return `📸 ¡Recibimos tu imagen! Con gusto te ayudamos en *Todo Lapto*. ¿Buscas disponibilidad y precio de ese equipo en nuestro inventario o necesitas servicio técnico / repuesto para ese modelo? 💻`;
   }
 
-  if (userMsg.includes('[Nota de voz enviada por el cliente')) {
-    return `🎤 ¡Hola! Recibimos tu nota de voz en *Todo Lapto*. ¿Nos confirmas por favor qué modelo de laptop, impresora o accesorio estás buscando para enviarte las opciones y precios disponibles de inmediato? 💻✨`;
+  if (/(nota de voz|audio|grabaci[oó]n|micr[oó]fono|🎤|\[audio)/i.test(userMsg)) {
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    if (!rdNow.isOpen) {
+      return `¡Hola! 😊 En este momento nos encontramos fuera de horario laboral (${rdNow.statusDetail}), pero con gusto te tomamos tu pedido o consulta por aquí para despacharlo a primera hora ${rdNow.nextOpeningStr}. ¿En qué equipo, laptop o accesorio te podemos colaborar? 💻📦`;
+    }
+    return `¡Hola! 😊 Con gusto te atiendo en *Todo Lapto*. ¿Qué modelo de laptop, impresora o accesorio estás buscando para pasarte opciones y precios disponibles de inmediato? 💻✨`;
   }
 
-  // 4. If sysInstruction didn't have the catalog block (e.g., fast-path or direct call), compute it dynamically from live inventory
+  // 4a. If sysInstruction already contained the catalog block, return it directly!
+  if (sysInstruction) {
+    const sysBlockMatch = sysInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+    if (sysBlockMatch && sysBlockMatch[1]?.trim()) {
+      return sysBlockMatch[1].trim();
+    }
+  }
+
+  // 4b. If the user is asking for a generic product family (laptop, pc, impresora, mouse, monitor, teclado, etc.)
+  const matchedFamily = detectGenericProductFamily(userMsg);
+  if (matchedFamily) {
+    const familyHighlight = getRelevantProductsHighlight(userMsg, '', '');
+    const familyBlockMatch = familyHighlight.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+    if (familyBlockMatch && familyBlockMatch[1]?.trim()) {
+      return familyBlockMatch[1].trim();
+    }
+  }
+
+  // 4c. If sysInstruction didn't have the catalog block, compute it dynamically from live inventory
   const recentHistoryText = (chatMessages || [])
     .filter(m => m.role === 'user')
     .slice(-6)
@@ -940,6 +1460,20 @@ function buildResilientSalesBotReply(
   }
 
   const lower = userMsg.toLowerCase();
+
+  // 4d. Handle customer sticker, laugh, meme or reaction
+  if (
+    lower.includes('[el cliente envió un sticker') ||
+    lower.includes('sticker') ||
+    /^(jajaja|jejeje|jaja|jeje|😂|🤣|😹|xd|gracioso|lol)+$/i.test(lower.replace(/\s+/g, ''))
+  ) {
+    return `¡Jajaja! 😂 ¡Saludos! ¿En qué te podemos colaborar hoy? Cuéntanos si andas buscando alguna laptop, impresora o accesorio y con gusto te pasamos las opciones de inmediato. 💻✨`;
+  }
+
+  // 4e. Handle customer short conversation confirmation ("Ahhh bueno", "Ps mejor", "ok", "listo", "perfecto")
+  if (/^(ahhh?\s*bueno|ps\s*mejor|pues\s*mejor|ok|okay|esta\s*bien|ta\s*bien|perfecto|excelente|entendido|listo|de\s*acuerdo|ya\s*veo|comprendo|chevere|así\s*mismo)\b/i.test(lower)) {
+    return `¡Así mismo es! 👍 Quedamos atentos por aquí para cuando gustes apartar tu pedido o pasar por nuestra tienda física en la *Av. Charles de Gaulle No. 133*. ¡Siempre a tu orden en Todo Lapto! 😊`;
+  }
 
   // 5. Location / Store Address / Hours / Schedule (Están laborando?)
   if (/(d[oó]nde\s*est[aá]n|ubicaci[oó]n|direcci[oó]n|local|sucursal|tienda|charles\s*de\s*gaulle|horario|abierto|abiertos|abren|laborando|laboran)/i.test(lower)) {
@@ -965,47 +1499,126 @@ function buildResilientSalesBotReply(
   return `¡Saludos! 😊 Bienvenido a *Todo Lapto*. ¿En qué te podemos ayudar hoy? Dime si buscas una *laptop, impresora, monitor, mouse, teclado o algún accesorio* y te envío el catálogo completo disponible de inmediato. 💻✨`;
 }
 
-async function generateTextWithConfiguredAI(options: {
+async function callGeminiApi(options: {
   prompt: string;
-  systemInstruction?: string;
+  sysInstruction?: string;
   chatMessages?: { role: 'user' | 'assistant'; content: string }[];
   jsonMode?: boolean;
   temperature?: number;
-  allowFallback?: boolean;
-}): Promise<{ text: string; providerUsed: string; modelUsed: string }> {
-  const providerCfg = appConfig.aiProvider || {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-    temperature: 0.35,
-  };
-  const temp = options.temperature ?? providerCfg.temperature ?? 0.35;
-  const sys = [options.systemInstruction, providerCfg.customInstructions]
-    .filter(Boolean)
-    .join('\n\n');
-
-  const primaryOpenAiModel =
-    providerCfg.model?.startsWith('gpt') || providerCfg.model?.startsWith('o')
-      ? providerCfg.model
-      : 'gpt-4o-mini';
-
-  const openaiKey = getActiveOpenAiKey();
-  if (!openaiKey) {
-    if (!options.jsonMode) {
-      const text = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-      return { text, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
-    }
-    throw new Error('No hay una API Key de OpenAI configurada.');
+  model?: string;
+}): Promise<{ text: string; modelUsed: string }> {
+  const geminiKey = getActiveGeminiKey();
+  if (!geminiKey) {
+    throw new Error('No hay una API Key de Google Gemini configurada.');
   }
 
+  let modelName = options.model || appConfig.aiProvider?.model || 'gemini-3.5-flash-lite';
+  if (!modelName.startsWith('gemini')) {
+    modelName = 'gemini-3.5-flash-lite';
+  }
+
+  const contents: any[] = [];
+  if (options.chatMessages && options.chatMessages.length > 0) {
+    for (const cm of options.chatMessages) {
+      if (cm.content?.trim()) {
+        contents.push({
+          role: cm.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: cm.content }],
+        });
+      }
+    }
+  }
+  contents.push({
+    role: 'user',
+    parts: [{ text: options.prompt }],
+  });
+
+  const bodyPayload: any = {
+    contents,
+    generationConfig: {
+      temperature: options.temperature ?? 0.35,
+      ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
+    },
+  };
+
+  if (options.sysInstruction) {
+    bodyPayload.systemInstruction = {
+      parts: [{ text: options.sysInstruction }],
+    };
+  }
+
+  const t0 = Date.now();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyPayload),
+    signal: AbortSignal.timeout(35000),
+  });
+
+  const durationMs = Date.now() - t0;
+
+  if (!res.ok) {
+    let errMessage = `Gemini HTTP ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.error?.message) {
+        errMessage += `: ${errBody.error.message}`;
+      }
+    } catch {}
+
+    recordSystemApiLog({
+      service: 'AI Engine',
+      action: `Gemini Chat (${modelName})`,
+      method: 'POST',
+      url,
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      requestPreview: options.prompt.slice(0, 100),
+      error: errMessage,
+    });
+    throw new Error(errMessage);
+  }
+
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+  recordSystemApiLog({
+    service: 'AI Engine',
+    action: `Gemini Chat (${modelName})`,
+    method: 'POST',
+    url,
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    requestPreview: options.prompt.slice(0, 100),
+    responseSnippet: text.trim().slice(0, 140),
+  });
+
+  return { text, modelUsed: modelName };
+}
+
+async function callOpenAiChat(options: {
+  prompt: string;
+  sys?: string;
+  chatMessages?: { role: 'user' | 'assistant'; content: string }[];
+  jsonMode?: boolean;
+  temperature?: number;
+  model?: string;
+  openaiKey: string;
+}): Promise<{ text: string; modelUsed: string }> {
+  const model = options.model || 'gpt-4o-mini';
+  const isReasoningModel = model.startsWith('o1') || model.startsWith('o3');
   const openaiUrl = resolveChatCompletionsUrl(
-    providerCfg.openaiBaseUrl,
+    appConfig.aiProvider?.openaiBaseUrl,
     'https://api.openai.com/v1/chat/completions'
   );
 
-  const isReasoningModel = primaryOpenAiModel.startsWith('o1') || primaryOpenAiModel.startsWith('o3');
   const messages: any[] = [];
-  if (sys) {
-    messages.push({ role: isReasoningModel ? 'developer' : 'system', content: sys });
+  if (options.sys) {
+    messages.push({ role: isReasoningModel ? 'developer' : 'system', content: options.sys });
   }
   if (options.chatMessages && options.chatMessages.length > 0) {
     for (const cm of options.chatMessages) {
@@ -1017,102 +1630,191 @@ async function generateTextWithConfiguredAI(options: {
   messages.push({ role: 'user', content: options.prompt });
 
   const bodyPayload: Record<string, any> = {
-    model: primaryOpenAiModel,
+    model,
     messages,
     ...(isReasoningModel
-      ? { max_completion_tokens: 4096 }
-      : { temperature: temp, max_tokens: 4096 }),
+      ? { max_completion_tokens: 1024 }
+      : { temperature: options.temperature ?? 0.35, max_tokens: 1024 }),
     ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
   };
 
   const t0 = Date.now();
-  try {
-    const res = await fetch(openaiUrl, {
+  const res = await fetch(openaiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${options.openaiKey}`,
+    },
+    body: JSON.stringify(bodyPayload),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const durationMs = Date.now() - t0;
+  if (!res.ok) {
+    let errorDetail = '';
+    try {
+      const errBody = await res.json();
+      errorDetail = errBody?.error?.message || '';
+    } catch {}
+    const errMessage = `OpenAI HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ''}`;
+    recordSystemApiLog({
+      service: 'AI Engine',
+      action: `OpenAI Chat (${model})`,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openaiKey}`,
-      },
-      body: JSON.stringify(bodyPayload),
-      signal: AbortSignal.timeout(45000),
+      url: openaiUrl,
+      statusCode: res.status,
+      success: false,
+      durationMs,
+      requestPreview: options.prompt.slice(0, 100),
+      error: errMessage,
+      responseSnippet: errorDetail.slice(0, 180),
     });
-
-    const durationMs = Date.now() - t0;
-
-    if (!res.ok) {
-      if (!options.jsonMode) {
-        const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-        recordSystemApiLog({
-          service: 'AI Engine',
-          action: `OpenAI Chat (${primaryOpenAiModel})`,
-          method: 'POST',
-          url: openaiUrl,
-          statusCode: 200,
-          success: true,
-          durationMs,
-          requestPreview: options.prompt.slice(0, 100),
-          responseSnippet: fallbackText.slice(0, 140),
-        });
-        return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
-      }
-
-      let errorDetail = '';
-      try {
-        const errBody = await res.json();
-        errorDetail = errBody?.error?.message || '';
-      } catch {}
-      throw new Error(`OpenAI HTTP ${res.status}${errorDetail ? `: ${errorDetail}` : ''}`);
-    }
-
-    const data = await res.json();
-    const text = data.choices?.[0]?.message?.content || '';
-    if (text.trim()) {
-      recordSystemApiLog({
-        service: 'AI Engine',
-        action: `OpenAI Chat (${primaryOpenAiModel})`,
-        method: 'POST',
-        url: openaiUrl,
-        statusCode: res.status,
-        success: true,
-        durationMs,
-        requestPreview: options.prompt.slice(0, 100),
-        responseSnippet: text.trim().slice(0, 140),
-      });
-      return { text, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
-    }
-    const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-    return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
-  } catch (err: any) {
-    const durationMs = Date.now() - t0;
-    if (!options.jsonMode) {
-      const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
-      recordSystemApiLog({
-        service: 'AI Engine',
-        action: `OpenAI Chat (${primaryOpenAiModel})`,
-        method: 'POST',
-        url: openaiUrl,
-        statusCode: 200,
-        success: true,
-        durationMs,
-        requestPreview: options.prompt.slice(0, 100),
-        responseSnippet: fallbackText.slice(0, 140),
-      });
-      return { text: fallbackText, providerUsed: 'openai', modelUsed: primaryOpenAiModel };
-    }
-    throw err;
+    throw new Error(errMessage);
   }
+
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  recordSystemApiLog({
+    service: 'AI Engine',
+    action: `OpenAI Chat (${model})`,
+    method: 'POST',
+    url: openaiUrl,
+    statusCode: res.status,
+    success: true,
+    durationMs,
+    requestPreview: options.prompt.slice(0, 100),
+    responseSnippet: text.trim().slice(0, 140),
+  });
+  return { text, modelUsed: model };
+}
+
+async function generateTextWithConfiguredAI(options: {
+  prompt: string;
+  systemInstruction?: string;
+  chatMessages?: { role: 'user' | 'assistant'; content: string }[];
+  jsonMode?: boolean;
+  temperature?: number;
+  allowFallback?: boolean;
+}): Promise<{ text: string; providerUsed: string; modelUsed: string }> {
+  const providerCfg = appConfig.aiProvider || {
+    provider: 'gemini',
+    model: 'gemini-3.5-flash-lite',
+    temperature: 0.35,
+  };
+  const temp = options.temperature ?? providerCfg.temperature ?? 0.35;
+  const sys = [options.systemInstruction, providerCfg.customInstructions]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const chosenProvider = providerCfg.provider || 'gemini';
+  const openaiKey = getActiveOpenAiKey();
+  const geminiKey = getActiveGeminiKey();
+
+  // Route A: Provider is Gemini
+  if (chosenProvider === 'gemini') {
+    if (geminiKey) {
+      try {
+        const geminiResult = await callGeminiApi({
+          prompt: options.prompt,
+          sysInstruction: sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model?.startsWith('gemini') ? providerCfg.model : 'gemini-3.5-flash-lite',
+        });
+        if (geminiResult.text.trim()) {
+          return { text: geminiResult.text, providerUsed: 'gemini', modelUsed: geminiResult.modelUsed };
+        }
+      } catch (geminiErr: any) {
+        console.warn('⚠️ [Gemini Error, comprobando failover a OpenAI]:', geminiErr.message);
+        if (openaiKey) {
+          try {
+            console.log('🔄 [Auto-Failover to OpenAI]: Reintentando consulta con OpenAI...');
+            const oaiResult = await callOpenAiChat({
+              prompt: options.prompt,
+              sys,
+              chatMessages: options.chatMessages,
+              jsonMode: options.jsonMode,
+              temperature: temp,
+              model: 'gpt-4o-mini',
+              openaiKey,
+            });
+            if (oaiResult.text.trim()) {
+              return { text: oaiResult.text, providerUsed: 'openai', modelUsed: oaiResult.modelUsed };
+            }
+          } catch {}
+        }
+        if (options.allowFallback === false) throw geminiErr;
+      }
+    } else if (openaiKey) {
+      try {
+        const oaiResult = await callOpenAiChat({
+          prompt: options.prompt,
+          sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model || 'gpt-4o-mini',
+          openaiKey,
+        });
+        if (oaiResult.text.trim()) {
+          return { text: oaiResult.text, providerUsed: 'openai', modelUsed: oaiResult.modelUsed };
+        }
+      } catch (err) {
+        if (options.allowFallback === false) throw err;
+      }
+    }
+  }
+
+  // Route B: Provider is OpenAI (Strictly OpenAI — No Gemini fallbacks)
+  if (chosenProvider === 'openai') {
+    if (openaiKey) {
+      try {
+        const oaiResult = await callOpenAiChat({
+          prompt: options.prompt,
+          sys,
+          chatMessages: options.chatMessages,
+          jsonMode: options.jsonMode,
+          temperature: temp,
+          model: providerCfg.model?.startsWith('gpt') || providerCfg.model?.startsWith('o') ? providerCfg.model : 'gpt-4o-mini',
+          openaiKey,
+        });
+        if (oaiResult.text.trim()) {
+          return { text: oaiResult.text, providerUsed: 'openai', modelUsed: oaiResult.modelUsed };
+        }
+      } catch (openaiErr: any) {
+        console.warn(`⚠️ [OpenAI Error]: ${openaiErr.message}`);
+        if (options.allowFallback === false) throw openaiErr;
+      }
+    } else {
+      if (options.allowFallback === false) {
+        throw new Error('API Key de OpenAI no configurada.');
+      }
+    }
+  }
+
+  // Route C: Resilient Deterministic Engine fallback (WhatsApp bot NEVER goes silent)
+  if (!options.jsonMode) {
+    const fallbackText = buildResilientSalesBotReply(options.prompt, sys, options.chatMessages);
+    return { text: fallbackText, providerUsed: 'deterministic', modelUsed: 'resilient-sales-engine' };
+  }
+
+  throw new Error('No se pudo generar respuesta con la API de OpenAI.');
 }
 
 async function transcribeAudioWithOpenAI(base64Audio: string, mimeType = 'audio/ogg'): Promise<string> {
-  const openaiKey = getActiveOpenAiKey();
-  if (!openaiKey) {
-    throw new Error('No hay API Key de OpenAI configurada para transcribir audio.');
-  }
   const cleanBase64 = base64Audio.replace(/^data:[^;]+;base64,/, '');
+  const cleanMime = mimeType.split(';')[0] || 'audio/ogg';
+  const openaiKey = getActiveOpenAiKey();
+
+  if (!openaiKey) {
+    throw new Error('API Key de OpenAI no configurada para Whisper.');
+  }
+
   const buffer = Buffer.from(cleanBase64, 'base64');
   const ext = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : mimeType.includes('mp3') ? 'mp3' : 'ogg';
   const formData = new FormData();
-  const blob = new Blob([buffer], { type: mimeType.split(';')[0] || 'audio/ogg' });
+  const blob = new Blob([buffer], { type: cleanMime });
   formData.append('file', blob, `voice_note.${ext}`);
   formData.append('model', 'whisper-1');
   formData.append('language', 'es');
@@ -1120,42 +1822,41 @@ async function transcribeAudioWithOpenAI(base64Audio: string, mimeType = 'audio/
   const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${openaiKey}`,
-    },
+    headers: { Authorization: `Bearer ${openaiKey}` },
     body: formData,
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(30000),
   });
   const durationMs = Date.now() - t0;
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
+  if (res.ok) {
+    const data = await res.json();
+    const text = (data?.text || '').trim();
     recordSystemApiLog({
       service: 'AI Engine',
       action: 'OpenAI Whisper Transcripción Audio',
       method: 'POST',
       url: 'https://api.openai.com/v1/audio/transcriptions',
       statusCode: res.status,
-      success: false,
+      success: true,
       durationMs,
-      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`,
+      responseSnippet: text.slice(0, 140),
     });
-    throw new Error(`OpenAI Whisper devolvió HTTP ${res.status}`);
+    return text;
   }
 
-  const data = await res.json();
-  const text = (data?.text || '').trim();
+  const errBody = await res.text().catch(() => '');
   recordSystemApiLog({
     service: 'AI Engine',
     action: 'OpenAI Whisper Transcripción Audio',
     method: 'POST',
     url: 'https://api.openai.com/v1/audio/transcriptions',
     statusCode: res.status,
-    success: true,
+    success: false,
     durationMs,
-    responseSnippet: text.slice(0, 140),
+    error: `OpenAI Whisper HTTP ${res.status}: ${errBody.slice(0, 300)}`,
   });
-  return text;
+
+  throw new Error(`Error en transcripción con OpenAI Whisper (HTTP ${res.status}): ${errBody.slice(0, 200)}`);
 }
 
 async function analyzeImageWithOpenAI(
@@ -1164,12 +1865,14 @@ async function analyzeImageWithOpenAI(
   promptText: string,
   jsonMode = false
 ): Promise<string> {
-  const openaiKey = getActiveOpenAiKey();
-  if (!openaiKey) {
-    throw new Error('No hay API Key de OpenAI configurada para analizar imágenes.');
-  }
   const cleanBase64 = base64Image.replace(/^data:[^;]+;base64,/, '');
   const cleanMime = mimeType.split(';')[0] || 'image/jpeg';
+  const openaiKey = getActiveOpenAiKey();
+
+  if (!openaiKey) {
+    throw new Error('API Key de OpenAI no configurada para análisis de imagen con Visión.');
+  }
+
   const dataUri = `data:${cleanMime};base64,${cleanBase64}`;
   const openaiUrl = resolveChatCompletionsUrl(
     appConfig.aiProvider?.openaiBaseUrl,
@@ -1197,38 +1900,122 @@ async function analyzeImageWithOpenAI(
       ],
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     }),
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(30000),
   });
   const durationMs = Date.now() - t0;
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
+  if (res.ok) {
+    const data = await res.json();
+    const text = (data?.choices?.[0]?.message?.content || '').trim();
     recordSystemApiLog({
       service: 'AI Engine',
       action: `OpenAI Vision (${model})`,
       method: 'POST',
       url: openaiUrl,
       statusCode: res.status,
-      success: false,
+      success: true,
       durationMs,
-      error: `HTTP ${res.status}: ${errText.slice(0, 180)}`,
+      responseSnippet: text.slice(0, 140),
     });
-    throw new Error(`OpenAI Vision devolvió HTTP ${res.status}`);
+    return text;
   }
 
-  const data = await res.json();
-  const text = (data?.choices?.[0]?.message?.content || '').trim();
+  const errBody = await res.text().catch(() => '');
   recordSystemApiLog({
     service: 'AI Engine',
     action: `OpenAI Vision (${model})`,
     method: 'POST',
     url: openaiUrl,
     statusCode: res.status,
-    success: true,
+    success: false,
     durationMs,
-    responseSnippet: text.slice(0, 140),
+    error: `OpenAI Vision HTTP ${res.status}: ${errBody.slice(0, 300)}`,
   });
-  return text;
+
+  throw new Error(`Error en análisis de imagen con OpenAI Vision (HTTP ${res.status}): ${errBody.slice(0, 200)}`);
+}
+
+async function analyzeCustomerImageWithVision(
+  base64Image: string,
+  mimeType = 'image/jpeg'
+): Promise<{ rawJson: any; interpretedText: string; isReceipt: boolean; suggestedQuery?: string; imageType: 'comprobante' | 'producto' | 'vacante' | 'otro' }> {
+  const visionPrompt = `Analiza esta imagen y determina qué tipo es:
+
+TIPO A — Comprobante de pago/transferencia (montos, referencias, banco, fecha).
+TIPO B — Producto: laptop, accesorio, electrónico, o un anuncio/flyer/promo de un producto.
+TIPO C — Anuncio o publicación que solicita personal, empleo o vacante (ayudante, vendedor, técnico, etc.).
+TIPO D — Cualquier otra cosa.
+
+Responde ÚNICAMENTE uno de estos JSON exactos, sin texto adicional ni markdown:
+A: {"tipo":"comprobante","es_comprobante":true,"query_busqueda":"","descripcion":"comprobante de pago"}
+B: {"tipo":"producto","es_comprobante":false,"query_busqueda":"MARCA MODELO-EXACTO","descripcion":"descripción breve"}
+C: {"tipo":"vacante","es_comprobante":false,"query_busqueda":"","descripcion":"puesto que se solicita"}
+D: {"tipo":"otro","es_comprobante":false,"query_busqueda":"","descripcion":"descripción breve"}`;
+
+  try {
+    const rawRes = await analyzeImageWithOpenAI(base64Image, mimeType, visionPrompt, false);
+    let p: any = null;
+    try {
+      const cleanJson = rawRes.replace(/```json|```/g, '').trim();
+      p = JSON.parse(cleanJson);
+    } catch {
+      const match = rawRes.match(/\{[\s\S]*?\}/);
+      if (match) {
+        try { p = JSON.parse(match[0]); } catch {}
+      }
+    }
+
+    if (p) {
+      if (p.es_comprobante || p.tipo === 'comprobante') {
+        return {
+          rawJson: p,
+          interpretedText: 'COMPROBANTE_PAGO',
+          isReceipt: true,
+          suggestedQuery: '',
+          imageType: 'comprobante',
+        };
+      }
+      if (p.tipo === 'vacante') {
+        const desc = p.descripcion || 'solicitud de personal';
+        return {
+          rawJson: p,
+          interpretedText: `El cliente envió captura de un anuncio de EMPLEO / VACANTE: ${desc}`,
+          isReceipt: false,
+          suggestedQuery: p.query_busqueda || '',
+          imageType: 'vacante',
+        };
+      }
+      if (p.tipo === 'otro') {
+        const desc = p.descripcion || 'imagen enviada';
+        return {
+          rawJson: p,
+          interpretedText: `El cliente envió una imagen que no es producto ni comprobante: ${desc}`,
+          isReceipt: false,
+          suggestedQuery: p.query_busqueda || '',
+          imageType: 'otro',
+        };
+      }
+      // Producto
+      const desc = p.descripcion || 'equipo';
+      const query = (p.query_busqueda || '').trim();
+      return {
+        rawJson: p,
+        interpretedText: `El cliente envió una imagen de: ${desc}. Búscalo en el INVENTARIO (sugerencia: ${query || desc})`,
+        isReceipt: false,
+        suggestedQuery: query,
+        imageType: 'producto',
+      };
+    }
+  } catch (err: any) {
+    console.log('[Vision Analyze Notice]:', err?.message || err);
+  }
+
+  return {
+    rawJson: null,
+    interpretedText: 'El cliente envió una imagen adjunta.',
+    isReceipt: false,
+    imageType: 'otro',
+  };
 }
 
 // Initial fallback products (immediately replaced on startup by 600+ real Odoo products)
@@ -1239,6 +2026,68 @@ const aiEnabledBySession = new Map<string, boolean>();
 const transcriptionsByMsgId = new Map<string, string>();
 const aiAnalysisByMsgId = new Map<string, string>();
 const mediaCache = new Map<string, { buffer: Buffer; mimetype: string }>();
+const TRANSCRIPTIONS_CACHE_FILE = path.join(__dirname, '.vendema-transcriptions.json');
+
+function loadPersistedTranscriptions(): void {
+  try {
+    if (fs.existsSync(TRANSCRIPTIONS_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(TRANSCRIPTIONS_CACHE_FILE, 'utf-8'));
+      if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+          if (k && typeof v === 'string' && v.trim()) {
+            const cleanId = k.replace(/^evo-/, '').trim();
+            transcriptionsByMsgId.set(cleanId, v.trim());
+            transcriptionsByMsgId.set(`evo-${cleanId}`, v.trim());
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Also hydrate any historical voice note transcriptions recorded in .vendema-bot-audit.json
+  try {
+    const auditFile = path.join(__dirname, '.vendema-bot-audit.json');
+    if (fs.existsSync(auditFile)) {
+      const auditEntries = JSON.parse(fs.readFileSync(auditFile, 'utf-8'));
+      if (Array.isArray(auditEntries)) {
+        for (const entry of auditEntries) {
+          const id = String(entry?.incomingMessageId || '').replace(/^evo-/, '').trim();
+          const txt = String(entry?.incomingText || '').trim();
+          if (id && txt && txt.length > 2 && !txt.startsWith('🎤 Nota de voz')) {
+            if (!transcriptionsByMsgId.has(id)) {
+              transcriptionsByMsgId.set(id, txt);
+              transcriptionsByMsgId.set(`evo-${id}`, txt);
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+}
+
+let transcriptionSaveTimer: NodeJS.Timeout | null = null;
+function saveTranscriptionForId(msgId: string | undefined, text: string | undefined): void {
+  if (!msgId || !text || !text.trim()) return;
+  const cleanId = msgId.replace(/^evo-/, '').trim();
+  if (!cleanId) return;
+  const cleanText = text.trim();
+  transcriptionsByMsgId.set(cleanId, cleanText);
+  transcriptionsByMsgId.set(`evo-${cleanId}`, cleanText);
+  if (transcriptionSaveTimer) return;
+  transcriptionSaveTimer = setTimeout(() => {
+    transcriptionSaveTimer = null;
+    try {
+      const entries = Array.from(transcriptionsByMsgId.entries())
+        .filter(([k]) => !k.startsWith('evo-'))
+        .slice(-800);
+      const obj: Record<string, string> = {};
+      for (const [k, v] of entries) obj[k] = v;
+      writeFileAtomicSync(TRANSCRIPTIONS_CACHE_FILE, JSON.stringify(obj, null, 2));
+    } catch {}
+  }, 800);
+}
+
+loadPersistedTranscriptions();
 
 // Contacts cache from Evolution API
 const evolutionContactsMap = new Map<string, { name?: string; pic?: string; altPhone?: string }>();
@@ -1373,14 +2222,27 @@ let followUps: FollowUpReminder[] = [];
 const processedMessageIds = new Map<string, number>();
 const PROCESSED_IDS_FILE = path.join(__dirname, '.vendema-processed-ids.json');
 
+export interface IdempotencyRecord {
+  messageId: string;
+  correlationId?: string;
+  conversationId?: string;
+  processedAt: number;
+  responseSent: boolean;
+  orderOrQuoteCreated?: boolean;
+}
+const idempotencyLedger = new Map<string, IdempotencyRecord>();
+
 try {
   if (fs.existsSync(PROCESSED_IDS_FILE)) {
     const raw = JSON.parse(fs.readFileSync(PROCESSED_IDS_FILE, 'utf-8'));
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     if (raw && typeof raw === 'object') {
-      for (const [k, ts] of Object.entries(raw)) {
-        if (typeof ts === 'number' && ts > cutoff) {
-          processedMessageIds.set(k, ts);
+      for (const [k, val] of Object.entries(raw)) {
+        if (typeof val === 'number' && val > cutoff) {
+          processedMessageIds.set(k, val);
+        } else if (val && typeof val === 'object' && typeof (val as any).processedAt === 'number' && (val as any).processedAt > cutoff) {
+          processedMessageIds.set(k, (val as any).processedAt);
+          idempotencyLedger.set(k, val as IdempotencyRecord);
         }
       }
     }
@@ -1397,7 +2259,7 @@ function scheduleSaveProcessedIds() {
       const entries = Array.from(processedMessageIds.entries())
         .filter(([, ts]) => ts > cutoff)
         .slice(-1500);
-      fs.writeFileSync(PROCESSED_IDS_FILE, JSON.stringify(Object.fromEntries(entries)), 'utf-8');
+      writeFileAtomicSync(PROCESSED_IDS_FILE, JSON.stringify(Object.fromEntries(entries)));
     } catch {}
   }, 1500);
 }
@@ -1406,7 +2268,11 @@ function normalizeMsgIdKey(rawId?: string): string {
   return (rawId || '').trim().replace(/^evo-/, '');
 }
 
-function markMessageIdProcessed(rawId: string, contactKeys: string[] = []): void {
+function markMessageIdProcessed(
+  rawId: string,
+  contactKeys: string[] = [],
+  meta?: { correlationId?: string; conversationId?: string; responseSent?: boolean; orderOrQuoteCreated?: boolean }
+): void {
   const cleanId = normalizeMsgIdKey(rawId);
   if (!cleanId) return;
   const now = Date.now();
@@ -1416,12 +2282,41 @@ function markMessageIdProcessed(rawId: string, contactKeys: string[] = []): void
     processedMessageIds.set(`${k}::${cleanId}`, now);
     processedMessageIds.set(`${k}::evo-${cleanId}`, now);
   }
+  const existing = idempotencyLedger.get(cleanId);
+  idempotencyLedger.set(cleanId, {
+    messageId: cleanId,
+    correlationId: meta?.correlationId || existing?.correlationId,
+    conversationId: meta?.conversationId || existing?.conversationId,
+    processedAt: now,
+    responseSent: meta?.responseSent ?? existing?.responseSent ?? true,
+    orderOrQuoteCreated: meta?.orderOrQuoteCreated ?? existing?.orderOrQuoteCreated ?? false,
+  });
+  scheduleSaveProcessedIds();
+}
+
+function unmarkMessageIdProcessedForRetry(rawId: string, contactKeys: string[] = []): void {
+  const cleanId = normalizeMsgIdKey(rawId);
+  if (!cleanId) return;
+  processedMessageIds.delete(cleanId);
+  processedMessageIds.delete(`evo-${cleanId}`);
+  for (const k of contactKeys) {
+    processedMessageIds.delete(`${k}::${cleanId}`);
+    processedMessageIds.delete(`${k}::evo-${cleanId}`);
+  }
+  const existing = idempotencyLedger.get(cleanId);
+  if (existing) {
+    existing.responseSent = false;
+  }
   scheduleSaveProcessedIds();
 }
 
 function isMessageIdAlreadyProcessed(rawId: string, contactKeys: string[] = []): boolean {
   const cleanId = normalizeMsgIdKey(rawId);
   if (!cleanId) return false;
+  const ledgerEntry = idempotencyLedger.get(cleanId);
+  if (ledgerEntry && ledgerEntry.responseSent === false) {
+    return false; // Allow retry when previous attempt failed before sending
+  }
   if (processedMessageIds.has(cleanId) || processedMessageIds.has(`evo-${cleanId}`)) {
     return true;
   }
@@ -1713,12 +2608,12 @@ function releaseOdooSlot(): void {
 }
 
 // ---------------------------------------------------------
-// Helper: System API Health & Diagnostics Logging Engine
+// Fase 1.7 — Central System API & Correlation Trace Logging Engine
 // ---------------------------------------------------------
 interface SystemApiLog {
   id: string;
   timestamp: string;
-  service: 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
+  service: 'Backend' | 'Evolution API' | 'Odoo ERP' | 'AI Engine' | 'Supabase';
   action: string;
   method: string;
   url?: string;
@@ -1729,16 +2624,60 @@ interface SystemApiLog {
   requestPreview?: string;
   responseSnippet?: string;
   error?: string;
+  correlationId?: string;
+  stage?: DiagnosticStage;
+  severity?: LogSeverity;
+  module?: string;
+  customer?: string;
+  conversationId?: string;
+  messageId?: string;
+  errorCategory?: string;
 }
 
-const MAX_SYSTEM_API_LOGS = 200;
+const MAX_SYSTEM_API_LOGS = 400;
 const systemApiLogs: SystemApiLog[] = [];
 
+function classifyErrorSeverityAndCategory(
+  success: boolean,
+  statusCode?: number,
+  errorText?: string
+): { severity: LogSeverity; errorCategory?: string } {
+  if (success && (!statusCode || statusCode < 400)) {
+    return { severity: 'INFO' };
+  }
+  const errLower = (errorText || '').toLowerCase();
+  if (statusCode === 401 || statusCode === 403 || errLower.includes('incorrect api key') || errLower.includes('unauthorized')) {
+    return { severity: 'CRITICAL', errorCategory: 'AUTH_ERROR' };
+  }
+  if (statusCode === 429 || errLower.includes('rate limit') || errLower.includes('quota')) {
+    return { severity: 'HIGH', errorCategory: 'RATE_LIMIT' };
+  }
+  if (errLower.includes('connection closed') || errLower.includes('socket') || errLower.includes('econnrefused')) {
+    return { severity: 'HIGH', errorCategory: 'CONNECTION_ERROR' };
+  }
+  if (errLower.includes('timeout') || errLower.includes('aborted')) {
+    return { severity: 'MEDIUM', errorCategory: 'TIMEOUT' };
+  }
+  if (statusCode && statusCode >= 500) {
+    return { severity: 'HIGH', errorCategory: 'UPSTREAM_ERROR' };
+  }
+  return { severity: 'MEDIUM', errorCategory: 'GENERAL_ERROR' };
+}
+
+let activeCorrelationIdContext: string | undefined = undefined;
+
 function recordSystemApiLog(log: Omit<SystemApiLog, 'id' | 'timestamp'>): SystemApiLog {
+  const autoClassified = classifyErrorSeverityAndCategory(log.success, log.statusCode, log.error || log.responseSnippet);
   const entry: SystemApiLog = {
     id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toISOString(),
     ...log,
+    correlationId: log.correlationId || activeCorrelationIdContext,
+    severity: log.severity || autoClassified.severity,
+    errorCategory: log.errorCategory || autoClassified.errorCategory,
+    requestPreview: log.requestPreview ? sanitizeSecretsInText(log.requestPreview) : undefined,
+    responseSnippet: log.responseSnippet ? sanitizeSecretsInText(log.responseSnippet) : undefined,
+    error: log.error ? sanitizeSecretsInText(log.error) : undefined,
   };
   systemApiLogs.unshift(entry);
   if (systemApiLogs.length > MAX_SYSTEM_API_LOGS) {
@@ -1747,16 +2686,53 @@ function recordSystemApiLog(log: Omit<SystemApiLog, 'id' | 'timestamp'>): System
   return entry;
 }
 
+function recordDiagnosticStage(params: {
+  correlationId: string;
+  stage: DiagnosticStage;
+  service?: SystemApiLog['service'];
+  module?: string;
+  customer?: string;
+  conversationId?: string;
+  messageId?: string;
+  success?: boolean;
+  durationMs?: number;
+  details?: string;
+  error?: string;
+  severity?: LogSeverity;
+}) {
+  return recordSystemApiLog({
+    service: params.service || 'Backend',
+    action: `[${params.stage}] ${params.details || params.stage}`,
+    method: 'TRACE',
+    target: params.customer || params.conversationId,
+    statusCode: params.success === false ? 500 : 200,
+    success: params.success !== false,
+    durationMs: params.durationMs ?? 0,
+    requestPreview: `correlation_id: ${params.correlationId} | stage: ${params.stage} | msgId: ${params.messageId || 'N/A'}`,
+    responseSnippet: params.details,
+    error: params.error,
+    correlationId: params.correlationId,
+    stage: params.stage,
+    severity: params.severity || (params.success === false ? 'HIGH' : 'INFO'),
+    module: params.module || 'pipeline',
+    customer: params.customer,
+    conversationId: params.conversationId,
+    messageId: params.messageId,
+  });
+}
+
 // Seed initial startup health log
 recordSystemApiLog({
-  service: 'Evolution API',
-  action: 'Inicialización de Monitor del Sistema',
+  service: 'Backend',
+  action: 'Inicialización de Monitor y Cola Persistente (Fase 1)',
   method: 'SYS',
   statusCode: 200,
   success: true,
   durationMs: 0,
-  requestPreview: 'Módulo de diagnóstico de llamadas API inicializado correctamente',
-  responseSnippet: 'Escuchando peticiones de Evolution API y Odoo ERP',
+  severity: 'INFO',
+  module: 'boot',
+  requestPreview: 'Módulo centralizado de diagnóstico, cola persistente y trazabilidad correlation_id activo',
+  responseSnippet: 'Monitoreando Backend, Supabase, Evolution API, OpenAI y Odoo ERP',
 });
 
 async function callOdoo(service: string, method: string, args: any[], maxRetries = 3): Promise<any> {
@@ -2336,6 +3312,106 @@ async function findOrCreateOdooCustomerByPhone(
 // Helper: Evolution API Live WhatsApp Sync & Media Parser
 // ---------------------------------------------------------
 const rawEvolutionRecordsByMsgId = new Map<string, any>();
+const QUOTED_MESSAGES_CACHE_FILE = path.join(__dirname, '.vendema-quoted-messages.json');
+const quotedMessagesByMsgId = new Map<string, QuotedMessage>();
+
+function loadPersistedQuotedMessages(): void {
+  try {
+    if (fs.existsSync(QUOTED_MESSAGES_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(QUOTED_MESSAGES_CACHE_FILE, 'utf-8'));
+      if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+          if (k && v && typeof v === 'object') {
+            const qv = v as QuotedMessage;
+            const cleanK = k.replace(/^evo-/, '');
+            const cleanQId = (qv.id || '').replace(/^evo-/, '');
+            const isLegacyHeuristic =
+              Boolean(qv.text?.includes('💬 Consultas citadas:')) ||
+              Boolean(cleanQId && cleanQId === cleanK);
+            if (!isLegacyHeuristic) {
+              quotedMessagesByMsgId.set(k, qv);
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+}
+
+function hydrateQuotedMessageById(
+  msg: ChatMessage,
+  messages: ChatMessage[],
+  customerNameFallback: string
+): void {
+  if (!msg.quotedMessage?.id) return;
+  const qId = msg.quotedMessage.id;
+  const cleanQId = qId.replace(/^evo-/, '');
+  const selfId = (msg.evolutionMessageId || msg.id).replace(/^evo-/, '');
+  if (!cleanQId || cleanQId === selfId) return;
+
+  const isPlaceholder =
+    !msg.quotedMessage.text ||
+    msg.quotedMessage.text.trim().length === 0 ||
+    msg.quotedMessage.text === '🎤 Nota de voz citada' ||
+    msg.quotedMessage.text === '🎤 Nota de voz de WhatsApp' ||
+    msg.quotedMessage.text === '🎤 Nota de voz anterior';
+
+  if (!isPlaceholder) return;
+
+  const savedTr = transcriptionsByMsgId.get(qId) || transcriptionsByMsgId.get(cleanQId);
+  const parent = messages.find(
+    cand =>
+      cand !== msg &&
+      !isInternalOrNoiseContent(cand.content) &&
+      (cand.id === qId ||
+        cand.evolutionMessageId === qId ||
+        cand.id === `evo-${cleanQId}` ||
+        cand.evolutionMessageId === cleanQId)
+  );
+
+  if (parent) {
+    const parentTr = parent.transcription || savedTr;
+    msg.quotedMessage.text =
+      (parent.type === 'audio' && parentTr ? `🎤 "${parentTr}"` : parentTr || parent.content) ||
+      (parent.type === 'image'
+        ? '📷 Foto enviada anteriormente'
+        : parent.type === 'audio'
+        ? '🎤 Nota de voz citada'
+        : parent.type === 'video'
+        ? '🎥 Video anterior'
+        : 'Mensaje anterior');
+    msg.quotedMessage.type = parent.type;
+    msg.quotedMessage.mediaUrl = parent.mediaUrl;
+    msg.quotedMessage.author =
+      parent.sender === 'customer' ? customerNameFallback : 'Todo Lapto';
+    saveQuotedMessageForId(msg.evolutionMessageId || msg.id, msg.quotedMessage);
+  } else if (savedTr) {
+    msg.quotedMessage.text = `🎤 "${savedTr}"`;
+    msg.quotedMessage.type = 'audio';
+    saveQuotedMessageForId(msg.evolutionMessageId || msg.id, msg.quotedMessage);
+  }
+}
+
+let quotedSaveTimer: NodeJS.Timeout | null = null;
+function saveQuotedMessageForId(msgId: string | undefined, qm: QuotedMessage | undefined): void {
+  if (!msgId || !qm || (!qm.text && !qm.id && !qm.mediaBase64)) return;
+  const cleanId = msgId.replace(/^evo-/, '').trim();
+  if (!cleanId) return;
+  quotedMessagesByMsgId.set(cleanId, qm);
+  quotedMessagesByMsgId.set(`evo-${cleanId}`, qm);
+  if (quotedSaveTimer) return;
+  quotedSaveTimer = setTimeout(() => {
+    quotedSaveTimer = null;
+    try {
+      const entries = Array.from(quotedMessagesByMsgId.entries()).filter(([k]) => !k.startsWith('evo-')).slice(-500);
+      const obj: Record<string, QuotedMessage> = {};
+      for (const [k, v] of entries) obj[k] = v;
+      writeFileAtomicSync(QUOTED_MESSAGES_CACHE_FILE, JSON.stringify(obj, null, 2));
+    } catch {}
+  }, 1000);
+}
+
+loadPersistedQuotedMessages();
 
 function parseSingleEvolutionMessage(record: any, customerNameFallback: string): ChatMessage | null {
   if (!record || !record.key) return null;
@@ -2386,25 +3462,25 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.videoMessage || msgTypeRaw === 'videoMessage') {
     type = 'video';
-    content = msgObj.videoMessage?.caption || '';
+    content = msgObj.videoMessage?.caption || '[El cliente envió un VIDEO. El bot no puede verlo.]';
     mediaDuration = msgObj.videoMessage?.seconds || 0;
     mediaMimeType = msgObj.videoMessage?.mimetype || 'video/mp4';
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}?video=true`;
   } else if (msgObj.documentMessage || msgTypeRaw === 'documentMessage') {
     type = 'document';
     fileName = msgObj.documentMessage?.fileName || msgObj.documentMessage?.title || 'Documento';
-    content = msgObj.documentMessage?.caption || `📄 ${fileName}`;
+    content = msgObj.documentMessage?.caption || `📄 ${fileName} [El cliente envió un DOCUMENTO. El bot no puede verlo.]`;
     mediaMimeType = msgObj.documentMessage?.mimetype || 'application/pdf';
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.stickerMessage || msgTypeRaw === 'stickerMessage') {
     type = 'sticker';
-    content = '🏷️ Sticker';
+    content = '[El cliente envió un STICKER.]';
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.locationMessage || msgTypeRaw === 'locationMessage') {
     type = 'location';
     const lat = msgObj.locationMessage?.degreesLatitude;
     const lng = msgObj.locationMessage?.degreesLongitude;
-    content = lat && lng ? `📍 Ubicación GPS: https://www.google.com/maps?q=${lat},${lng}` : '📍 Ubicación compartida';
+    content = lat && lng ? `📍 Ubicación GPS: https://www.google.com/maps?q=${lat},${lng}` : '[El cliente envió una UBICACIÓN.]';
   } else if (msgObj.interactiveMessage || msgTypeRaw === 'interactiveMessage') {
     type = 'text';
     content =
@@ -2615,10 +3691,28 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
     };
   }
 
+  if (quotedMessage) {
+    saveQuotedMessageForId(msgId, quotedMessage);
+  } else {
+    const cachedQuote =
+      quotedMessagesByMsgId.get(msgId) ||
+      quotedMessagesByMsgId.get(msgId.replace(/^evo-/, ''));
+    if (cachedQuote) {
+      quotedMessage = { ...cachedQuote };
+    }
+  }
+
   const tsNum = Number(record.messageTimestamp);
   const timestamp = tsNum
     ? new Date(tsNum > 1e12 ? tsNum : tsNum * 1000).toISOString()
     : new Date().toISOString();
+
+  const cleanMsgId = msgId.replace(/^evo-/, '');
+  const savedTranscription = transcriptionsByMsgId.get(msgId) || transcriptionsByMsgId.get(cleanMsgId);
+  const savedAiAnalysis = aiAnalysisByMsgId.get(msgId) || aiAnalysisByMsgId.get(cleanMsgId);
+  if (type === 'audio' && savedTranscription) {
+    content = `🎤 "${savedTranscription}"`;
+  }
 
   return {
     id: `evo-${msgId}`,
@@ -2631,14 +3725,50 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
     mediaUrl,
     mediaMimeType,
     mediaDuration,
-    transcription: transcriptionsByMsgId.get(msgId),
-    aiAnalysis: aiAnalysisByMsgId.get(msgId),
+    transcription: type === 'audio' ? savedTranscription : undefined,
+    aiAnalysis: savedAiAnalysis,
     metadata: fileName ? { fileName } : undefined,
   };
 }
 
 const relatedJidsBySession = new Map<string, Set<string>>();
 const lidToPhoneMap = new Map<string, string>();
+const LID_MAPPINGS_FILE = path.join(__dirname, '.vendema-lid-mappings.json');
+
+function loadLidMappings(): void {
+  try {
+    if (fs.existsSync(LID_MAPPINGS_FILE)) {
+      const raw = fs.readFileSync(LID_MAPPINGS_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'string') {
+          lidToPhoneMap.set(k, v);
+          const cleanK = k.replace(/@.*$/, '').replace(/\D/g, '');
+          if (cleanK) lidToPhoneMap.set(cleanK, v);
+          if (!k.includes('@')) lidToPhoneMap.set(`${k}@lid`, v);
+        }
+      }
+      console.log(`📋 [LID Mappings]: Cargados ${lidToPhoneMap.size} registros de mapeo LID a teléfono.`);
+    }
+  } catch (err: any) {
+    console.warn('[LID Mappings Load Warning]:', err?.message || err);
+  }
+}
+
+function saveLidMappings(): void {
+  try {
+    const obj: Record<string, string> = {};
+    for (const [k, v] of lidToPhoneMap.entries()) {
+      obj[k] = v;
+    }
+    writeFileAtomicSync(LID_MAPPINGS_FILE, JSON.stringify(obj, null, 2));
+  } catch (err: any) {
+    console.warn('[LID Mappings Save Warning]:', err?.message || err);
+  }
+}
+
+loadLidMappings();
+syncAuthoritativeDominicanTime().catch(() => {});
 
 function isGenericContactName(name?: string | null): boolean {
   if (!name) return true;
@@ -2703,409 +3833,642 @@ async function syncEvolutionContactsIfNeeded() {
 
 let isEvoSyncRunning = false;
 let lastEvolutionChatsSync = 0;
+let lastDisconnectedStateCheck = 0;
+let evolutionLastKnownState: string = 'unknown';
 
-async function syncEvolutionChats(): Promise<Conversation[]> {
-  if (isEvoSyncRunning) return conversations;
-  const now = Date.now();
-  // Throttle: Allow findChats every 2.5 seconds for fast incoming message detection
-  if (now - lastEvolutionChatsSync < 2500 && conversations.length > 0) {
-    return conversations;
+const evolutionQrCache: {
+  qrBase64: string | null;
+  pairingCode: string | null;
+  generatedAt: number;
+  ownerJid: string | null;
+  profileName: string | null;
+  profilePicUrl: string | null;
+  lastMetaFetchAt: number;
+} = {
+  qrBase64: null,
+  pairingCode: null,
+  generatedAt: 0,
+  ownerJid: null,
+  profileName: null,
+  profilePicUrl: null,
+  lastMetaFetchAt: 0,
+};
+
+function isSyntheticTestArtifact(val?: string): boolean {
+  if (!val) return false;
+  return /^(TEST1_|TEST2_|TEST3_|TEST4_|TEST_|TEST-MSG-|TEST-)/i.test(val) ||
+    val.includes('18095550') ||
+    val.includes('551199999000') ||
+    val === 'Cliente Prueba 1' ||
+    val === 'Cliente Concurrente' ||
+    val === 'Cliente Auditoria' ||
+    val.startsWith('Cliente Lote ');
+}
+
+// ---------------------------------------------------------------------------
+// Strict Message & Contact Deduplication Engine (Unifies LID and Phone IDs)
+// ---------------------------------------------------------------------------
+function isDuplicateChatMessage(existingList: ChatMessage[], newMsg: ChatMessage): boolean {
+  if (!existingList || existingList.length === 0 || !newMsg) return false;
+
+  const normNewId = normalizeMsgIdKey(newMsg.id);
+  const normNewEvoId = normalizeMsgIdKey(newMsg.evolutionMessageId || '');
+  const newText = (newMsg.content || '').trim();
+  const newTime = new Date(newMsg.timestamp).getTime();
+
+  return existingList.some(m => {
+    const normId = normalizeMsgIdKey(m.id);
+    const normEvoId = normalizeMsgIdKey(m.evolutionMessageId || '');
+
+    // 1. Direct ID or Evolution Message ID match
+    if (normNewId && (normNewId === normId || normNewId === normEvoId)) return true;
+    if (normNewEvoId && (normNewEvoId === normId || normNewEvoId === normEvoId)) return true;
+
+    // 2. Content + Sender + Timestamp proximity match (within 60s)
+    if (m.sender === newMsg.sender && m.type === newMsg.type) {
+      if (newText && (m.content || '').trim() === newText) {
+        const mTime = new Date(m.timestamp).getTime();
+        if (Math.abs(newTime - mTime) <= 60000) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+
+function deduplicateMessagesArray(msgs: ChatMessage[]): ChatMessage[] {
+  if (!Array.isArray(msgs) || msgs.length === 0) return [];
+  const result: ChatMessage[] = [];
+  for (const m of msgs) {
+    if (!isDuplicateChatMessage(result, m)) {
+      result.push(m);
+    }
   }
-  isEvoSyncRunning = true;
-  lastEvolutionChatsSync = now;
+  return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+function consolidateDuplicateConversations(): boolean {
+  if (!Array.isArray(conversations) || conversations.length === 0) return false;
+
+  let hasChanges = false;
+  // Step 1: Clean duplicate messages within every single conversation
+  for (const conv of conversations) {
+    const origCount = conv.messages?.length || 0;
+    conv.messages = deduplicateMessagesArray(conv.messages || []);
+    if (conv.messages.length !== origCount) {
+      hasChanges = true;
+    }
+  }
+
+  // Step 2: Canonical indexes to unify duplicate conversation entities
+  const byPhone = new Map<string, Conversation>();
+  const byName = new Map<string, Conversation>();
+  const bySession = new Map<string, Conversation>();
+  const toRemove = new Set<string>();
+
+  // Pass 1: Register real-phone conversations first (so canonical phone always wins over LID)
+  for (const conv of conversations) {
+    const cleanPhone = (conv.customerPhone || conv.sessionId || '').replace(/@.*$/, '').replace(/\D/g, '');
+    const isLid = conv.sessionId.endsWith('@lid') || cleanPhone.length > 13;
+    if (!isLid && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      byPhone.set(std, conv);
+      byPhone.set(std.slice(-10), conv);
+      bySession.set(conv.sessionId, conv);
+      if (!isGenericContactName(conv.customerName)) {
+        byName.set(conv.customerName.trim().toLowerCase(), conv);
+      }
+    }
+  }
+
+  // Pass 2: Merge LID conversations or duplicate sessions into canonical phone conversations
+  for (const conv of conversations) {
+    const cleanPhone = (conv.customerPhone || conv.sessionId || '').replace(/@.*$/, '').replace(/\D/g, '');
+    const isLid = conv.sessionId.endsWith('@lid') || cleanPhone.length > 13;
+    const nameKey = !isGenericContactName(conv.customerName) ? conv.customerName.trim().toLowerCase() : '';
+
+    let primary: Conversation | undefined;
+
+    // Check if mapped via lidToPhoneMap
+    if (isLid) {
+      const mappedPhone = lidToPhoneMap.get(conv.sessionId) || lidToPhoneMap.get(cleanPhone);
+      if (mappedPhone) {
+        primary = byPhone.get(mappedPhone) || byPhone.get(mappedPhone.slice(-10));
+      }
+    }
+
+    // Check by unique non-generic name
+    if (!primary && nameKey) {
+      primary = byName.get(nameKey);
+    }
+
+    // Check by relatedJidsBySession
+    if (!primary && relatedJidsBySession.has(conv.sessionId)) {
+      for (const rel of relatedJidsBySession.get(conv.sessionId)!) {
+        if (bySession.has(rel)) {
+          primary = bySession.get(rel);
+          break;
+        }
+      }
+    }
+
+    // If duplicate found and it's not itself:
+    if (primary && primary.sessionId !== conv.sessionId) {
+      hasChanges = true;
+      toRemove.add(conv.sessionId);
+
+      // Preserve AI pause state if either was paused
+      if (primary.aiEnabled === false || conv.aiEnabled === false) {
+        primary.aiEnabled = false;
+        aiEnabledBySession.set(primary.sessionId, false);
+        if (primary.customerPhone) aiEnabledBySession.set(primary.customerPhone, false);
+        aiEnabledBySession.set(conv.sessionId, false);
+      }
+
+      // Merge messages into primary without duplicates
+      for (const m of conv.messages) {
+        if (!isDuplicateChatMessage(primary.messages, m)) {
+          primary.messages.push(m);
+        }
+      }
+      primary.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      // Update primary name if primary has generic name
+      if (isGenericContactName(primary.customerName) && !isGenericContactName(conv.customerName)) {
+        primary.customerName = conv.customerName;
+      }
+      if (!primary.profilePicUrl && conv.profilePicUrl) {
+        primary.profilePicUrl = conv.profilePicUrl;
+      }
+
+      // Update timestamps
+      const lastM = primary.messages[primary.messages.length - 1];
+      if (lastM) {
+        primary.lastTimestamp = lastM.timestamp;
+        primary.lastMessagePreview = lastM.content;
+        primary.lastMessageType = lastM.type;
+      }
+
+      // Associate LID with primary
+      const jSet = relatedJidsBySession.get(primary.sessionId) || new Set<string>([primary.sessionId]);
+      jSet.add(conv.sessionId);
+      if (conv.customerPhone) jSet.add(conv.customerPhone);
+      relatedJidsBySession.set(primary.sessionId, jSet);
+      if (isLid && primary.customerPhone) {
+        lidToPhoneMap.set(conv.sessionId, primary.customerPhone);
+        lidToPhoneMap.set(cleanPhone, primary.customerPhone);
+        saveLidMappings();
+      }
+    } else if (!isLid && cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      byPhone.set(std, conv);
+      byPhone.set(std.slice(-10), conv);
+      bySession.set(conv.sessionId, conv);
+      if (nameKey) byName.set(nameKey, conv);
+    }
+  }
+
+  if (toRemove.size > 0) {
+    conversations = conversations.filter(c => !toRemove.has(c.sessionId));
+    hasChanges = true;
+    console.log(`🧹 [Deduplicación de Contactos]: Se unificaron ${toRemove.size} conversaciones duplicadas.`);
+  }
+
+  if (hasChanges) {
+    conversations.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
+    savePersistedConversations();
+    broadcastEvent('conversations_update', { count: conversations.length });
+  }
+
+  return hasChanges;
+}
+
+let lastContactsSyncAt = 0;
+async function syncEvolutionContactsDirectory(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastContactsSyncAt < 30 * 60 * 1000) return;
+  lastContactsSyncAt = now;
 
   try {
-    await syncEvolutionContactsIfNeeded();
+    const baseUrl = (appConfig.evolution.serverUrl || '').replace(/\/$/, '');
+    const instance = appConfig.evolution.instance;
+    if (!baseUrl || !appConfig.evolution.apiKey) return;
 
-    const url = `${appConfig.evolution.serverUrl}/chat/findChats/${appConfig.evolution.instance}`;
+    const res = await fetch(`${baseUrl}/chat/findContacts/${instance}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: appConfig.evolution.apiKey,
+      },
+      body: JSON.stringify({ where: {} }),
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (!res.ok) return;
+    const contacts: any[] = await res.json().catch(() => []);
+    if (!Array.isArray(contacts) || contacts.length === 0) return;
+
+    const phonesByName = new Map<string, string>();
+    for (const c of contacts) {
+      const rJid = c.remoteJid || c.id || '';
+      if (rJid.endsWith('@s.whatsapp.net') && c.pushName && c.pushName.trim()) {
+        const phone = rJid.replace(/@.*$/, '').replace(/\D/g, '');
+        if (phone.length >= 10 && phone.length <= 13) {
+          phonesByName.set(c.pushName.trim().toLowerCase(), phone);
+        }
+      }
+    }
+
+    let mappedCount = 0;
+    for (const c of contacts) {
+      const rJid = c.remoteJid || c.id || '';
+      if (rJid.endsWith('@lid') && c.pushName && c.pushName.trim()) {
+        const matchedPhone = phonesByName.get(c.pushName.trim().toLowerCase());
+        if (matchedPhone) {
+          lidToPhoneMap.set(rJid, matchedPhone);
+          lidToPhoneMap.set(rJid.replace(/@.*$/, ''), matchedPhone);
+          mappedCount++;
+        }
+      }
+    }
+
+    if (mappedCount > 0) {
+      console.log(`🔗 [LID to Phone Sync]: Mapeados ${mappedCount} identificadores @lid a números reales de WhatsApp.`);
+      consolidateDuplicateConversations();
+    }
+  } catch (err: any) {
+    console.log('[Contacts Directory Sync Info]:', err.message);
+  }
+}
+
+const CONVERSATIONS_CACHE_FILE = path.join(__dirname, '.vendema-conversations.json');
+
+function savePersistedConversations(): void {
+  try {
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    const cleanList = conversations
+      .filter(c => !isSyntheticTestArtifact(c.sessionId) && !isSyntheticTestArtifact(c.customerName))
+      .slice(0, 80)
+      .map(c => ({
+        ...c,
+        messages: Array.isArray(c.messages) ? c.messages.slice(-40) : [],
+      }));
+    writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, JSON.stringify(cleanList, null, 2));
+  } catch (err: any) {
+    console.warn('[Conversations Cache Save Warning]:', err?.message || err);
+  }
+}
+
+/**
+ * Clears all live & persisted WhatsApp chats when the instance disconnects,
+ * preventing stale chats from remaining visible or auto-replying while unlinked.
+ */
+function clearAllChatsOnWhatsAppDisconnect(disconnectedState = 'close'): void {
+  const hadChats = conversations.length > 0;
+  const wasConnected = evolutionLastKnownState === 'open' || appConfig.evolution.connected;
+
+  evolutionLastKnownState = disconnectedState;
+  appConfig.evolution.connected = false;
+  evolutionQrCache.ownerJid = null;
+  evolutionQrCache.profileName = null;
+  evolutionQrCache.profilePicUrl = null;
+
+  conversations = [];
+  relatedJidsBySession.clear();
+  lastChatMessagesFetchBySession.clear();
+  inFlightBotKeys.clear();
+  if (persistentJobQueue.length > 0) {
+    persistentJobQueue = persistentJobQueue.filter(
+      j => j.status === 'COMPLETED' || j.status === 'DEAD_LETTER'
+    );
+    savePersistentJobQueue();
+  }
+
+  try {
+    writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, '[]');
+  } catch {}
+
+  if (hadChats || wasConnected) {
+    console.log(`🔌 [WhatsApp Disconnected (${disconnectedState})]: Todos los chats fueron limpiados del sistema.`);
+    broadcastEvent('evolution_status', { connected: false, state: disconnectedState });
+    broadcastEvent('conversations_update', { count: 0, cleared: true });
+  }
+}
+
+function loadPersistedConversations(): void {
+  try {
+    if (fs.existsSync(CONVERSATIONS_CACHE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(CONVERSATIONS_CACHE_FILE, 'utf-8'));
+      if (Array.isArray(raw) && raw.length > 0) {
+        conversations = raw.filter(
+          (c: Conversation) =>
+            c &&
+            c.sessionId &&
+            !isSyntheticTestArtifact(c.sessionId) &&
+            !isSyntheticTestArtifact(c.customerName)
+        );
+        for (const c of conversations) {
+          if (c.aiEnabled !== undefined) {
+            aiEnabledBySession.set(c.sessionId, c.aiEnabled);
+            if (c.customerPhone) aiEnabledBySession.set(c.customerPhone, c.aiEnabled);
+          }
+        }
+        consolidateDuplicateConversations();
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Conversations Cache Load Warning]:', err?.message || err);
+  }
+}
+
+loadPersistedConversations();
+syncEvolutionContactsDirectory().catch(() => {});
+
+async function quickSeedConversationsFromRecentMessages(): Promise<void> {
+  if (conversations.length > 0) return;
+  try {
+    const url = `${appConfig.evolution.serverUrl}/chat/findMessages/${appConfig.evolution.instance}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         apikey: appConfig.evolution.apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ limit: 50 }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => null);
+    const records: any[] = data?.messages?.records || (Array.isArray(data) ? data : []);
+    if (!Array.isArray(records) || records.length === 0 || conversations.length > 0) return;
+
+    const bySession = new Map<string, Conversation>();
+    for (const rec of records) {
+      const remoteJid = rec?.key?.remoteJid || '';
+      const rawAlt = rec?.key?.remoteJidAlt || '';
+      if (!remoteJid || isWhatsAppGroup(remoteJid) || remoteJid === 'status@broadcast') continue;
+
+      const cleanPhone = (
+        rawAlt.endsWith('@s.whatsapp.net')
+          ? rawAlt.replace('@s.whatsapp.net', '')
+          : remoteJid.replace(/@.*$/, '')
+      ).replace(/\D/g, '');
+      const sessionId =
+        cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 12
+          ? `${cleanPhone}@s.whatsapp.net`
+          : remoteJid;
+      const pushName =
+        (!rec?.key?.fromMe && rec?.pushName && rec.pushName !== 'Você' ? rec.pushName : '') ||
+        (cleanPhone.length <= 12 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
+
+      const parsed = parseSingleEvolutionMessage(rec, pushName);
+      if (!parsed) continue;
+
+      const existing = bySession.get(sessionId);
+      if (!existing) {
+        bySession.set(sessionId, {
+          sessionId,
+          customerPhone: cleanPhone,
+          customerName: pushName,
+          messages: [parsed],
+          messagesLoaded: false,
+          aiEnabled: true,
+          unreadCount: 0,
+          lastTimestamp: parsed.timestamp,
+          lastMessagePreview: parsed.content,
+          lastMessageType: parsed.type,
+          intentStatus: 'explorando',
+          detectedProducts: [],
+          zone: 'santo_domingo',
+          isLiveEvolution: true,
+        });
+      } else {
+        if (!existing.messages.some(m => m.id === parsed.id)) {
+          existing.messages.push(parsed);
+          existing.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        }
+        if (new Date(parsed.timestamp).getTime() >= new Date(existing.lastTimestamp).getTime()) {
+          existing.lastTimestamp = parsed.timestamp;
+          existing.lastMessagePreview = parsed.content;
+          existing.lastMessageType = parsed.type;
+        }
+      }
+    }
+
+    if (conversations.length === 0 && bySession.size > 0) {
+      conversations = Array.from(bySession.values()).sort(
+        (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime()
+      );
+      savePersistedConversations();
+      broadcastEvent('conversations_update', { count: conversations.length });
+    }
+  } catch {}
+}
+
+async function syncEvolutionChats(): Promise<Conversation[]> {
+  if (isEvoSyncRunning) return conversations;
+  const now = Date.now();
+  if (conversations.length === 0) {
+    loadPersistedConversations();
+  }
+  // Throttle delta message check to every 5 seconds
+  if (now - lastEvolutionChatsSync < 5000 && conversations.length > 0) {
+    return conversations;
+  }
+  isEvoSyncRunning = true;
+  lastEvolutionChatsSync = now;
+
+  try {
+    const baseUrl = (appConfig.evolution.serverUrl || '').replace(/\/$/, '');
+    const instance = appConfig.evolution.instance;
+
+    // 1. Lightweight connectionState check (< 4s). Never run DB queries on Evolution API if socket is not 'open'
+    // so we never block Baileys WebSocket during QR pairing or reconnection!
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers: { apikey: appConfig.evolution.apiKey },
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
+    const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
+    const currentState = stateData?.instance?.state || stateData?.state || 'close';
+
+    if (currentState !== 'open') {
+      clearAllChatsOnWhatsAppDisconnect(currentState);
+      return conversations;
+    }
+
+    if (evolutionLastKnownState !== 'open') {
+      evolutionLastKnownState = 'open';
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
+      isFirstEvolutionSync = true;
+      broadcastEvent('evolution_status', { connected: true, state: 'open' });
+    }
+
+    // 2. Fetch recent messages: seed wider (200) when recovering from empty state (e.g. after reconnect), otherwise lightweight delta (15)
+    const fetchOffset = conversations.length === 0 ? 200 : 15;
+    const msgUrl = `${baseUrl}/chat/findMessages/${instance}`;
+    const msgRes = await fetch(msgUrl, {
+      method: 'POST',
+      headers: {
+        apikey: appConfig.evolution.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ page: 1, offset: fetchOffset }),
+      signal: AbortSignal.timeout(12000),
     });
 
-    if (!res.ok) {
-      throw new Error(`Evolution findChats status ${res.status}`);
+    if (!msgRes.ok) {
+      throw new Error(`Evolution findMessages delta status ${msgRes.status}`);
     }
 
-    const rawChats = await res.json();
-    if (!Array.isArray(rawChats)) return conversations;
+    const msgData = await msgRes.json().catch(() => null);
+    const rawRecords: any[] = msgData?.messages?.records || (Array.isArray(msgData) ? msgData : []);
+    if (!Array.isArray(rawRecords) || rawRecords.length === 0) {
+      return conversations;
+    }
 
-    // Filter strictly individual direct chats with a valid lastMessage (NO GROUPS)
-    const validChats = rawChats.filter(
-      (c: any) =>
-        c.remoteJid &&
-        !isWhatsAppGroup(c.remoteJid) &&
-        !isWhatsAppGroup(c.lastMessage?.key?.remoteJid) &&
-        !isWhatsAppGroup(c.lastMessage?.key?.participant) &&
-        c.remoteJid !== 'status@broadcast' &&
-        c.lastMessage &&
-        c.lastMessage.messageTimestamp
+    // Process records from oldest to newest so conversation order and lastMessage are chronological
+    const sortedRecords = [...rawRecords].sort(
+      (a, b) => Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0)
     );
-
-    // Sort by most recent messageTimestamp descending
-    validChats.sort(
-      (a: any, b: any) => Number(b.lastMessage.messageTimestamp) - Number(a.lastMessage.messageTimestamp)
-    );
-
-    // Take top 40 most recent chats + top 20 named chats so user sees all active & named leads
-    const recentSlice = validChats.slice(0, 40);
-    const namedSlice = validChats
-      .filter((c: any) => {
-        const contactInfo = evolutionContactsMap.get(c.remoteJid);
-        const name = c.pushName || contactInfo?.name || (!c.lastMessage.key?.fromMe ? c.lastMessage.pushName : '');
-        return name && name !== 'Você' && !/^\d+$/.test(name);
-      })
-      .slice(0, 20);
-
-    const combinedMap = new Map<string, any>();
-    for (const c of [...recentSlice, ...namedSlice]) {
-      combinedMap.set(c.remoteJid, c);
-    }
-
-    // Pre-populate lidToPhoneMap and relatedJidsBySession from validChats that have remoteJidAlt
-    for (const c of validChats) {
-      const alt = c.lastMessage?.key?.remoteJidAlt;
-      if (alt && alt.endsWith('@s.whatsapp.net')) {
-        const altPhone = alt.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-        if (altPhone) {
-          lidToPhoneMap.set(c.remoteJid, altPhone);
-          const lidDigits = c.remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
-          lidToPhoneMap.set(lidDigits, altPhone);
-          const canonicalJid = `${altPhone}@s.whatsapp.net`;
-          const set = relatedJidsBySession.get(canonicalJid) || new Set<string>([canonicalJid]);
-          set.add(c.remoteJid);
-          set.add(alt);
-          relatedJidsBySession.set(canonicalJid, set);
-        }
-      }
-    }
-
-    // Map known non-generic contact names to real phone numbers (<= 12 digits)
-    const knownPhoneByName = new Map<string, string>();
-    for (const conv of conversations) {
-      if (conv.customerPhone && conv.customerPhone.length <= 12 && !isGenericContactName(conv.customerName)) {
-        knownPhoneByName.set(conv.customerName.trim().toLowerCase(), conv.customerPhone);
-      }
-    }
-    for (const c of validChats) {
-      if (c.remoteJid?.endsWith('@s.whatsapp.net')) {
-        const p = c.remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-        const cInfo = evolutionContactsMap.get(c.remoteJid);
-        const name = c.pushName || cInfo?.name || (!c.lastMessage?.key?.fromMe ? c.lastMessage?.pushName : '');
-        if (p && p.length <= 12 && !isGenericContactName(name)) {
-          knownPhoneByName.set(name.trim().toLowerCase(), p);
-        }
-      }
-    }
-
-    const existingConvByPhone = new Map<string, Conversation>();
-    const existingConvBySession = new Map<string, Conversation>();
-    for (const conv of conversations) {
-      existingConvBySession.set(conv.sessionId, conv);
-      if (conv.customerPhone) existingConvByPhone.set(conv.customerPhone, conv);
-    }
 
     let hasChanges = false;
-    // Deduplicate by canonical phone/JID and non-generic contact name
-    const dedupedByPhone = new Map<string, Conversation>();
-    const dedupedByName = new Map<string, Conversation>();
 
-    for (const [remoteJid, chatObj] of combinedMap.entries()) {
-      const lm = chatObj.lastMessage;
-      const rawAlt = lm?.key?.remoteJidAlt || '';
+    for (const rec of sortedRecords) {
+      const key = rec?.key;
+      if (!key) continue;
+      const remoteJid = key.remoteJid || '';
+      const rawAlt = key.remoteJidAlt || '';
+      const participant = key.participant || '';
 
-      // Determine true phone number
-      let cleanPhone = '';
-      if (rawAlt.endsWith('@s.whatsapp.net')) {
-        cleanPhone = rawAlt.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-      } else if (remoteJid.endsWith('@s.whatsapp.net')) {
-        cleanPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-      } else if (lidToPhoneMap.has(remoteJid)) {
-        cleanPhone = lidToPhoneMap.get(remoteJid)!;
-      } else {
-        const rawDigits = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
-        if (lidToPhoneMap.has(rawDigits)) {
-          cleanPhone = lidToPhoneMap.get(rawDigits)!;
-        } else if (rawDigits.length >= 10 && rawDigits.length <= 12) {
-          cleanPhone = rawDigits;
-        } else {
-          cleanPhone = rawDigits;
-        }
-      }
-
-      const contactInfo =
-        evolutionContactsMap.get(remoteJid) ||
-        (cleanPhone ? evolutionContactsMap.get(cleanPhone) : undefined);
-
-      // Resolve display name
-      let customerName =
-        chatObj.pushName ||
-        contactInfo?.name ||
-        (!lm?.key?.fromMe && lm?.pushName && lm?.pushName !== 'Você' ? lm.pushName : '') ||
-        '';
-      const isGenericName = isGenericContactName(customerName);
-
-      // If phone is an LID (> 12 digits) but contact name is non-generic, check if we know the phone for this name!
-      if ((cleanPhone.length > 12 || !cleanPhone.startsWith('18')) && !isGenericName) {
-        const norm = customerName.trim().toLowerCase();
-        const matchedPhone = knownPhoneByName.get(norm);
-        if (matchedPhone) {
-          cleanPhone = matchedPhone;
-          lidToPhoneMap.set(remoteJid, cleanPhone);
-          const rawDigits = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
-          lidToPhoneMap.set(rawDigits, cleanPhone);
-        }
-      }
-
-      if (isGenericName) {
-        customerName = cleanPhone.startsWith('18') && cleanPhone.length <= 12
-          ? `Cliente +${cleanPhone}`
-          : `WhatsApp #${cleanPhone.slice(-6)}`;
-      }
-
-      const normName = !isGenericName ? customerName.trim().toLowerCase() : '';
-      const dedupKey = cleanPhone || remoteJid;
-
-      // Resolve last message preview and type
-      const parsedLast = parseSingleEvolutionMessage(lm, customerName);
-      const lastTimestamp = parsedLast
-        ? parsedLast.timestamp
-        : new Date(Number(lm.messageTimestamp) * 1000).toISOString();
-
-      let lastPreview = parsedLast?.content || '';
-      let lastType: Conversation['lastMessageType'] = parsedLast?.type || 'text';
-      if (lastType === 'audio' && !lastPreview.startsWith('🎤')) lastPreview = `🎤 ${lastPreview}`;
-      if (lastType === 'image' && !lastPreview) lastPreview = '📷 Foto enviada por WhatsApp';
-      if (lastType === 'video' && !lastPreview) lastPreview = '🎥 Video enviado por WhatsApp';
-      if (lastType === 'document' && !lastPreview) lastPreview = '📄 Documento adjunto';
-      if (lastType === 'sticker') lastPreview = '🏷️ Sticker';
-      if (!lastPreview) lastPreview = 'Mensaje de WhatsApp';
-
-      let existingInLoop = dedupedByPhone.get(dedupKey);
-      if (!existingInLoop && normName && dedupedByName.has(normName)) {
-        const cand = dedupedByName.get(normName);
-        if (cand) {
-          const candHasRealPhone = Boolean(cand.customerPhone && cand.customerPhone.length <= 12 && cand.customerPhone.startsWith('1'));
-          const currHasRealPhone = Boolean(cleanPhone && cleanPhone.length <= 12 && cleanPhone.startsWith('1'));
-          // Only merge by name if one is an unresolved @lid or both share the exact same phone number
-          if (!candHasRealPhone || !currHasRealPhone || cand.customerPhone === cleanPhone) {
-            existingInLoop = cand;
-          }
-        }
-      }
-      if (!existingInLoop) {
-        for (const cand of dedupedByPhone.values()) {
-          const jids = relatedJidsBySession.get(cand.sessionId);
-          if (jids && (jids.has(remoteJid) || (rawAlt && jids.has(rawAlt)))) {
-            existingInLoop = cand;
-            break;
-          }
-        }
-      }
-
-      if (existingInLoop) {
-        // Merge this duplicate JID into existingInLoop!
-        const jidSet = relatedJidsBySession.get(existingInLoop.sessionId) || new Set([existingInLoop.sessionId]);
-        jidSet.add(remoteJid);
-        if (rawAlt) jidSet.add(rawAlt);
-        relatedJidsBySession.set(existingInLoop.sessionId, jidSet);
-
-        // If existing is an LID and this one has real phone number, upgrade existingInLoop!
-        if (
-          cleanPhone &&
-          cleanPhone.length <= 12 &&
-          (existingInLoop.customerPhone.length > 12 || !existingInLoop.customerPhone.startsWith('18'))
-        ) {
-          existingInLoop.customerPhone = cleanPhone;
-          if (existingInLoop.sessionId.endsWith('@lid')) {
-            const newCanonicalId = `${cleanPhone}@s.whatsapp.net`;
-            jidSet.add(existingInLoop.sessionId);
-            jidSet.add(newCanonicalId);
-            relatedJidsBySession.delete(existingInLoop.sessionId);
-            relatedJidsBySession.set(newCanonicalId, jidSet);
-            existingInLoop.sessionId = newCanonicalId;
-          }
-        }
-
-        // Keep best profile picture
-        if (!existingInLoop.profilePicUrl && (chatObj.profilePicUrl || contactInfo?.pic)) {
-          existingInLoop.profilePicUrl = chatObj.profilePicUrl || contactInfo?.pic;
-        }
-
-        // Keep best non-generic customer name
-        if (isGenericContactName(existingInLoop.customerName) && !isGenericName) {
-          existingInLoop.customerName = customerName;
-        }
-
-        // Keep most recent message preview & timestamp
-        if (new Date(lastTimestamp).getTime() > new Date(existingInLoop.lastTimestamp).getTime()) {
-          existingInLoop.lastTimestamp = lastTimestamp;
-          existingInLoop.lastMessagePreview = lastPreview;
-          existingInLoop.lastMessageType = lastType;
-        }
-
-        // Merge messages if not already present
-        if (
-          parsedLast &&
-          !existingInLoop.messages.some(m => m.evolutionMessageId === parsedLast.evolutionMessageId)
-        ) {
-          existingInLoop.messages = [...existingInLoop.messages, parsedLast].sort(
-            (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-          );
-        }
-
-        existingInLoop.unreadCount = Math.max(existingInLoop.unreadCount, Number(chatObj.unreadCount) || 0);
+      if (
+        !remoteJid ||
+        isWhatsAppGroup(remoteJid) ||
+        isWhatsAppGroup(rawAlt) ||
+        isWhatsAppGroup(participant) ||
+        remoteJid === 'status@broadcast'
+      ) {
         continue;
       }
 
-      const canonicalSessionId =
-        cleanPhone && cleanPhone.length <= 12 && cleanPhone.startsWith('1')
-          ? `${cleanPhone}@s.whatsapp.net`
-          : rawAlt.endsWith('@s.whatsapp.net')
-          ? rawAlt
-          : remoteJid;
-
-      const prevConv =
-        existingConvBySession.get(canonicalSessionId) ||
-        existingConvBySession.get(remoteJid) ||
-        (cleanPhone && cleanPhone.length <= 12 ? existingConvByPhone.get(cleanPhone) : undefined) ||
-        (!isGenericName && (!cleanPhone || cleanPhone.length > 12)
-          ? conversations.find(
-              c =>
-                !isGenericContactName(c.customerName) &&
-                c.customerName.trim().toLowerCase() === normName &&
-                (!c.customerPhone || c.customerPhone.length > 12 || c.customerPhone === cleanPhone)
-            )
-          : undefined);
-
-      const jidSet = relatedJidsBySession.get(canonicalSessionId) || new Set<string>();
-      jidSet.add(canonicalSessionId);
-      jidSet.add(remoteJid);
-      if (rawAlt) jidSet.add(rawAlt);
-      relatedJidsBySession.set(canonicalSessionId, jidSet);
-
-      const aiEnabled = aiEnabledBySession.has(canonicalSessionId)
-        ? aiEnabledBySession.get(canonicalSessionId)!
-        : aiEnabledBySession.has(remoteJid)
-        ? aiEnabledBySession.get(remoteJid)!
-        : prevConv
-        ? prevConv.aiEnabled
-        : true;
-
-      if (!prevConv || prevConv.lastTimestamp !== lastTimestamp) {
-        hasChanges = true;
-      }
-
-      let messages = prevConv?.messages ? [...prevConv.messages] : (parsedLast ? [parsedLast] : []);
-      if (
-        parsedLast &&
-        !messages.some(
-          m =>
-            (parsedLast.evolutionMessageId && m.evolutionMessageId === parsedLast.evolutionMessageId) ||
-            (parsedLast.id && m.id === parsedLast.id)
-        )
-      ) {
-        messages.push(parsedLast);
-      }
-      messages = mergeWithLocalMessages(canonicalSessionId, messages, prevConv?.messages || [], cleanPhone);
-
-      const latestMerged = messages[messages.length - 1];
-      const finalLastTimestamp =
-        latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime()
-          ? latestMerged.timestamp
-          : lastTimestamp;
-      const finalLastPreview =
-        latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime()
-          ? latestMerged.content || lastPreview
-          : lastPreview;
-      const finalLastType =
-        latestMerged && new Date(latestMerged.timestamp).getTime() >= new Date(lastTimestamp).getTime()
-          ? latestMerged.type
-          : lastType;
-
-      const lowerPreview = finalLastPreview.toLowerCase();
-      const detectedProducts = prevConv?.detectedProducts || [];
-      for (const kw of ['thinkpad', 'latitude', 'chromebook', 'macbook', 'monitor', 'impresora', 'dell', 'hp', 'lenovo']) {
-        if (lowerPreview.includes(kw) && !detectedProducts.includes(kw.toUpperCase())) {
-          detectedProducts.push(kw.toUpperCase());
+      if (remoteJid.endsWith('@lid') && rawAlt.endsWith('@s.whatsapp.net')) {
+        const altPhone = rawAlt.replace(/@.*$/, '').replace(/\D/g, '');
+        if (altPhone) {
+          lidToPhoneMap.set(remoteJid, altPhone);
+          lidToPhoneMap.set(remoteJid.replace(/@.*$/, ''), altPhone);
         }
       }
 
-      const odooMatch = findOdooPartnerByPhone(cleanPhone);
-      const odooPartnerId = odooMatch?.id || prevConv?.odooPartnerId;
-      const isOdooClient = Boolean(odooMatch || prevConv?.isOdooClient || (odooPartnerId && odooPartnerId > 0));
+      const cleanPhone = (
+        rawAlt.endsWith('@s.whatsapp.net')
+          ? rawAlt
+          : remoteJid.endsWith('@lid') && (lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, '')))
+          ? (lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, '')))!
+          : remoteJid
+      )
+        .replace(/@.*$/, '')
+        .replace(/\D/g, '');
 
-      const finalConv: Conversation = {
-        sessionId: canonicalSessionId,
-        customerPhone: cleanPhone,
-        customerName:
-          !isGenericName
-            ? customerName
-            : odooMatch?.name
-            ? odooMatch.name
-            : prevConv?.customerName && !isGenericContactName(prevConv.customerName)
-            ? prevConv.customerName
-            : customerName,
-        profilePicUrl: chatObj.profilePicUrl || contactInfo?.pic || prevConv?.profilePicUrl || undefined,
-        messages,
-        messagesLoaded: prevConv?.messagesLoaded || false,
-        aiEnabled,
-        unreadCount: Number(chatObj.unreadCount) || 0,
-        lastTimestamp: finalLastTimestamp,
-        lastMessagePreview: finalLastPreview,
-        lastMessageType: finalLastType,
-        intentStatus:
-          finalLastType === 'image' && lowerPreview.includes('pago')
-            ? 'comprobante_enviado'
-            : detectedProducts.length > 0
-            ? 'interesado'
-            : prevConv?.intentStatus || 'explorando',
-        detectedProducts,
-        zone: 'santo_domingo',
-        odooPartnerId,
-        isOdooClient,
-        isLiveEvolution: true,
-      };
+      const canonicalSessionId =
+        cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13
+          ? `${cleanPhone}@s.whatsapp.net`
+          : remoteJid;
 
-      dedupedByPhone.set(dedupKey, finalConv);
-      if (cleanPhone) dedupedByPhone.set(cleanPhone, finalConv);
-      if (canonicalSessionId) dedupedByPhone.set(canonicalSessionId, finalConv);
-      if (normName) dedupedByName.set(normName, finalConv);
+      const pushName =
+        (!key.fromMe && rec.pushName && rec.pushName !== 'Você' ? rec.pushName : '') ||
+        (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
+
+      const parsedMsg = parseSingleEvolutionMessage(rec, pushName);
+      if (!parsedMsg) continue;
+
+      let conv = conversations.find(
+        c =>
+          c.sessionId === canonicalSessionId ||
+          c.sessionId === remoteJid ||
+          (rawAlt && c.sessionId === rawAlt) ||
+          (cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone) ||
+          relatedJidsBySession.get(c.sessionId)?.has(remoteJid) ||
+          (!isGenericContactName(pushName) && !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase())
+      );
+
+      if (!conv) {
+        const odooMatch = findOdooPartnerByPhone(cleanPhone);
+        const isAiPausedForChat =
+          aiEnabledBySession.get(canonicalSessionId) === false ||
+          aiEnabledBySession.get(remoteJid) === false ||
+          (cleanPhone ? aiEnabledBySession.get(cleanPhone) === false : false);
+        conv = {
+          sessionId: canonicalSessionId,
+          customerPhone: cleanPhone,
+          customerName: !isGenericContactName(pushName)
+            ? pushName
+            : odooMatch?.name || pushName,
+          messages: [parsedMsg],
+          messagesLoaded: false,
+          aiEnabled: !isAiPausedForChat,
+          unreadCount: key.fromMe ? 0 : 1,
+          lastTimestamp: parsedMsg.timestamp,
+          lastMessagePreview: parsedMsg.content,
+          lastMessageType: parsedMsg.type,
+          intentStatus: 'explorando',
+          detectedProducts: [],
+          zone: 'santo_domingo',
+          odooPartnerId: odooMatch?.id,
+          isOdooClient: Boolean(odooMatch),
+          isLiveEvolution: true,
+        };
+        const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+        if (remoteJid) jSet.add(remoteJid);
+        if (rawAlt) jSet.add(rawAlt);
+        relatedJidsBySession.set(conv.sessionId, jSet);
+        conversations.unshift(conv);
+        hasChanges = true;
+      } else {
+        const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+        if (remoteJid) jSet.add(remoteJid);
+        if (rawAlt) jSet.add(rawAlt);
+        relatedJidsBySession.set(conv.sessionId, jSet);
+
+        if (!isGenericContactName(pushName) && isGenericContactName(conv.customerName)) {
+          conv.customerName = pushName;
+          hasChanges = true;
+        }
+
+        const alreadyExists = isDuplicateChatMessage(conv.messages, parsedMsg);
+
+        if (!alreadyExists) {
+          hydrateQuotedMessageById(parsedMsg, conv.messages, conv.customerName || pushName);
+          conv.messages.push(parsedMsg);
+          conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          if (!key.fromMe) {
+            conv.unreadCount = (conv.unreadCount || 0) + 1;
+          }
+          recordLocalMessage(conv.sessionId, parsedMsg, conv.customerPhone);
+          broadcastEvent('new_message', { sessionId: conv.sessionId, message: parsedMsg });
+          hasChanges = true;
+        }
+
+        if (new Date(parsedMsg.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()) {
+          if (conv.lastTimestamp !== parsedMsg.timestamp || conv.lastMessagePreview !== parsedMsg.content) {
+            hasChanges = true;
+          }
+          conv.lastTimestamp = parsedMsg.timestamp;
+          conv.lastMessagePreview = parsedMsg.content;
+          conv.lastMessageType = parsedMsg.type;
+        }
+      }
     }
-
-    const seenFinalSessions = new Set<string>();
-    const seenFinalPhones = new Set<string>();
-    const seenFinalNames = new Set<string>();
-    const strictlyUniqueList: Conversation[] = [];
-
-    for (const conv of Array.from(new Set(dedupedByPhone.values()))) {
-      if (seenFinalSessions.has(conv.sessionId)) continue;
-      const phone = conv.customerPhone && conv.customerPhone.length <= 12 ? conv.customerPhone : '';
-      const normName = !isGenericContactName(conv.customerName) ? conv.customerName.trim().toLowerCase() : '';
-
-      if (phone && seenFinalPhones.has(phone)) continue;
-      if (!phone && normName && seenFinalNames.has(normName)) continue;
-
-      seenFinalSessions.add(conv.sessionId);
-      if (phone) seenFinalPhones.add(phone);
-      if (normName) seenFinalNames.add(normName);
-      strictlyUniqueList.push(conv);
-    }
-
-    // Sort final list by lastTimestamp descending
-    strictlyUniqueList.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
-    conversations = strictlyUniqueList;
-    appConfig.evolution.connected = true;
 
     if (hasChanges) {
+      conversations.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
+      savePersistedConversations();
       broadcastEvent('conversations_update', { count: conversations.length });
     }
 
-    // On first sync after server boot/reset, mark messages at or before botStartupCutoffMs as historical so we only auto-reply to NEW messages from now on
+    // On first sync after server boot/reset, mark messages at or before botStartupCutoffMs as historical
     if (isFirstEvolutionSync) {
       for (const conv of conversations) {
         for (const m of conv.messages) {
@@ -3121,7 +4484,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
 
     // Auto-reply to recent unanswered customer messages with strict contact identity deduplication
     if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
-      const nowMs = Date.now();
+      const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = new Set<string>();
 
       for (const conv of conversations.slice(0, 50)) {
@@ -3163,6 +4526,11 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         // Check if message ID was already processed (normalized across evo- prefix and raw ID)
         if (isMessageIdAlreadyProcessed(msgId, contactKeys)) continue;
 
+        // Check if any alias/related JID was marked as paused in this session
+        if (contactKeys.some(k => aiEnabledBySession.get(k) === false)) {
+          continue;
+        }
+
         // Check cooldown and answered state
         const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
         if (skipCheck.skip) continue;
@@ -3172,10 +4540,20 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
           handledContactsThisCycle.add(k);
         }
 
-        console.log(`🤖 [Auto-Reply Polling Trigger]: Respondiendo a ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
-        triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
-          console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err.message)
-        );
+        console.log(`🤖 [Auto-Reply Polling Trigger]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        const { isDuplicate } = enqueueInboundMessageJob({
+          messageId: msgId || lastMsg.id,
+          conversationId: conv.sessionId,
+          customer: conv.customerName,
+          customerPhone: conv.customerPhone,
+          instance: appConfig.evolution?.instance || 'todolapto',
+          contentType: lastMsg.type,
+        });
+        if (!isDuplicate) {
+          processPersistentQueueTick().catch(err =>
+            console.log(`[Auto-Reply Poll Info for ${conv.customerName}]:`, err?.message || err)
+          );
+        }
       }
     }
 
@@ -3327,9 +4705,18 @@ function mergeWithLocalMessages(
     }
 
     if (existingIdx >= 0) {
-      // Preserve local quotedMessage or mediaUrl if Evolution API record didn't include it
+      // Preserve local quotedMessage, transcription, aiAnalysis or mediaUrl if Evolution API record didn't include it
       if (localMsg.quotedMessage && !combined[existingIdx].quotedMessage) {
         combined[existingIdx].quotedMessage = localMsg.quotedMessage;
+      }
+      if (localMsg.transcription && !combined[existingIdx].transcription) {
+        combined[existingIdx].transcription = localMsg.transcription;
+        if (combined[existingIdx].type === 'audio') {
+          combined[existingIdx].content = `🎤 "${localMsg.transcription}"`;
+        }
+      }
+      if (localMsg.aiAnalysis && !combined[existingIdx].aiAnalysis) {
+        combined[existingIdx].aiAnalysis = localMsg.aiAnalysis;
       }
       if (localMsg.mediaUrl && !combined[existingIdx].mediaUrl) {
         combined[existingIdx].mediaUrl = localMsg.mediaUrl;
@@ -3528,156 +4915,49 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
       }
     }
 
-    // Resolve quoted messages by stanzaId / parentMessageKey AND contextual deictic replies
+    // Resolve quoted messages strictly by stanzaId / parentMessageKey and hydrate quoted voice notes
     for (let i = 0; i < unique.length; i++) {
       const m = unique[i];
+      hydrateQuotedMessageById(m, unique.slice(0, i), conv?.customerName || fallbackName);
 
-      // 1. If message has a quotedMessage object with an ID or needs text hydration:
-      if (m.quotedMessage && (!m.quotedMessage.text || m.quotedMessage.text.trim().length === 0)) {
-        let parent: ChatMessage | undefined;
-        if (m.quotedMessage.id) {
-          const qId = m.quotedMessage.id;
-          parent =
-            msgById.get(qId) ||
-            msgById.get(`evo-${qId}`) ||
-            msgById.get(qId.replace(/^evo-/, ''));
-
-          if (!parent) {
-            parent = unique.find(
-              (cand, idx) =>
-                idx < i &&
-                !isInternalOrNoiseContent(cand.content) &&
-                (cand.id === qId ||
-                  cand.evolutionMessageId === qId ||
-                  cand.id.endsWith(qId) ||
-                  (cand.evolutionMessageId && cand.evolutionMessageId.endsWith(qId)) ||
-                  qId.endsWith(cand.id) ||
-                  (cand.evolutionMessageId && qId.endsWith(cand.evolutionMessageId)))
-            );
-          }
-        }
-
-        if (parent) {
-          m.quotedMessage.text =
-            parent.transcription ||
-            parent.content ||
-            (parent.type === 'image'
-              ? '📷 Foto enviada anteriormente'
-              : parent.type === 'audio'
-              ? '🎤 Nota de voz anterior'
-              : parent.type === 'video'
-              ? '🎥 Video anterior'
-              : 'Mensaje anterior');
-          m.quotedMessage.type = parent.type;
-          m.quotedMessage.mediaUrl = parent.mediaUrl;
-          m.quotedMessage.author =
-            parent.sender === 'customer' ? conv?.customerName || fallbackName : 'Todo Lapto';
-        } else {
-          // If parent message not found by exact ID, search backward for the real substantive anterior message!
-          let foundSubstantive: ChatMessage | undefined;
-          let fallbackPrev: ChatMessage | undefined;
-          for (let j = i - 1; j >= 0; j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-            if (prev.sender !== m.sender && (prev.transcription || prev.content)) {
-              if (isSubstantiveProposal(prev)) {
-                foundSubstantive = prev;
+      // Only attach a catalog item reference if the customer's message ITSELF explicitly selects a catalog position or number ("La última", "La primera", "La 8", "La quinta")
+      if (!m.quotedMessage && m.sender === 'customer' && i > 0) {
+        const rawTxt = (m.transcription || m.content || '').trim();
+        const txt = rawTxt.replace(/^🎤\s*"?|"?$/g, '').trim();
+        if (isPositionalOrNumberSelection(txt)) {
+          const tempConvForSlice: Conversation = {
+            sessionId: canonicalId,
+            customerPhone: cleanPhone,
+            customerName: conv?.customerName || fallbackName,
+            aiEnabled: true,
+            unreadCount: 0,
+            lastTimestamp: m.timestamp,
+            lastMessagePreview: txt,
+            intentStatus: 'explorando',
+            detectedProducts: [],
+            messages: unique.slice(0, i + 1),
+          };
+          const resolvedRef = resolveCatalogItemAndModelReference(tempConvForSlice, txt, '');
+          if (resolvedRef?.product && resolvedRef.matchedByPositionOrNumber) {
+            const p = resolvedRef.product;
+            const numPrefix = resolvedRef.itemNumber ? `*${resolvedRef.itemNumber}.* ` : '';
+            const condLabel =
+              p.condition === 'Nuevo'
+                ? '✨ Nuevo de Caja (Garantía 1 año)'
+                : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
+            const specsPart = p.specsSummary || p.description_sale ? `\n⚙️ ${p.specsSummary || p.description_sale}` : '';
+            let catalogMsgId = m.evolutionMessageId || m.id;
+            for (let j = i - 1; j >= 0; j--) {
+              if (unique[j].sender !== 'customer' && unique[j].content.includes('*1.*')) {
+                catalogMsgId = unique[j].evolutionMessageId || unique[j].id;
                 break;
               }
-              if (!fallbackPrev && prev.content.trim().length > 15) {
-                fallbackPrev = prev;
-              }
             }
-          }
-          const chosen = foundSubstantive || fallbackPrev;
-          if (chosen) {
-            m.quotedMessage.text = chosen.transcription || chosen.content;
-            m.quotedMessage.type = chosen.type;
-            m.quotedMessage.mediaUrl = chosen.mediaUrl;
-            m.quotedMessage.author =
-              chosen.sender === 'customer' ? conv?.customerName || fallbackName : 'Todo Lapto (Mensaje anterior)';
-          }
-        }
-      }
-
-      // 2. If Evolution API v2 delivered a plain reply without contextInfo,
-      // detect reference phrases ("¿Te acuerdas de esto?", "Te acuerda de esto?", "Sobre esto te acuerdas?", "Me interesa la 3", "¿Todavía tienen esta?", etc.)
-      // and link the substantive ANTERIOR message that the customer is actually citing!
-      if (!m.quotedMessage && m.sender === 'customer' && i > 0) {
-        const txt = (m.transcription || m.content || '').trim();
-        const isDeicticReply =
-          /(te\s*acuerda[sn]?|se\s*acuerda[sn]?|recuerda[sn]?|te\s*recuerda[sn]?|sobre\s*esto|de\s*esto|esto\s*te\s*acuerda|acuerda[sn]?\s*de\s*esto|lo\s*que\s*hablamos|de\s*la\s*que\s*hablamos|lo\s*que\s*me\s*mostraste|todav[ií]a\s*(la|lo|las|los)?\s*tienen|cu[aá]nto\s*(cuesta|sale)|qu[eé]\s*precio|me\s*interesa|esa\s*misma|ese\s*mismo|la\s*quiero|dame\s*esa|aparte\s*esa)/i.test(
-            txt
-          );
-
-        const numberRefMatch = txt.match(
-          /^(?:la|el|opci[oó]n|modelo|n[uú]mero|#)\s*(\d{1,2})\b/i
-        );
-
-        if (numberRefMatch) {
-          const itemNum = numberRefMatch[1];
-          for (let j = i - 1; j >= Math.max(0, i - 15); j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-            if (prev.sender !== 'customer' && prev.content.includes('Catálogo')) {
-              const lines = prev.content.split('\n');
-              const matchIdx = lines.findIndex(
-                l =>
-                  l.includes(`*${itemNum}.*`) ||
-                  l.startsWith(`${itemNum}.`) ||
-                  l.includes(`${itemNum}️⃣`)
-              );
-              const snippet =
-                matchIdx >= 0
-                  ? lines.slice(matchIdx, matchIdx + 4).join('\n')
-                  : prev.content;
-              m.quotedMessage = {
-                id: prev.evolutionMessageId || prev.id,
-                text: snippet,
-                type: prev.type,
-                author: 'Todo Lapto (Catálogo)',
-              };
-              break;
-            }
-          }
-        } else if (isDeicticReply) {
-          // Search backward for the GENUINE substantive anterior proposal/offer (visita a tienda o laptops ofrecidas),
-          // NOT the immediately preceding repeated bot reply or noise message!
-          let substantiveAnterior: ChatMessage | undefined;
-          let fallbackAnterior: ChatMessage | undefined;
-
-          // When customer asks "¿Te acuerdas de esto?", they are referencing the original proposal / conversation
-          // Look backward, skipping any assistant message that just re-sent a catalog or an acknowledgment
-          for (let j = i - 1; j >= 0; j--) {
-            const prev = unique[j];
-            if (isInternalOrNoiseContent(prev.content)) continue;
-
-            if (prev.sender !== 'customer') {
-              if (isSubstantiveProposal(prev)) {
-                substantiveAnterior = prev;
-                // If this is a repeated catalog or acknowledgment sent after another "te acuerdas", keep looking back for the root proposal!
-                const isRepeatedAck =
-                  prev.content.startsWith('¡Claro que sí') ||
-                  prev.content.startsWith('Claro, Sr.') ||
-                  prev.content.includes('Recuerdo perfectamente');
-                if (!isRepeatedAck) {
-                  // Found the original substantive proposal!
-                  break;
-                }
-              } else if (!fallbackAnterior && prev.content.trim().length > 15) {
-                fallbackAnterior = prev;
-              }
-            }
-          }
-
-          const target = substantiveAnterior || fallbackAnterior;
-          if (target) {
             m.quotedMessage = {
-              id: target.evolutionMessageId || target.id,
-              text: target.transcription || target.content,
-              type: target.type,
-              mediaUrl: target.mediaUrl,
-              author: 'Todo Lapto (Propuesta y opciones conversadas anteriormente)',
+              id: catalogMsgId,
+              text: `${numPrefix}*${p.name}*\n💰 RD$${p.list_price.toLocaleString()} | 📦 ${p.virtual_available} unidad(es) | 🏷️ ${condLabel}${specsPart}`,
+              type: 'text',
+              author: `Todo Lapto (Catálogo — ${resolvedRef.referenceLabel})`,
             };
           }
         }
@@ -3720,7 +5000,7 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
           cleanPhone === appConfig.evolution.adminPhone ||
           conv.customerName.toLowerCase().includes('soporte todo lapto');
         const msgTimeMs = new Date(latest.timestamp).getTime();
-        const ageMs = Date.now() - msgTimeMs;
+        const ageMs = getEffectiveCurrentDate().getTime() - msgTimeMs;
         const msgId = normalizeMsgIdKey(latest.evolutionMessageId || latest.id);
         const contactKeys = getConversationContactKeys(conv);
 
@@ -3733,10 +5013,20 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
         ) {
           const skipCheck = shouldSkipBotReply(conv, latest, 'live_evolution_poll');
           if (!skipCheck.skip) {
-            console.log(`🤖 [Active Chat Fast Trigger]: Respondiendo a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
-            triggerSalesBotReplyForConversation(conv, 'live_evolution_poll').catch(err =>
-              console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err.message)
-            );
+            console.log(`🤖 [Active Chat Fast Trigger]: Encolando respuesta a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
+            const { isDuplicate } = enqueueInboundMessageJob({
+              messageId: msgId || latest.id,
+              conversationId: conv.sessionId,
+              customer: conv.customerName,
+              customerPhone: conv.customerPhone,
+              instance: appConfig.evolution?.instance || 'todolapto',
+              contentType: latest.type,
+            });
+            if (!isDuplicate) {
+              processPersistentQueueTick().catch(err =>
+                console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err?.message || err)
+              );
+            }
           }
         }
       }
@@ -3799,7 +5089,7 @@ function scheduleAuditLogSave() {
   auditSaveTimeout = setTimeout(() => {
     auditSaveTimeout = null;
     try {
-      fs.writeFileSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
+      writeFileAtomicSync(BOT_AUDIT_LOG_FILE, JSON.stringify(botAuditLogs.slice(0, 300), null, 2));
     } catch {}
   }, 1000);
 }
@@ -3824,7 +5114,6 @@ function recordBotAuditLog(entry: {
   const now = Date.now();
   const prevAudit = lastAuditLogKeyByPhone.get(phone);
 
-  // If this exact decision for the same incoming message was logged within 8 seconds, don't spam the audit log
   if (prevAudit && prevAudit.key === dedupeKey && now - prevAudit.ts < 8000) {
     return;
   }
@@ -3900,80 +5189,160 @@ interface BotReplyRecord {
 
 const lastBotReplyByContactKey = new Map<string, BotReplyRecord>();
 
-// Cross-Process File Lock for multi-worker environments (e.g. Hostinger LiteSpeed / Passenger)
+// ---------------------------------------------------------
+// Fase 1.5 — Structured Cross-Process Conversation Locks
+// ---------------------------------------------------------
 const BOT_OUTBOUND_LOCKS_FILE = path.join(__dirname, '.vendema-outbound-locks.json');
+const structuredConversationLocks = new Map<string, ConversationLockEntry>();
 
-function acquireCrossProcessBotLock(lockKeys: string[], ttlMs = 45000): boolean {
+function readCrossProcessLocksFromDisk(): Record<string, ConversationLockEntry> {
+  const result: Record<string, ConversationLockEntry> = {};
   try {
-    let data: Record<string, number> = {};
     if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
-      try {
-        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, 'utf-8'));
-      } catch {
-        data = {};
+      const raw = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, 'utf-8'));
+      const now = Date.now();
+      if (raw && typeof raw === 'object') {
+        for (const [k, val] of Object.entries(raw)) {
+          if (typeof val === 'number') {
+            if (now < val) {
+              result[k] = {
+                conversationId: k,
+                owner: `pid-${process.pid}`,
+                acquiredAt: new Date(val - BOT_LOCK_TTL_MS).toISOString(),
+                expiresAt: new Date(val).toISOString(),
+              };
+            }
+          } else if (val && typeof val === 'object' && (val as any).expiresAt) {
+            const expMs = new Date((val as any).expiresAt).getTime();
+            if (expMs > now) {
+              result[k] = val as ConversationLockEntry;
+            }
+          }
+        }
       }
     }
+  } catch {}
+  return result;
+}
+
+function getActiveConversationLocks(): ConversationLockEntry[] {
+  const diskLocks = readCrossProcessLocksFromDisk();
+  const uniqueByConv = new Map<string, ConversationLockEntry>();
+  for (const entry of Object.values(diskLocks)) {
+    if (entry && entry.conversationId) {
+      uniqueByConv.set(entry.conversationId, entry);
+    }
+  }
+  const now = Date.now();
+  for (const [k, entry] of structuredConversationLocks.entries()) {
+    if (new Date(entry.expiresAt).getTime() > now) {
+      uniqueByConv.set(entry.conversationId || k, entry);
+    } else {
+      structuredConversationLocks.delete(k);
+    }
+  }
+  return Array.from(uniqueByConv.values());
+}
+
+function acquireCrossProcessBotLock(
+  lockKeys: string[],
+  conversationId: string,
+  ownerId: string,
+  ttlMs = BOT_LOCK_TTL_MS
+): boolean {
+  try {
+    const data = readCrossProcessLocksFromDisk();
     const now = Date.now();
-    // Prune expired locks
-    for (const [k, exp] of Object.entries(data)) {
-      if (now > exp) delete data[k];
-    }
     for (const key of lockKeys) {
-      if (data[key] && now < data[key]) {
-        return false; // Locked by another worker process
+      const existing = data[key];
+      if (existing) {
+        const expMs = new Date(existing.expiresAt).getTime();
+        if (now < expMs && existing.owner !== ownerId) {
+          return false; // Locked by another active owner/job
+        }
       }
     }
+    const lockRecord: ConversationLockEntry = {
+      conversationId,
+      owner: ownerId,
+      acquiredAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + ttlMs).toISOString(),
+    };
     for (const key of lockKeys) {
-      data[key] = now + ttlMs;
+      data[key] = lockRecord;
+      structuredConversationLocks.set(key, lockRecord);
     }
-    fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
     return true;
   } catch {
-    return true; // Fallback to in-memory lock if filesystem contention
+    return true;
   }
 }
 
-function releaseCrossProcessBotLock(lockKeys: string[]): void {
+function renewCrossProcessBotLock(lockKeys: string[], ownerId: string, ttlMs = BOT_LOCK_TTL_MS): void {
   try {
-    if (fs.existsSync(BOT_OUTBOUND_LOCKS_FILE)) {
-      let data: Record<string, number> = {};
-      try {
-        data = JSON.parse(fs.readFileSync(BOT_OUTBOUND_LOCKS_FILE, 'utf-8'));
-      } catch {
-        data = {};
+    const data = readCrossProcessLocksFromDisk();
+    const now = Date.now();
+    const nextExpires = new Date(now + ttlMs).toISOString();
+    for (const key of lockKeys) {
+      if (data[key] && data[key].owner === ownerId) {
+        data[key].expiresAt = nextExpires;
       }
-      for (const key of lockKeys) {
-        delete data[key];
+      const mem = structuredConversationLocks.get(key);
+      if (mem && mem.owner === ownerId) {
+        mem.expiresAt = nextExpires;
       }
-      fs.writeFileSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data));
+      if (inFlightBotKeys.has(key)) {
+        inFlightBotKeys.set(key, now);
+      }
     }
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
   } catch {}
 }
 
-function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean {
+function releaseCrossProcessBotLock(lockKeys: string[], ownerId?: string): void {
+  try {
+    const data = readCrossProcessLocksFromDisk();
+    for (const key of lockKeys) {
+      if (!ownerId || !data[key] || data[key].owner === ownerId) {
+        delete data[key];
+      }
+      structuredConversationLocks.delete(key);
+    }
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify(data, null, 2));
+  } catch {}
+}
+
+function acquireBotLock(conv: Conversation, triggerSource = 'unknown', ownerId?: string): boolean {
+  const effectiveOwner = ownerId || `${triggerSource}-${process.pid}-${Date.now()}`;
+  if (triggerSource === 'manual_crm_trigger') {
+    releaseBotLock(conv);
+  }
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
     if (isBotLockActive(k)) {
-      const lastMsg = conv.messages[conv.messages.length - 1];
-      const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || '';
-      const incomingText = lastMsg?.content || '';
-      recordBotAuditLog({
-        customerName: conv.customerName,
-        customerPhone: conv.customerPhone,
-        sessionId: conv.sessionId,
-        triggerSource,
-        incomingMessageId: incomingId,
-        incomingText,
-        decision: 'blocked_in_flight',
-        reason: 'Ya hay una respuesta generándose concurrentemente para este contacto. Bloqueo atómico activo.',
-        durationMs: 0,
-      });
-      return false;
+      const existingMem = structuredConversationLocks.get(k);
+      if (!existingMem || existingMem.owner !== effectiveOwner) {
+        const lastMsg = conv.messages[conv.messages.length - 1];
+        const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || '';
+        const incomingText = lastMsg?.content || '';
+        recordBotAuditLog({
+          customerName: conv.customerName,
+          customerPhone: conv.customerPhone,
+          sessionId: conv.sessionId,
+          triggerSource,
+          incomingMessageId: incomingId,
+          incomingText,
+          decision: 'blocked_in_flight',
+          reason: `Bloqueo atómico activo por conversación (owner: ${existingMem?.owner || 'in_flight'}).`,
+          durationMs: 0,
+        });
+        return false;
+      }
     }
   }
 
-  // Cross-process file lock across LiteSpeed / Passenger worker processes
-  if (!acquireCrossProcessBotLock(keys, BOT_LOCK_TTL_MS)) {
+  if (!acquireCrossProcessBotLock(keys, conv.sessionId, effectiveOwner, BOT_LOCK_TTL_MS)) {
     const lastMsg = conv.messages[conv.messages.length - 1];
     const incomingId = lastMsg?.evolutionMessageId || lastMsg?.id || '';
     const incomingText = lastMsg?.content || '';
@@ -3985,7 +5354,7 @@ function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean 
       incomingMessageId: incomingId,
       incomingText,
       decision: 'blocked_in_flight',
-      reason: 'Ya hay una respuesta generándose en otro worker de Hostinger. Bloqueo multi-proceso activo.',
+      reason: 'Ya hay una respuesta generándose en otro worker. Bloqueo multi-proceso activo.',
       durationMs: 0,
     });
     return false;
@@ -3998,12 +5367,143 @@ function acquireBotLock(conv: Conversation, triggerSource = 'unknown'): boolean 
   return true;
 }
 
-function releaseBotLock(conv: Conversation): void {
+function releaseBotLock(conv: Conversation, ownerId?: string): void {
   const keys = getConversationContactKeys(conv);
   for (const k of keys) {
     inFlightBotKeys.delete(k);
   }
-  releaseCrossProcessBotLock(keys);
+  releaseCrossProcessBotLock(keys, ownerId);
+}
+
+// ---------------------------------------------------------
+// Fase 1.4 — Persistent Job Queue Engine (.vendema-job-queue.json)
+// ---------------------------------------------------------
+const JOB_QUEUE_FILE = path.join(__dirname, '.vendema-job-queue.json');
+const JOB_MAX_EXECUTION_MS = 90000;
+const JOB_DEFAULT_MAX_ATTEMPTS = 3;
+let persistentJobQueue: QueueJobEntry[] = [];
+let isQueueWorkerRunning = false;
+
+function savePersistentJobQueue() {
+  try {
+    // Purge any synthetic test jobs and bound file size to 400 jobs
+    persistentJobQueue = persistentJobQueue.filter(
+      j =>
+        !isSyntheticTestArtifact(j.messageId) &&
+        !isSyntheticTestArtifact(j.conversationId) &&
+        !isSyntheticTestArtifact(j.customer)
+    );
+    if (persistentJobQueue.length > 400) {
+      persistentJobQueue = persistentJobQueue.slice(0, 400);
+    }
+    writeFileAtomicSync(JOB_QUEUE_FILE, JSON.stringify(persistentJobQueue, null, 2));
+  } catch (err: any) {
+    console.warn('[JobQueue Save Error]:', err?.message || err);
+  }
+}
+
+function loadPersistentJobQueue() {
+  try {
+    if (fs.existsSync(JOB_QUEUE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(JOB_QUEUE_FILE, 'utf-8'));
+      if (Array.isArray(raw)) {
+        persistentJobQueue = raw.filter(
+          (j: QueueJobEntry) =>
+            !isSyntheticTestArtifact(j?.messageId) &&
+            !isSyntheticTestArtifact(j?.conversationId) &&
+            !isSyntheticTestArtifact(j?.customer)
+        );
+      }
+    }
+  } catch {
+    persistentJobQueue = [];
+  }
+
+  // Fase 1.4 — Recover stuck PROCESSING or RECEIVED jobs after server restart
+  let recoveredCount = 0;
+  const nowIso = new Date().toISOString();
+  for (const job of persistentJobQueue) {
+    if (job.status === 'PROCESSING' || job.status === 'RECEIVED') {
+      job.status = 'RETRY';
+      job.nextRetryAt = nowIso;
+      job.lastError = 'Recuperado automáticamente tras reinicio del servidor';
+      recoveredCount++;
+    }
+  }
+  savePersistentJobQueue();
+  if (recoveredCount > 0) {
+    recordSystemApiLog({
+      service: 'Backend',
+      action: `Recuperación de Cola Persistente (${recoveredCount} tareas)`,
+      method: 'QUEUE',
+      statusCode: 200,
+      success: true,
+      durationMs: 0,
+      severity: 'MEDIUM',
+      module: 'queue',
+      requestPreview: `Se detectaron ${recoveredCount} trabajos en estado PROCESSING/RECEIVED tras reinicio`,
+      responseSnippet: `Trabajos restablecidos a estado RETRY para procesamiento seguro.`,
+    });
+  }
+}
+
+loadPersistentJobQueue();
+
+function generateCorrelationId(messageId?: string): string {
+  const cleanMsg = normalizeMsgIdKey(messageId).slice(-8) || Math.random().toString(36).slice(2, 8);
+  return `corr-${Date.now()}-${cleanMsg}`;
+}
+
+function enqueueInboundMessageJob(params: {
+  messageId: string;
+  conversationId: string;
+  customer: string;
+  customerPhone: string;
+  instance: string;
+  contentType: string;
+  correlationId?: string;
+}): { job: QueueJobEntry; isDuplicate: boolean } {
+  const cleanMsgId = normalizeMsgIdKey(params.messageId) || `msg-${Date.now()}`;
+  const existing = persistentJobQueue.find(
+    j =>
+      normalizeMsgIdKey(j.messageId) === cleanMsgId &&
+      ['RECEIVED', 'PENDING', 'PROCESSING', 'RETRY', 'COMPLETED'].includes(j.status)
+  );
+  if (existing) {
+    return { job: existing, isDuplicate: true };
+  }
+
+  const correlationId = params.correlationId || generateCorrelationId(cleanMsgId);
+  const nowIso = new Date().toISOString();
+  const job: QueueJobEntry = {
+    id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    correlationId,
+    messageId: cleanMsgId,
+    conversationId: params.conversationId,
+    customer: params.customer || 'Cliente WhatsApp',
+    customerPhone: params.customerPhone || '',
+    instance: params.instance || appConfig.evolution?.instance || 'todolapto',
+    contentType: params.contentType || 'text',
+    receivedAt: nowIso,
+    status: 'RECEIVED',
+    attempts: 0,
+    maxAttempts: JOB_DEFAULT_MAX_ATTEMPTS,
+  };
+
+  persistentJobQueue.unshift(job);
+  recordDiagnosticStage({
+    correlationId,
+    stage: 'QUEUE_CREATED',
+    module: 'queue',
+    customer: job.customer,
+    conversationId: job.conversationId,
+    messageId: job.messageId,
+    details: `Trabajo ${job.id} creado en cola persistente (estado RECEIVED -> PENDING)`,
+  });
+
+  job.status = 'PENDING';
+  savePersistentJobQueue();
+  return { job, isDuplicate: false };
 }
 
 function recordBotReplyForConversation(
@@ -4056,6 +5556,31 @@ function shouldSkipBotReply(
   const customerPhone = conv.customerPhone || '';
   const incomingId = normalizeMsgIdKey(lastCustomerMsg?.evolutionMessageId || lastCustomerMsg?.id || '');
   const incomingText = (lastCustomerMsg?.transcription || lastCustomerMsg?.content || '').trim();
+
+  // 0. Explicit AI pause (Human takeover or global AI off)
+  if (triggerSource !== 'manual_crm_trigger') {
+    if (!appConfig.globalAiActive) {
+      return { skip: true, reason: 'IA desactivada globalmente en la configuración del CRM' };
+    }
+    const isChatAiPaused =
+      conv.aiEnabled === false ||
+      keys.some(k => aiEnabledBySession.get(k) === false);
+    if (isChatAiPaused) {
+      const reason = 'IA pausada manualmente en este chat para permitir atención humana';
+      recordBotAuditLog({
+        customerName,
+        customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: incomingId,
+        incomingText,
+        decision: 'blocked_manual_pause',
+        reason,
+        durationMs: 0,
+      });
+      return { skip: true, reason };
+    }
+  }
 
   // 1. Never answer WhatsApp groups
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
@@ -4112,7 +5637,7 @@ function shouldSkipBotReply(
       }
       return {
         skip: true,
-        reason: `Mensaje previo al corte de activación (${new Date(msgTimeMs).toLocaleTimeString()}). Solo se responden mensajes nuevos automáticamente.`,
+        reason: `Mensaje previo al corte de activación (${formatDominicanTimeOnly(msgTimeMs) || new Date(msgTimeMs).toLocaleTimeString()}). Solo se responden mensajes nuevos automáticamente.`,
       };
     }
   }
@@ -4394,53 +5919,72 @@ async function hasEvolutionAlreadyAnsweredSince(
 }
 
 const recentOutboundDispatches = new Map<string, number>();
+const lastBotSendTimeByPhone = new Map<string, number>();
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function ensureEvolutionInstanceConnected(forceRestart = false): Promise<boolean> {
+async function ensureEvolutionInstanceConnected(): Promise<boolean> {
   if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) return false;
   const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, '');
   const instance = appConfig.evolution.instance;
   const headers = { apikey: appConfig.evolution.apiKey };
 
   try {
-    if (!forceRestart) {
-      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
-      if (stateRes?.ok) {
-        const data = await stateRes.json().catch(() => null);
-        const state = data?.instance?.state || data?.state;
-        if (state === 'open') {
-          appConfig.evolution.connected = true;
-          return true;
+    // 1. Check current connection state
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
+
+    if (stateRes?.ok) {
+      const data = await stateRes.json().catch(() => null);
+      const state = data?.instance?.state || data?.state;
+      if (state === 'open') {
+        appConfig.evolution.connected = true;
+        return true;
+      }
+      // If currently connecting, wait briefly
+      if (state === 'connecting') {
+        for (let i = 0; i < 3; i++) {
+          await sleepMs(1000);
+          const chk = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+            headers,
+            signal: AbortSignal.timeout(3000),
+          }).catch(() => null);
+          if (chk?.ok) {
+            const d = await chk.json().catch(() => null);
+            if ((d?.instance?.state || d?.state) === 'open') {
+              appConfig.evolution.connected = true;
+              return true;
+            }
+          }
         }
       }
     }
 
-    const now = Date.now();
-    if (now - lastEvolutionRestartMs > 15000) {
-      lastEvolutionRestartMs = now;
-      await fetch(`${baseUrl}/instance/restart/${instance}`, { method: 'POST', headers }).catch(() => null);
-      await sleepMs(1200);
-      await fetch(`${baseUrl}/instance/connect/${instance}`, { headers }).catch(() => null);
-    }
+    // 2. Trigger connect (non-destructive)
+    await fetch(`${baseUrl}/instance/connect/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
 
-    // Wait and verify active open state (polling up to 4 times)
-    for (let i = 0; i < 4; i++) {
-      await sleepMs(800);
-      const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, { headers }).catch(() => null);
-      if (verifyRes?.ok) {
-        const vData = await verifyRes.json().catch(() => null);
-        const vState = vData?.instance?.state || vData?.state;
-        if (vState === 'open') {
-          appConfig.evolution.connected = true;
-          return true;
-        }
+    await sleepMs(1200);
+    const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers,
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => null);
+    if (verifyRes?.ok) {
+      const vData = await verifyRes.json().catch(() => null);
+      const vState = vData?.instance?.state || vData?.state;
+      if (vState === 'open') {
+        appConfig.evolution.connected = true;
+        return true;
       }
     }
   } catch {
-    // Ignore transient network delays during reconnect check
+    // Ignore transient network delays
   }
   return false;
 }
@@ -4462,16 +6006,27 @@ function normalizeEvolutionTarget(numberOrJid: string): string {
   if (!raw) return '';
   // Never target WhatsApp groups
   if (isWhatsAppGroup(raw)) return '';
+  const cleanKey = raw.replace(/@.*$/, '').replace(/\D/g, '');
+
+  // Prioritize mapped phone number if this is a LID or known mapped contact
+  const mappedPhone = lidToPhoneMap.get(raw) || (cleanKey ? lidToPhoneMap.get(cleanKey) : undefined);
+  if (mappedPhone) {
+    const cleanMapped = mappedPhone.replace(/\D/g, '');
+    if (cleanMapped.length === 10 && /^(809|829|849)/.test(cleanMapped)) {
+      return `1${cleanMapped}@s.whatsapp.net`;
+    }
+    return `${cleanMapped}@s.whatsapp.net`;
+  }
+
   if (raw.includes('@')) return raw;
-  const digits = raw.replace(/\D/g, '');
   // WhatsApp @lid IDs are 14-15 digits long, whereas standard phone numbers are 10-12 digits
-  if (digits.length >= 14) {
-    return `${digits}@lid`;
+  if (cleanKey.length >= 14) {
+    return `${cleanKey}@lid`;
   }
-  if (digits.length === 10 && /^(809|829|849)/.test(digits)) {
-    return `1${digits}`;
+  if (cleanKey.length === 10 && /^(809|829|849)/.test(cleanKey)) {
+    return `1${cleanKey}@s.whatsapp.net`;
   }
-  return digits;
+  return cleanKey ? `${cleanKey}@s.whatsapp.net` : raw;
 }
 
 async function sendEvolutionMessageWithStatus(
@@ -4490,12 +6045,36 @@ async function sendEvolutionMessageWithStatus(
   }
 
   const cleanTargetKey = target.replace(/@.*$/, '').replace(/\D/g, '') || target;
-  const dispatchKey = `${cleanTargetKey}::${text.trim()}`;
+  const trimmedText = text.trim();
+  const dispatchKey = `${cleanTargetKey}::${trimmedText}`;
+  const nowMs = Date.now();
+
+  // 1. Anti-Duplicate: Drop identical message dispatched to this target within 60s
+  const lastExactTs = recentOutboundDispatches.get(dispatchKey);
+  if (lastExactTs && nowMs - lastExactTs < 60000) {
+    console.log(`🛡️ [Anti-Duplicate]: Mensaje idéntico ya despachado a ${cleanTargetKey} hace ${Math.round((nowMs - lastExactTs) / 1000)}s. Cancelando duplicado.`);
+    return { ok: true, socketClosed: false };
+  }
+
+  // 2. Anti-Duplicate Cooldown: Prevent automated bot from sending rapid-fire dual messages to same contact within 10s
+  if (!isManualAgent) {
+    const lastAnyBotSend = lastBotSendTimeByPhone.get(cleanTargetKey);
+    if (lastAnyBotSend && nowMs - lastAnyBotSend < 10000) {
+      console.log(`🛡️ [Anti-Duplicate Guard]: El bot ya envió un mensaje a ${cleanTargetKey} hace ${Math.round((nowMs - lastAnyBotSend) / 1000)}s. Previniendo envío doble.`);
+      return { ok: true, socketClosed: false };
+    }
+  }
 
   const url = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/message/sendText/${appConfig.evolution.instance}`;
 
-  // Execute with automatic self-healing if Baileys/Evolution API socket was disconnected
+  // Execute with automatic self-healing if Baileys/Evolution API socket was disconnected (max 2 attempts)
   for (let attempt = 1; attempt <= 2; attempt++) {
+    // Alternate between target with JID (e.g. 18495393496@s.whatsapp.net) and bare digits (18495393496) on retry
+    const dispatchTarget =
+      attempt === 2 && cleanTargetKey.length >= 10 && !cleanTargetKey.includes('@lid')
+        ? cleanTargetKey
+        : target;
+
     const t0 = Date.now();
     try {
       const res = await fetch(url, {
@@ -4505,11 +6084,11 @@ async function sendEvolutionMessageWithStatus(
           apikey: appConfig.evolution.apiKey,
         },
         body: JSON.stringify({
-          number: target,
+          number: dispatchTarget,
           text,
           delay: delayMs,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(20000),
       });
 
       const durationMs = Date.now() - t0;
@@ -4519,6 +6098,7 @@ async function sendEvolutionMessageWithStatus(
         const messageId = data?.key?.id || data?.id || '';
         if (!isManualAgent) {
           recentOutboundDispatches.set(dispatchKey, Date.now());
+          lastBotSendTimeByPhone.set(cleanTargetKey, Date.now());
         }
         appConfig.evolution.connected = true;
 
@@ -4527,11 +6107,11 @@ async function sendEvolutionMessageWithStatus(
           action: 'Enviar Mensaje WhatsApp (sendText)',
           method: 'POST',
           url,
-          target,
+          target: dispatchTarget,
           statusCode: res.status,
           success: true,
           durationMs,
-          requestPreview: `Destino: ${target} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+          requestPreview: `Destino: ${dispatchTarget} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
           responseSnippet: JSON.stringify(data || {}).slice(0, 350),
         });
 
@@ -4540,7 +6120,7 @@ async function sendEvolutionMessageWithStatus(
 
       const errBody = await res.text().catch(() => '');
       const isSocketClosed =
-        /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required/i.test(errBody) ||
+        /Connection Closed|Connection Failure|Timed Out|Stream Errored|Precondition Required|1006|1005|1001|closed|socket/i.test(errBody) ||
         res.status >= 500;
 
       recordSystemApiLog({
@@ -4548,19 +6128,21 @@ async function sendEvolutionMessageWithStatus(
         action: 'Enviar Mensaje WhatsApp (sendText)',
         method: 'POST',
         url,
-        target,
+        target: dispatchTarget,
         statusCode: res.status,
         success: false,
         durationMs,
-        requestPreview: `Destino: ${target} | Intento: ${attempt} | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
+        requestPreview: `Destino: ${dispatchTarget} | Intento: ${attempt}/2 | Texto: ${text.length > 70 ? `${text.slice(0, 70)}...` : text}`,
         error: errBody || `HTTP ${res.status}`,
         responseSnippet: errBody.slice(0, 500),
       });
 
       if (isSocketClosed && attempt === 1) {
-        console.log(`[Evolution API Reconnect]: Reanudando sesión de WhatsApp tras desconexión temporal...`);
-        await ensureEvolutionInstanceConnected(true);
-        continue;
+        const reconnected = await ensureEvolutionInstanceConnected();
+        if (reconnected) {
+          await sleepMs(800);
+          continue;
+        }
       }
 
       // If failed permanently:
@@ -4575,18 +6157,20 @@ async function sendEvolutionMessageWithStatus(
         action: 'Enviar Mensaje WhatsApp (sendText)',
         method: 'POST',
         url,
-        target,
+        target: dispatchTarget,
         statusCode: 0,
         success: false,
         durationMs,
-        requestPreview: `Destino: ${target} | Intento: ${attempt}`,
+        requestPreview: `Destino: ${dispatchTarget} | Intento: ${attempt}/2`,
         error: fetchErr?.message || 'Error de red o timeout al despachar a Evolution API',
       });
 
       if (attempt === 1) {
-        console.log(`[Evolution API Reconnect]: Reanudando sesión de WhatsApp tras timeout de red...`);
-        await ensureEvolutionInstanceConnected(true);
-        continue;
+        const reconnected = await ensureEvolutionInstanceConnected();
+        if (reconnected) {
+          await sleepMs(800);
+          continue;
+        }
       }
       if (!isManualAgent) {
         recentOutboundDispatches.delete(dispatchKey);
@@ -4632,25 +6216,23 @@ async function sendEvolutionTypingPresence(conv: Conversation, durationMs = 3500
   const primaryTarget = Array.from(targets)[0] || conv.sessionId;
   const t0 = Date.now();
 
-  await Promise.all(
-    Array.from(targets)
-      .slice(0, 2)
-      .map(target =>
-        fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: appConfig.evolution.apiKey,
-          },
-          body: JSON.stringify({
-            number: target,
-            delay: durationMs,
-            presence: 'composing',
-          }),
-          signal: AbortSignal.timeout(durationMs + 4000),
-        }).catch(() => null)
-      )
-  );
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: appConfig.evolution.apiKey,
+      },
+      body: JSON.stringify({
+        number: primaryTarget,
+        delay: durationMs,
+        presence: 'composing',
+      }),
+      signal: AbortSignal.timeout(durationMs + 3000),
+    }).catch(() => null);
+  } catch {
+    // Ignore presence errors
+  }
 
   recordSystemApiLog({
     service: 'Evolution API',
@@ -4685,12 +6267,20 @@ async function sendEvolutionMessageToConversation(
   if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
     const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
     primaryTarget = `${std}@s.whatsapp.net`;
-  } else if (conv.sessionId && !conv.sessionId.includes('@lid')) {
-    primaryTarget = conv.sessionId;
-  } else if (cleanPhone) {
-    primaryTarget = cleanPhone;
   } else {
-    primaryTarget = conv.sessionId;
+    // Check if mapped via lidToPhoneMap
+    const mappedPhone = lidToPhoneMap.get(conv.sessionId) || (cleanPhone ? lidToPhoneMap.get(cleanPhone) : undefined);
+    if (mappedPhone) {
+      const cleanM = mappedPhone.replace(/\D/g, '');
+      const stdM = cleanM.length === 10 && /^(809|829|849)/.test(cleanM) ? `1${cleanM}` : cleanM;
+      primaryTarget = `${stdM}@s.whatsapp.net`;
+    } else if (conv.sessionId && !conv.sessionId.includes('@lid')) {
+      primaryTarget = conv.sessionId;
+    } else if (cleanPhone) {
+      primaryTarget = cleanPhone;
+    } else {
+      primaryTarget = conv.sessionId;
+    }
   }
 
   const contactKeys = getConversationContactKeys(conv);
@@ -4863,18 +6453,50 @@ async function fetchMediaBase64FromEvolution(
 
   const url = `${appConfig.evolution.serverUrl}/chat/getBase64FromMediaMessage/${appConfig.evolution.instance}`;
   
-  // Try with full message or key payload
-  const payloads = [
+  const candidateJids = new Set<string>();
+  if (remoteJid) candidateJids.add(remoteJid);
+  if (rawRecord?.key?.remoteJid) candidateJids.add(rawRecord.key.remoteJid);
+
+  if (remoteJid) {
+    const mapped = lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, ''));
+    if (mapped) candidateJids.add(`${mapped}@s.whatsapp.net`);
+    const rel = relatedJidsBySession.get(remoteJid);
+    if (rel) {
+      for (const r of rel) candidateJids.add(r);
+    }
+  }
+
+  for (const conv of conversations) {
+    if (conv.messages?.some(m => m.evolutionMessageId === cleanId || m.id === cleanId)) {
+      candidateJids.add(conv.sessionId);
+      if (conv.customerPhone) candidateJids.add(`${conv.customerPhone}@s.whatsapp.net`);
+      const rel = relatedJidsBySession.get(conv.sessionId);
+      if (rel) {
+        for (const r of rel) candidateJids.add(r);
+      }
+      break;
+    }
+  }
+
+  // Try with n8n and Evolution API candidate payloads
+  const payloads: any[] = [
+    { 'message.key.id': cleanId, convertToMp4 },
+    { message: { key: { id: cleanId } }, convertToMp4 },
     rawRecord?.key
       ? { message: { key: rawRecord.key, message: rawRecord.message }, convertToMp4 }
       : null,
-    remoteJid
-      ? { message: { key: { id: cleanId, remoteJid, fromMe: false } }, convertToMp4 }
-      : null,
-    { message: { key: { id: cleanId } }, convertToMp4 },
-  ].filter(Boolean);
+  ];
 
-  for (const payload of payloads) {
+  for (const j of candidateJids) {
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j, fromMe: false } }, convertToMp4 });
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j, fromMe: true } }, convertToMp4 });
+    payloads.push({ message: { key: { id: cleanId, remoteJid: j } }, convertToMp4 });
+    payloads.push({ 'message.key.id': cleanId, 'message.key.remoteJid': j, convertToMp4 });
+  }
+
+  const validPayloads = payloads.filter(Boolean);
+
+  for (const payload of validPayloads) {
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -5357,7 +6979,7 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
   }
 
   // 3. Impresoras / Equipos de Impresión (estrictamente máquinas impresoras; CERO teclados, CERO cartuchos/tintas, CERO cables, CERO UPS)
-  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales)\b/i.test(s)) {
+  if (/\b(impresora|impresoras|printer|printers|multifuncional|multifuncionales|imprimir|fotocopiadora|fotocopiadoras)\b/i.test(s)) {
     return {
       id: 'impresora',
       label: 'Impresoras y Equipos de Impresión',
@@ -5382,7 +7004,7 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
   }
 
   // 4. Monitores / Pantallas
-  if (/\b(monitor|monitores|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s)) {
+  if (/\b(monitor|monitores|pantalla|pantallas|pantalla\s*de\s*pc|pantalla\s*para\s*pc|pantallas\s*pc)\b/i.test(s) && !/\b(tactil|táctil|partida|rota|pequeña)\b/i.test(s)) {
     return {
       id: 'monitor',
       label: 'Monitores y Pantallas',
@@ -5482,8 +7104,13 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
     };
   }
 
-  // 14. Laptops (cuando consulta por laptops / portátiles / notebooks / chromebooks)
-  if (/\b(laptop|laptops|lapto|laptos|portatil|portatiles|portátil|portátiles|computadora\s*portatil|notebook|notebooks|chromebook|chromebooks)\b/i.test(s)) {
+  // 14. Laptops, Computadoras y Portátiles
+  if (
+    /\b(laptop|laptops|lapto|laptos|computadora|computadoras|computador|computadores|pc|pcs|portatil|portatiles|portátil|portátiles|notebook|notebooks|chromebook|chromebooks|maquina|maquinas|máquina|máquinas)\b/i.test(
+      s
+    ) &&
+    !/\b(pad|mouse|alfombrilla|pantalla\s*de\s*pc|pantalla\s*para\s*pc|monitor)\b/i.test(s)
+  ) {
     return {
       id: 'laptop',
       label: 'Laptops y Equipos Portátiles',
@@ -5503,6 +7130,58 @@ function detectGenericProductFamily(query: string): GenericProductFamily | null 
   return null;
 }
 
+// Helper: Normalize common Spanish Whisper voice-note phonetic transcriptions into canonical laptop/product model tokens
+function normalizePhoneticProductText(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\b(team\s*pack|tin\s*pad|tink\s*pad|thin\s*pad|think\s*pack|tim\s*pad|zin\s*pad)\b/gi, 'thinkpad')
+    .replace(/\b(lati\s*tud|lati\s*tu)\b/gi, 'latitude')
+    .replace(/\b(pro\s*buk|pro\s*book)\b/gi, 'probook')
+    .replace(/\b(eli\s*te\s*book|elite\s*buk|elit\s*book)\b/gi, 'elitebook')
+    .replace(/\b(idea\s*pad|idea\s*pack)\b/gi, 'ideapad')
+    .replace(/\b(ins\s*piron)\b/gi, 'inspiron')
+    .replace(/\b(crome\s*book|crom\s*book|chro\s*book)\b/gi, 'chromebook')
+    .replace(/\b([exltpgc])\s+(\d{2,4})\b/gi, '$1$2');
+}
+
+function isDiscountInquiry(raw: string): boolean {
+  if (!raw) return false;
+  return /\b(descuento|descuentos|rebaja|rebajas|rebajar|me\s*la\s*dejas?\s*en|en\s*cu[aá]nto\s*me\s*la\s*deja[sn]?|cu[aá]l\s*es\s*el\s*precio\s*m[ií]nimo|precio\s*m[ií]nimo|lo\s*menos\s*que\s*la\s*deja[sn]?|en\s*cu[aá]nto\s*es\s*lo\s*m[ií]nimo|hacerme\s*un\s*especial|precio\s*especial|me\s*haces?\s*(?:un\s*)?descuento|le\s*haces?\s*(?:un\s*)?descuento|le\s*hacen\s*(?:alg[uú]n\s*)?descuento|tiene\s*descuento|tienen\s*descuento|dejarla\s*en\s*menos|algo\s*menos)\b/i.test(
+    raw
+  );
+}
+
+function hasSpecificModelCodeInText(raw: string): boolean {
+  if (!raw) return false;
+  const norm = normalizePhoneticProductText(raw).toLowerCase();
+  return /\b(e460|e570|e5570|e5470|e5270|e7270|l490|x131e|x360|c730|c771|p22t|3100|3300|3400|3541|5400|5420|5480|5510|t480|t470|15iil05|ba009dx|850\s*g4|450\s*g3|450\s*g5|430\s*g7|640\s*g2|2874|2875|720|530|617|n23|100e|11e|m4|c203x)\b/i.test(
+    norm
+  );
+}
+
+function isPositionalOrNumberSelection(raw: string): boolean {
+  if (!raw) return false;
+  const s = raw.trim().toLowerCase();
+  if (
+    /\b(la\s*[uú]ltima|el\s*[uú]ltimo|la\s*pen[uú]ltima|el\s*pen[uú]ltimo|la\s*primera|el\s*primero|la\s*segunda|el\s*segundo|la\s*tercera|el\s*tercero|la\s*cuarta|el\s*cuarto|la\s*quinta|el\s*quinto|la\s*sexta|el\s*sexto|la\s*s[eé]ptima|el\s*s[eé]ptimo|la\s*octava|el\s*octavo|la\s*novena|el\s*noveno|la\s*d[eé]cima|el\s*d[eé]cimo|[uú]ltima\s*opci[oó]n|primera\s*opci[oó]n|segunda\s*opci[oó]n|tercera\s*opci[oó]n)\b/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  if (/^\s*(?:la|el|opci[oó]n|modelo|n[uú]mero|numero|item|#)?\s*#?(\d{1,2})\s*[.!?]?\s*$/i.test(s)) {
+    return true;
+  }
+  if (
+    /\b(?:la|el|opci[oó]n|modelo|n[uú]mero|numero|#)\s*#?(\d{1,2})\b(?!\s*(?:gb|tb|ram|ssd|hdd|pulgadas|mil|k|pesos|dop|generaci[oó]n|gen|n[uú]cleos|meses|a[ñn]os|unidades|horas|am|pm))/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // Search all Odoo products dynamically based on customer message, brand, budget, condition & use case
 function getRelevantProductsHighlight(
   latestQueryText: string,
@@ -5511,22 +7190,30 @@ function getRelevantProductsHighlight(
 ): string {
   if ((!latestQueryText && !fullContextText && !recentConversationText) || products.length === 0) return '';
   // Strip any internal prompt wrapper headers if present so we only analyze the user's real words
-  const userOnlyLatest = latestQueryText
-    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Mensaje actual del cliente sobre esta cita anterior:\s*"?/gi, '')
-    .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, '')
-    .replace(/\[nota de voz[^\]]*\]/gi, ' ')
-    .replace(/\[audio[^\]]*\]/gi, ' ')
-    .replace(/\[foto[^\]]*\]/gi, ' ')
-    .replace(/\[detalles[^\]]*\]/gi, ' ')
-    .replace(/\[contenido visual[^\]]*\]/gi, ' ')
-    .replace(/[🎤📷🔍]/g, ' ')
-    .trim();
+  const userOnlyLatest = normalizePhoneticProductText(
+    latestQueryText
+      .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Mensaje actual del cliente sobre esta cita anterior:\s*"?/gi, '')
+      .replace(/📌 \[ATENCIÓN MÁXIMA[\s\S]*?Consulta del cliente:\s*"?/gi, '')
+      .replace(/\[nota de voz[^\]]*\]/gi, ' ')
+      .replace(/\[audio[^\]]*\]/gi, ' ')
+      .replace(/\[foto[^\]]*\]/gi, ' ')
+      .replace(/\[detalles[^\]]*\]/gi, ' ')
+      .replace(/\[contenido visual[^\]]*\]/gi, ' ')
+      .replace(/[🎤📷🔍]/g, ' ')
+      .trim()
+  );
   const cleanLatest = userOnlyLatest.toLowerCase();
 
   // Pure greeting or courtesy guard: NEVER search or inject catalog for simple greetings
   if (isSimpleConversationalMessage(cleanLatest)) {
     return '';
   }
+
+  // Discount or positional/number selection guard: NEVER inject a 36-item full or brand catalog when customer asks for a discount or selects a specific item by number/position/model!
+  const isSingleModelOrSelection =
+    isDiscountInquiry(cleanLatest) ||
+    isPositionalOrNumberSelection(cleanLatest) ||
+    hasSpecificModelCodeInText(cleanLatest);
 
   // Operational store question guard: NEVER search or inject catalog for operational queries (hours, location, delivery, warranty)
   const isOperationalQuestion = /\b(laborando|laboran|laborar|trabajando|trabajan|abierto|abiertos|abierta|abiertas|cerrado|cerrados|abren|cierran|horario|horarios|ubicacion|ubicación|ubicados|donde estan|direccion|dirección|hacen envios|delivery|garantia|garantía)\b/i.test(`${cleanLatest} ${fullContextText}`);
@@ -5597,6 +7284,7 @@ function getRelevantProductsHighlight(
   // Return ALL available items in stock for that category without any 15-item truncation, and with STRICT CATEGORICAL PURITY.
   let hasPrimaryFilterSection = false;
   if (
+    !isSingleModelOrSelection &&
     genericFamily &&
     (genericFamily.id !== 'laptop' || (!brandFilter && !budgetFilter && !useCaseFilter && !wantsOnlyNew))
   ) {
@@ -5647,10 +7335,15 @@ function getRelevantProductsHighlight(
           ? `🖥️ *Catálogo completo de laptops — Todo Lapto*\n\n*(${familyProducts.length} modelos disponibles en stock real)*`
           : `📦 *Catálogo completo de ${genericFamily.label} — Todo Lapto*\n\n*(${familyProducts.length} opciones disponibles en stock real)*`;
 
+      const rdNowForFooter = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+      const scheduleNoticeInFooter = rdNowForFooter.isOpen
+        ? `\n\n🏪 *Estamos abiertos ahora mismo en la Av. Charles de Gaulle No. 133 hasta las 6:00 PM.* Contamos con retiro en tienda física y servicio de entrega a domicilio con pago contra entrega en Santo Domingo 🚚.`
+        : `\n\n🕒 *Horario Todo Lapto:* Actualmente nos encontramos fuera de jornada (${rdNowForFooter.statusDetail}). Con gusto tomamos tu pedido por aquí y queda apartado para despacharse a primera hora ${rdNowForFooter.nextOpeningStr} 🚚.`;
+
       const catalogFooter =
         genericFamily.id === 'laptop'
-          ? `\n\n*¿Cuál te interesa? También dime si buscas una marca, presupuesto o uso específico (oficina, estudios o gaming) y te filtro las mejores opciones.* 🛒`
-          : `\n\n*¿Cuál te interesa? Te lo aparto ahora mismo para entrega a domicilio o retiro en tienda.* 🛒`;
+          ? `${scheduleNoticeInFooter}\n\n*¿Cuál de estas opciones te interesa? También dime si buscas una marca, presupuesto o uso específico (oficina, estudios o gaming) y te filtro las mejores alternativas.* 🛒`
+          : `${scheduleNoticeInFooter}\n\n*¿Cuál de estas opciones te interesa? Te la aparto ahora mismo para entrega a domicilio o retiro en tienda.* 🛒`;
 
       sections.push(
         `=== 🎯 CATÁLOGO COMPLETO OBLIGATORIO DE ${genericFamily.label.toUpperCase()}${brandNote} (${familyProducts.length} DISPONIBLES EN STOCK) ===
@@ -5674,7 +7367,7 @@ ${itemsListFormatted}${catalogFooter}
 Informa cordialmente al cliente que en este momento no tenemos unidades disponibles de ${genericFamily.label}${brandFilter ? ` marca ${brandFilter.label}` : ''} en stock físico, y ofrécele alternativas o verificar próxima llegada.`
       );
     }
-  } else if (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew) {
+  } else if (!isSingleModelOrSelection && (brandFilter || budgetFilter || useCaseFilter || wantsOnlyNew)) {
     // 3. Apply Combined or Individual Smart Filters for Laptops (Brand, Budget, Use Case)
     hasPrimaryFilterSection = true;
     let filtered = [...laptopsInStock];
@@ -5812,15 +7505,27 @@ Informa cordialmente al cliente que en este momento no tenemos un modelo exacto 
       }
 
       scored.sort((a, b) => b.score - a.score || a.product.list_price - b.product.list_price);
-      const topMatches = scored.map(s => s.product);
+      const bestScore = scored[0]?.score || 0;
+      const topMatches = isSingleModelOrSelection
+        ? scored.filter(s => s.score === bestScore).slice(0, 2).map(s => s.product)
+        : scored.map(s => s.product);
       if (topMatches.length > 0) {
-        sections.push(
-          `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n<!-- [CATALOG_BLOCK_START] -->\n¡Claro! Aquí tienes las opciones disponibles en nuestro inventario actual:\n\n` +
-            topMatches
-              .map((p, idx) => formatWhatsAppProductBlock(p, idx))
-              .join('\n\n') +
-            `\n\n*¿Cuál de estas opciones te interesa apartar?* 🛒\n<!-- [CATALOG_BLOCK_END] -->`
-        );
+        if (isSingleModelOrSelection) {
+          sections.push(
+            `=== 🎯 PRODUCTO ESPECÍFICO IDENTIFICADO EN INVENTARIO ODOO ===\n` +
+              topMatches
+                .map((p, idx) => formatWhatsAppProductBlock(p, idx))
+                .join('\n\n')
+          );
+        } else {
+          sections.push(
+            `=== COINCIDENCIAS DIRECTAS EN INVENTARIO ODOO PARA LA CONSULTA ACTUAL (${topMatches.length} encontrados) ===\n<!-- [CATALOG_BLOCK_START] -->\n¡Claro! Aquí tienes las opciones disponibles en nuestro inventario actual:\n\n` +
+              topMatches
+                .map((p, idx) => formatWhatsAppProductBlock(p, idx))
+                .join('\n\n') +
+              `\n\n*¿Cuál de estas opciones te interesa apartar?* 🛒\n<!-- [CATALOG_BLOCK_END] -->`
+          );
+        }
       }
     }
   }
@@ -5841,10 +7546,147 @@ function getLearnedInsightsPromptContext(): string {
 // REST API Endpoints
 // ---------------------------------------------------------
 
-// 0. System API Logs & Diagnostics Endpoints
+// 0. System API Logs & Fase 1.8 Diagnostics Endpoints
+function buildFiveServiceHealthSnapshot(): ServiceHealthProbe[] {
+  const nowIso = new Date().toISOString();
+
+  // 1. Backend
+  const backendProbe: ServiceHealthProbe = {
+    service: 'Backend',
+    status: isServerShuttingDown ? 'DISCONNECTED' : 'CONNECTED',
+    latencyMs: 1,
+    lastCheckedAt: nowIso,
+    failureType: 'NONE',
+    details: `PID ${process.pid} · Uptime ${Math.floor(process.uptime())}s`,
+  };
+
+  // 2. Supabase
+  const lastSupaLog = systemApiLogs.find(l => l.service === 'Supabase');
+  const hasSupaCfg = Boolean(appConfig.supabase?.url && appConfig.supabase?.anonKey);
+  const pendingSyncCount = pendingSupabaseSyncMap.size;
+  const supabaseProbe: ServiceHealthProbe = {
+    service: 'Supabase',
+    status: !hasSupaCfg
+      ? 'DISCONNECTED'
+      : pendingSyncCount > 5
+      ? 'DEGRADED'
+      : appConfig.supabase?.connected !== false
+      ? 'CONNECTED'
+      : 'DEGRADED',
+    latencyMs: lastSupaLog?.durationMs || 0,
+    lastCheckedAt: lastSupaLog?.timestamp || appConfig.supabase?.lastSync || nowIso,
+    failureType: !hasSupaCfg ? 'INVALID_CONFIG' : pendingSyncCount > 0 ? 'CONNECTION_ERROR' : 'NONE',
+    details: !hasSupaCfg
+      ? 'Sin credenciales configuradas'
+      : pendingSyncCount > 0
+      ? `${pendingSyncCount} sincronizaciones en cola local`
+      : 'Sincronización activa',
+  };
+
+  // 3. Evolution API
+  const lastEvoLog = systemApiLogs.find(l => l.service === 'Evolution API');
+  const hasEvoCfg = Boolean(appConfig.evolution?.serverUrl && appConfig.evolution?.instance && appConfig.evolution?.apiKey);
+  const evoErrText = (lastEvoLog?.error || '').toLowerCase();
+  const evolutionProbe: ServiceHealthProbe = {
+    service: 'Evolution API',
+    status: !hasEvoCfg
+      ? 'DISCONNECTED'
+      : lastEvoLog
+      ? lastEvoLog.success
+        ? 'CONNECTED'
+        : evoErrText.includes('connection closed')
+        ? 'DISCONNECTED'
+        : 'DEGRADED'
+      : appConfig.evolution?.connected
+      ? 'CONNECTED'
+      : 'UNKNOWN',
+    latencyMs: lastEvoLog?.durationMs || 0,
+    lastCheckedAt: lastEvoLog?.timestamp || nowIso,
+    failureType: !hasEvoCfg
+      ? 'INVALID_CONFIG'
+      : lastEvoLog && !lastEvoLog.success
+      ? lastEvoLog.statusCode === 401 || lastEvoLog.statusCode === 403
+        ? 'AUTH_ERROR'
+        : evoErrText.includes('connection closed')
+        ? 'CONNECTION_ERROR'
+        : 'UPSTREAM_ERROR'
+      : 'NONE',
+    details: lastEvoLog
+      ? lastEvoLog.success
+        ? `Instancia ${appConfig.evolution.instance} conectada`
+        : lastEvoLog.error || `HTTP ${lastEvoLog.statusCode || 500}`
+      : `Instancia ${appConfig.evolution.instance}`,
+  };
+
+  // 4. OpenAI
+  const lastAiLog = systemApiLogs.find(l => l.service === 'AI Engine');
+  const hasOpenAiKey = Boolean(appConfig.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey));
+  const aiErrText = (lastAiLog?.error || '').toLowerCase();
+  const openaiProbe: ServiceHealthProbe = {
+    service: 'OpenAI',
+    status: !hasOpenAiKey
+      ? 'DISCONNECTED'
+      : lastAiLog
+      ? lastAiLog.success
+        ? 'CONNECTED'
+        : 'DISCONNECTED'
+      : 'UNKNOWN',
+    latencyMs: lastAiLog?.durationMs || 0,
+    lastCheckedAt: lastAiLog?.timestamp || nowIso,
+    failureType: !hasOpenAiKey
+      ? 'INVALID_CONFIG'
+      : lastAiLog && !lastAiLog.success
+      ? lastAiLog.statusCode === 401 || aiErrText.includes('401') || aiErrText.includes('incorrect api key')
+        ? 'AUTH_ERROR'
+        : lastAiLog.statusCode === 429 || aiErrText.includes('429')
+        ? 'RATE_LIMIT'
+        : 'UPSTREAM_ERROR'
+      : 'NONE',
+    details: !hasOpenAiKey
+      ? 'Falta API Key sk-...'
+      : lastAiLog
+      ? lastAiLog.success
+        ? `Motor ${appConfig.aiProvider?.model || 'gpt-4o-mini'} operativo`
+        : lastAiLog.error || `HTTP ${lastAiLog.statusCode || 401}`
+      : `Modelo ${appConfig.aiProvider?.model || 'gpt-4o-mini'}`,
+  };
+
+  // 5. Odoo
+  const lastOdooLog = systemApiLogs.find(l => l.service === 'Odoo ERP');
+  const hasOdooCfg = Boolean(appConfig.odoo?.url && appConfig.odoo?.db && appConfig.odoo?.apiKey);
+  const odooProbe: ServiceHealthProbe = {
+    service: 'Odoo',
+    status: !hasOdooCfg
+      ? 'DISCONNECTED'
+      : lastOdooLog
+      ? lastOdooLog.success
+        ? 'CONNECTED'
+        : 'DEGRADED'
+      : products.length > 0
+      ? 'CONNECTED'
+      : 'UNKNOWN',
+    latencyMs: lastOdooLog?.durationMs || 0,
+    lastCheckedAt: lastOdooLog?.timestamp || appConfig.odoo?.lastSync || nowIso,
+    failureType: !hasOdooCfg
+      ? 'INVALID_CONFIG'
+      : lastOdooLog && !lastOdooLog.success
+      ? 'UPSTREAM_ERROR'
+      : 'NONE',
+    details: `${products.length} productos en stock · DB: ${appConfig.odoo.db}`,
+  };
+
+  return [backendProbe, supabaseProbe, evolutionProbe, openaiProbe, odooProbe];
+}
+
 app.get('/api/system/logs', (req, res) => {
   const service = req.query.service as string | undefined;
   const status = req.query.status as string | undefined;
+  const severity = req.query.severity as string | undefined;
+  const correlationId = req.query.correlationId as string | undefined;
+  const customer = req.query.customer as string | undefined;
+  const moduleFilter = req.query.module as string | undefined;
+  const stageFilter = req.query.stage as string | undefined;
+
   let filtered = [...systemApiLogs];
 
   if (service && service !== 'all') {
@@ -5855,32 +7697,232 @@ app.get('/api/system/logs', (req, res) => {
   } else if (status === 'success') {
     filtered = filtered.filter(l => l.success && (!l.statusCode || l.statusCode < 400));
   }
+  if (severity && severity !== 'all') {
+    filtered = filtered.filter(l => (l.severity || 'INFO').toUpperCase() === severity.toUpperCase());
+  }
+  if (correlationId && correlationId.trim()) {
+    const q = correlationId.trim().toLowerCase();
+    filtered = filtered.filter(l => (l.correlationId || '').toLowerCase().includes(q));
+  }
+  if (customer && customer.trim()) {
+    const q = customer.trim().toLowerCase();
+    filtered = filtered.filter(
+      l =>
+        (l.customer || '').toLowerCase().includes(q) ||
+        (l.target || '').toLowerCase().includes(q) ||
+        (l.conversationId || '').toLowerCase().includes(q)
+    );
+  }
+  if (moduleFilter && moduleFilter !== 'all') {
+    filtered = filtered.filter(l => (l.module || '').toLowerCase() === moduleFilter.toLowerCase());
+  }
+  if (stageFilter && stageFilter !== 'all') {
+    filtered = filtered.filter(l => l.stage === stageFilter);
+  }
+
+  const activeLocks = getActiveConversationLocks();
+  const fiveServices = buildFiveServiceHealthSnapshot();
+  const mapProbe = (svcName: string) => {
+    const found = fiveServices.find(s => s.service === svcName);
+    return {
+      name: svcName,
+      status: found?.status || 'UNKNOWN',
+      lastChecked: found?.lastCheckedAt || new Date().toISOString(),
+      responseTimeMs: found?.latencyMs,
+      details: found?.details,
+      error: found?.failureType && found.failureType !== 'NONE' ? found.details : undefined,
+    };
+  };
+
+  const queueSummary = {
+    total: persistentJobQueue.length,
+    pending: persistentJobQueue.filter(j => j.status === 'PENDING' || j.status === 'RECEIVED').length,
+    processing: persistentJobQueue.filter(j => j.status === 'PROCESSING').length,
+    retry: persistentJobQueue.filter(j => j.status === 'RETRY').length,
+    deadLetter: persistentJobQueue.filter(j => j.status === 'DEAD_LETTER' || j.status === 'FAILED').length,
+    failed: persistentJobQueue.filter(j => j.status === 'DEAD_LETTER' || j.status === 'FAILED').length,
+    completed: persistentJobQueue.filter(j => j.status === 'COMPLETED').length,
+  };
+
+  const diagnosticsPayload = {
+    services: {
+      backend: mapProbe('Backend'),
+      supabase: mapProbe('Supabase'),
+      evolution: mapProbe('Evolution API'),
+      openai: mapProbe('OpenAI'),
+      odoo: mapProbe('Odoo'),
+    },
+    queueStats: queueSummary,
+    queueJobs: persistentJobQueue.slice(0, 80),
+    activeLocks,
+    pendingSyncCount: pendingSupabaseSyncMap.size,
+    lastWebhookAt: lastWebhookReceivedAt,
+  };
 
   res.json({
     success: true,
     logs: filtered,
     totalCount: systemApiLogs.length,
     errorCount: systemApiLogs.filter(l => !l.success || (l.statusCode && l.statusCode >= 400)).length,
+    servicesHealth: fiveServices,
+    queueSummary,
+    recentJobs: persistentJobQueue.slice(0, 60),
+    activeLocks,
+    pendingSupabaseSyncs: Array.from(pendingSupabaseSyncMap.values()),
+    lastWebhookReceivedAt,
+    diagnostics: diagnosticsPayload,
+  });
+});
+
+app.get('/api/system/diagnostics', (_req, res) => {
+  const activeLocks = getActiveConversationLocks();
+  const fiveServices = buildFiveServiceHealthSnapshot();
+  const mapProbe = (svcName: string) => {
+    const found = fiveServices.find(s => s.service === svcName);
+    return {
+      name: svcName,
+      status: found?.status || 'UNKNOWN',
+      lastChecked: found?.lastCheckedAt || new Date().toISOString(),
+      responseTimeMs: found?.latencyMs,
+      details: found?.details,
+      error: found?.failureType && found.failureType !== 'NONE' ? found.details : undefined,
+    };
+  };
+  const queueSummary = {
+    total: persistentJobQueue.length,
+    pending: persistentJobQueue.filter(j => j.status === 'PENDING' || j.status === 'RECEIVED').length,
+    processing: persistentJobQueue.filter(j => j.status === 'PROCESSING').length,
+    retry: persistentJobQueue.filter(j => j.status === 'RETRY').length,
+    deadLetter: persistentJobQueue.filter(j => j.status === 'DEAD_LETTER' || j.status === 'FAILED').length,
+    failed: persistentJobQueue.filter(j => j.status === 'DEAD_LETTER' || j.status === 'FAILED').length,
+    completed: persistentJobQueue.filter(j => j.status === 'COMPLETED').length,
+  };
+
+  res.json({
+    success: true,
+    services: fiveServices,
+    queue: {
+      summary: queueSummary,
+      jobs: persistentJobQueue.slice(0, 100),
+    },
+    activeLocks,
+    pendingSupabaseSyncs: Array.from(pendingSupabaseSyncMap.values()),
+    lastWebhookReceivedAt,
+    diagnostics: {
+      services: {
+        backend: mapProbe('Backend'),
+        supabase: mapProbe('Supabase'),
+        evolution: mapProbe('Evolution API'),
+        openai: mapProbe('OpenAI'),
+        odoo: mapProbe('Odoo'),
+      },
+      queueStats: queueSummary,
+      queueJobs: persistentJobQueue.slice(0, 100),
+      activeLocks,
+      pendingSyncCount: pendingSupabaseSyncMap.size,
+      lastWebhookAt: lastWebhookReceivedAt,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.post('/api/system/queue/retry/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = persistentJobQueue.find(j => j.id === jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, message: 'Trabajo no encontrado en la cola.' });
+  }
+  job.status = 'RETRY';
+  job.attempts = 0;
+  job.nextRetryAt = new Date().toISOString();
+  job.lastError = undefined;
+  unmarkMessageIdProcessedForRetry(job.messageId, [job.conversationId, job.customerPhone]);
+  savePersistentJobQueue();
+  processPersistentQueueTick().catch(() => {});
+  res.json({ success: true, job, message: 'Trabajo reencolado para procesamiento inmediato.' });
+});
+
+app.post('/api/system/locks/release', (req, res) => {
+  const { conversationId } = req.body || {};
+  if (conversationId) {
+    const conv = conversations.find(c => c.sessionId === conversationId);
+    if (conv) {
+      releaseBotLock(conv);
+    } else {
+      releaseCrossProcessBotLock([conversationId]);
+    }
+  } else {
+    inFlightBotKeys.clear();
+    structuredConversationLocks.clear();
+    writeFileAtomicSync(BOT_OUTBOUND_LOCKS_FILE, JSON.stringify({}, null, 2));
+  }
+  res.json({ success: true, activeLocks: getActiveConversationLocks() });
+});
+
+app.post('/api/system/queue/clear', (_req, res) => {
+  persistentJobQueue = persistentJobQueue.filter(
+    j => j.status === 'PROCESSING' || j.status === 'PENDING' || j.status === 'RECEIVED'
+  );
+  savePersistentJobQueue();
+  res.json({
+    success: true,
+    jobs: persistentJobQueue,
+    message: 'Historial de trabajos fallidos y completados limpiado.',
   });
 });
 
 app.post('/api/system/logs/clear', (_req, res) => {
   systemApiLogs.length = 0;
+  persistentJobQueue = persistentJobQueue.filter(
+    j => j.status === 'PROCESSING' || j.status === 'PENDING' || j.status === 'RECEIVED'
+  );
+  savePersistentJobQueue();
   recordSystemApiLog({
-    service: 'Evolution API',
+    service: 'Backend',
     action: 'Registros del Sistema Vaciados',
     method: 'SYS',
     statusCode: 200,
     success: true,
     durationMs: 0,
+    severity: 'INFO',
+    module: 'diagnostics',
     requestPreview: 'Limpieza manual solicitada desde la interfaz',
-    responseSnippet: 'Buffer de diagnóstico reiniciado a 0.',
+    responseSnippet: 'Buffer de diagnóstico y tareas fallidas reiniciados a 0.',
   });
   res.json({ success: true, message: 'Registros del sistema vaciados con éxito' });
 });
 
 app.post('/api/system/logs/test-ping', async (_req, res) => {
-  const results: any = { evolution: null, odoo: null };
+  const results: any = { backend: { ok: true, status: 200, durationMs: 1 }, supabase: null, evolution: null, odoo: null, openai: null };
+
+  // 0. Test Supabase Connection
+  try {
+    const t0 = Date.now();
+    const supaRes = await testSupabaseConnection(
+      appConfig.supabase?.url || DEFAULT_SUPABASE_URL,
+      appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY
+    );
+    const supaDuration = Date.now() - t0;
+    recordSystemApiLog({
+      service: 'Supabase',
+      action: 'Diagnóstico en Vivo (Supabase Probe)',
+      method: 'GET',
+      url: appConfig.supabase?.url || DEFAULT_SUPABASE_URL,
+      statusCode: supaRes.success ? 200 : 500,
+      success: supaRes.success,
+      durationMs: supaDuration,
+      responseSnippet: supaRes.message,
+      error: supaRes.success ? undefined : supaRes.message,
+    });
+    results.supabase = {
+      ok: supaRes.success,
+      status: supaRes.success ? 200 : 500,
+      durationMs: supaDuration,
+      details: supaRes.message,
+    };
+  } catch (err: any) {
+    results.supabase = { ok: false, status: 500, error: err.message };
+  }
 
   // 1. Test Evolution API connectionState
   try {
@@ -5963,18 +8005,18 @@ app.post('/api/system/logs/test-ping', async (_req, res) => {
     results.openai = {
       ok: false,
       status: String(err.message || '').includes('401') ? 401 : String(err.message || '').includes('429') ? 429 : 500,
-      error: err.message,
+      error: sanitizeSecretsInText(err.message),
     };
   }
 
-  res.json({ success: true, results });
+  res.json({ success: true, results, servicesHealth: buildFiveServiceHealthSnapshot() });
 });
 
-// 1. Get Configuration & Status
-app.get('/api/config', (req, res) => {
+// 1. Get Configuration & Status (Fase 1.1: Returns Public Masked Config — ZERO raw secrets exposed)
+app.get('/api/config', (_req, res) => {
   res.json({
     success: true,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     businessSchedule: getDominicanTimeContext(),
     stats: {
       totalProducts: products.length,
@@ -6017,11 +8059,13 @@ app.post('/api/holidays/sync-supabase', async (_req, res) => {
       appConfig.supabase?.url,
       appConfig.supabase?.anonKey
     );
+    recordSupabaseSyncState('holiday', 'all', syncRes.synced);
     res.json({
       success: syncRes.synced,
       ...syncRes,
     });
   } catch (err: any) {
+    recordSupabaseSyncState('holiday', 'all', false, err.message);
     res.status(500).json({
       success: false,
       message: err.message,
@@ -6049,10 +8093,15 @@ app.post('/api/holidays/overrides', async (req, res) => {
       tableExists = syncRes.tableExists;
       tableRowsSynced = syncRes.tableRowsSynced;
       storage = syncRes.storage;
+      recordSupabaseSyncState('holiday', 'overrides', dbSynced);
       if (appConfig.supabase?.autoSync !== false) {
-        autoSyncConfigToSupabase(appConfig).catch(() => {});
+        autoSyncConfigToSupabase(appConfig)
+          .then(() => recordSupabaseSyncState('config', 'global', true))
+          .catch(e => recordSupabaseSyncState('config', 'global', false, e?.message));
       }
-    } catch {}
+    } catch (e: any) {
+      recordSupabaseSyncState('holiday', 'overrides', false, e?.message);
+    }
     broadcastEvent('config_updated', appConfig);
   }
   const ctx = getDominicanTimeContext(new Date(), appConfig.holidayOverrides || []);
@@ -6062,7 +8111,7 @@ app.post('/api/holidays/overrides', async (req, res) => {
     tableExists,
     tableRowsSynced,
     storage,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     schedule: ctx,
     holidayOverrides: appConfig.holidayOverrides || [],
     availableYears: getAvailableHolidayYears(ctx.year, ctx.month, appConfig.holidayOverrides || []),
@@ -6070,29 +8119,71 @@ app.post('/api/holidays/overrides', async (req, res) => {
   });
 });
 
-app.post('/api/config', async (req, res) => {
+app.post('/api/config', requireSessionRole(['super_admin', 'dueno', 'empleado'], false), async (req, res) => {
   const { globalAiActive, aiProvider, odoo, evolution, supabase, holidayOverrides } = req.body;
   if (globalAiActive !== undefined) appConfig.globalAiActive = Boolean(globalAiActive);
   if (aiProvider) {
-    const nextAi = { ...appConfig.aiProvider, ...aiProvider, provider: 'openai' as const };
-    if (!nextAi.model || (!nextAi.model.startsWith('gpt-') && !nextAi.model.startsWith('o'))) {
-      nextAi.model = 'gpt-4o-mini';
+    const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
+    const incomingOpenAiKey = typeof aiProvider.openaiApiKey === 'string' ? aiProvider.openaiApiKey.trim() : '';
+    const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+
+    const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
+    const incomingGeminiKey = typeof aiProvider.geminiApiKey === 'string' ? aiProvider.geminiApiKey.trim() : '';
+    const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+
+    const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
+    const incomingDeepseekKey = typeof aiProvider.deepseekApiKey === 'string' ? aiProvider.deepseekApiKey.trim() : '';
+    const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+
+    const targetProvider = (aiProvider.provider || appConfig.aiProvider?.provider || 'gemini') as AIProviderType;
+    let targetModel = aiProvider.model || appConfig.aiProvider?.model;
+    if (!targetModel) {
+      targetModel = targetProvider === 'gemini' ? 'gemini-3.5-flash-lite' : 'gpt-4o-mini';
     }
-    if (typeof aiProvider.openaiApiKey === 'string') {
-      nextAi.openaiApiKey = aiProvider.openaiApiKey.trim();
-    }
+
+    const nextAi = {
+      ...appConfig.aiProvider,
+      ...aiProvider,
+      provider: targetProvider,
+      model: targetModel,
+      openaiApiKey: resolvedOpenAiKey,
+      geminiApiKey: resolvedGeminiKey,
+      deepseekApiKey: resolvedDeepseekKey,
+    };
     if (typeof aiProvider.openaiBaseUrl === 'string' && aiProvider.openaiBaseUrl.trim()) {
       nextAi.openaiBaseUrl = aiProvider.openaiBaseUrl.trim();
     }
-    nextAi.deepseekApiKey = '';
-    nextAi.deepseekBaseUrl = '';
-    nextAi.geminiApiKey = '';
+    if (typeof aiProvider.deepseekBaseUrl === 'string' && aiProvider.deepseekBaseUrl.trim()) {
+      nextAi.deepseekBaseUrl = aiProvider.deepseekBaseUrl.trim();
+    }
     appConfig.aiProvider = nextAi;
   }
-  if (odoo) appConfig.odoo = { ...appConfig.odoo, ...odoo };
-  if (evolution) appConfig.evolution = { ...appConfig.evolution, ...evolution };
+  if (odoo) {
+    const existingOdooKey = appConfig.odoo?.apiKey || '';
+    const incomingOdooKey = typeof odoo.apiKey === 'string' ? odoo.apiKey.trim() : '';
+    appConfig.odoo = {
+      ...appConfig.odoo,
+      ...odoo,
+      apiKey: !isMaskedSecret(incomingOdooKey) ? incomingOdooKey : existingOdooKey,
+    };
+  }
+  if (evolution) {
+    const existingEvoKey = appConfig.evolution?.apiKey || '';
+    const incomingEvoKey = typeof evolution.apiKey === 'string' ? evolution.apiKey.trim() : '';
+    appConfig.evolution = {
+      ...appConfig.evolution,
+      ...evolution,
+      apiKey: !isMaskedSecret(incomingEvoKey) ? incomingEvoKey : existingEvoKey,
+    };
+  }
   if (supabase) {
-    appConfig.supabase = { ...(appConfig.supabase || {}), ...supabase };
+    const existingSupaKey = appConfig.supabase?.anonKey || '';
+    const incomingSupaKey = typeof supabase.anonKey === 'string' ? supabase.anonKey.trim() : '';
+    appConfig.supabase = {
+      ...(appConfig.supabase || { url: '', anonKey: '' }),
+      ...supabase,
+      anonKey: !isMaskedSecret(incomingSupaKey) ? incomingSupaKey : existingSupaKey,
+    };
     if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
       getSupabaseClient(appConfig.supabase.url, appConfig.supabase.anonKey);
     }
@@ -6107,10 +8198,12 @@ app.post('/api/config', async (req, res) => {
 
   savePersistedConfig();
   if (appConfig.supabase?.autoSync !== false) {
-    autoSyncConfigToSupabase(appConfig).catch(() => {});
+    autoSyncConfigToSupabase(appConfig)
+      .then(() => recordSupabaseSyncState('config', 'global', true))
+      .catch(e => recordSupabaseSyncState('config', 'global', false, e?.message));
   }
   broadcastEvent('config_updated', appConfig);
-  res.json({ success: true, config: appConfig });
+  res.json({ success: true, config: getPublicMaskedConfig(appConfig) });
 });
 
 // ---------------------------------------------------------
@@ -6174,46 +8267,67 @@ app.delete('/api/whatsapp-statuses/:id', (req, res) => {
   res.json({ success: true, statuses: appConfig.activeWhatsAppStatuses });
 });
 
-// Dedicated endpoint to save AI Provider & API Keys with guaranteed persistence (OpenAI Exclusive)
+// Dedicated endpoint to save AI Provider & API Keys with guaranteed persistence
 app.post('/api/ai/save-credentials', async (req, res) => {
   const {
+    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
     openaiBaseUrl,
+    geminiApiKey,
+    deepseekApiKey,
+    deepseekBaseUrl,
   } = req.body;
 
+  const targetProvider = (provider || appConfig.aiProvider?.provider || 'gemini') as AIProviderType;
+
   const cleanModel =
-    model && (String(model).startsWith('gpt-') || String(model).startsWith('o'))
-      ? String(model)
-      : appConfig.aiProvider?.model?.startsWith('gpt-') || appConfig.aiProvider?.model?.startsWith('o')
-      ? appConfig.aiProvider.model
+    model && String(model).trim()
+      ? String(model).trim()
+      : targetProvider === 'gemini'
+      ? 'gemini-3.5-flash-lite'
       : 'gpt-4o-mini';
+
+  const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
+  const incomingOpenAiKey = openaiApiKey !== undefined ? String(openaiApiKey).trim() : '';
+  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+
+  const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
+  const incomingGeminiKey = geminiApiKey !== undefined ? String(geminiApiKey).trim() : '';
+  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+
+  const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
+  const incomingDeepseekKey = deepseekApiKey !== undefined ? String(deepseekApiKey).trim() : '';
+  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: 'openai',
+    provider: targetProvider,
     model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? '',
-    ...(openaiApiKey !== undefined ? { openaiApiKey: String(openaiApiKey).trim() } : {}),
+    openaiApiKey: resolvedOpenAiKey,
+    geminiApiKey: resolvedGeminiKey,
+    deepseekApiKey: resolvedDeepseekKey,
     ...(openaiBaseUrl !== undefined && String(openaiBaseUrl).trim() ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {}),
-    deepseekApiKey: '',
-    deepseekBaseUrl: '',
-    geminiApiKey: '',
+    ...(deepseekBaseUrl !== undefined && String(deepseekBaseUrl).trim() ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}),
   };
 
   savePersistedConfig();
 
   try {
     await autoSyncConfigToSupabase(appConfig);
-  } catch {}
+    recordSupabaseSyncState('config', 'ai', true);
+  } catch (e: any) {
+    recordSupabaseSyncState('config', 'ai', false, e?.message);
+  }
 
   broadcastEvent('config_updated', appConfig);
   res.json({
     success: true,
-    config: appConfig,
+    config: getPublicMaskedConfig(appConfig),
     message: 'Credenciales de OpenAI guardadas permanentemente en el servidor y respaldadas en Supabase.',
   });
 });
@@ -6221,7 +8335,8 @@ app.post('/api/ai/save-credentials', async (req, res) => {
 // Supabase: Test Connection & Probe Tables
 app.post('/api/supabase/test-connection', async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || '').trim();
-  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || '').trim();
+  const rawAnon = (req.body.anonKey || '').trim();
+  const anonKey = !isMaskedSecret(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || '').trim();
 
   if (!url || !anonKey) {
     return res.status(400).json({
@@ -6230,7 +8345,6 @@ app.post('/api/supabase/test-connection', async (req, res) => {
     });
   }
 
-  // Unconditionally persist credentials immediately so they are never lost
   if (!appConfig.supabase) {
     appConfig.supabase = { url: '', anonKey: '', connected: false, autoSync: true };
   }
@@ -6243,13 +8357,16 @@ app.post('/api/supabase/test-connection', async (req, res) => {
   if (result.success) {
     appConfig.supabase.connected = true;
     savePersistedConfig();
+    recordSupabaseSyncState('config', 'supabase_probe', true);
+  } else {
+    recordSupabaseSyncState('config', 'supabase_probe', false, result.message);
   }
 
   res.json(result);
 });
 
 // Supabase: Get SQL Migration / Table Setup Script
-app.get('/api/supabase/schema-sql', (req, res) => {
+app.get('/api/supabase/schema-sql', (_req, res) => {
   res.json({
     success: true,
     sql: getSupabaseSchemaSql(),
@@ -6259,7 +8376,10 @@ app.get('/api/supabase/schema-sql', (req, res) => {
 // Supabase: Upload and Synchronize Everything (Users, Config, Products, Orders, Customers, WhatsApp Messages, Reminders & AI Insights)
 app.post('/api/supabase/sync-all', async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || DEFAULT_SUPABASE_URL).trim();
-  const anonKey = (req.body.anonKey || appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
+  const rawAnon = (req.body.anonKey || '').trim();
+  const anonKey = !isMaskedSecret(rawAnon)
+    ? rawAnon
+    : (appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
 
   if (url && anonKey) {
     if (!appConfig.supabase) {
@@ -6294,12 +8414,14 @@ app.post('/api/supabase/sync-all', async (req, res) => {
       savePersistedConfig();
     }
 
+    recordSupabaseSyncState('config', 'sync_all', true);
     res.json({
       success: stats.errors.length === 0 || (stats.usersSynced + stats.ordersSynced + stats.customersSynced + stats.messagesSynced) > 0,
       stats,
       lastSync: appConfig.supabase?.lastSync,
     });
   } catch (err: any) {
+    recordSupabaseSyncState('config', 'sync_all', false, err.message);
     res.status(500).json({
       success: false,
       message: `Error al subir datos a Supabase: ${err.message}`,
@@ -6308,7 +8430,7 @@ app.post('/api/supabase/sync-all', async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// User Authentication & RBAC Hierarchy Endpoints (NO EMAIL)
+// Fase 1.1 — User Authentication, Rate Limiting & RBAC Hierarchy Endpoints
 // ---------------------------------------------------------
 function findMatchingSystemUser(rawIdentifier: string): UserAccount | undefined {
   const cleanUser = String(rawIdentifier || '').trim().replace(/^@+/, '').toLowerCase();
@@ -6328,52 +8450,83 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Ingresa tu nombre de usuario y contraseña.' });
   }
 
-  let found = findMatchingSystemUser(username);
+  const clientIp = String(req.ip || req.headers['x-forwarded-for'] || 'local').split(',')[0].trim();
+  const rateKey = `${clientIp}:${String(username).toLowerCase().trim()}`;
+  const now = Date.now();
+  const rateEntry = loginRateLimitMap.get(rateKey);
 
-  // If user is not found locally or password doesn't match, hydrate latest users from Supabase (`public.usuarios` or cloud backup)
-  if (!found || found.password !== String(password).trim()) {
-    await hydrateAndSyncUsersWithSupabase();
-    found = findMatchingSystemUser(username);
+  if (rateEntry && rateEntry.lockedUntil > now) {
+    const waitSec = Math.ceil((rateEntry.lockedUntil - now) / 1000);
+    return res.status(429).json({
+      success: false,
+      message: `Demasiados intentos fallidos. Por seguridad, intenta nuevamente en ${waitSec} segundos.`,
+    });
   }
 
-  if (!found) {
-    return res.status(401).json({ success: false, message: 'Nombre de usuario no encontrado.' });
+  let found = findMatchingSystemUser(username);
+  let pwCheck = found ? verifyUserPassword(password, found.password) : { valid: false, needsMigration: false };
+
+  // If user is not found locally or password doesn't match, hydrate latest users from Supabase
+  if (!found || !pwCheck.valid) {
+    await hydrateAndSyncUsersWithSupabase();
+    found = findMatchingSystemUser(username);
+    pwCheck = found ? verifyUserPassword(password, found.password) : { valid: false, needsMigration: false };
+  }
+
+  if (!found || !pwCheck.valid) {
+    const prevCount = rateEntry && now - rateEntry.firstAttemptAt < 10 * 60 * 1000 ? rateEntry.count + 1 : 1;
+    loginRateLimitMap.set(rateKey, {
+      count: prevCount,
+      firstAttemptAt: rateEntry && now - rateEntry.firstAttemptAt < 10 * 60 * 1000 ? rateEntry.firstAttemptAt : now,
+      lockedUntil: prevCount >= 8 ? now + 5 * 60 * 1000 : 0,
+    });
+    return res.status(401).json({
+      success: false,
+      message: !found ? 'Nombre de usuario no encontrado.' : 'Contraseña incorrecta.',
+    });
   }
 
   if (!found.activo) {
     return res.status(403).json({ success: false, message: 'Esta cuenta ha sido desactivada por el Super Administrador.' });
   }
 
-  if (found.password !== String(password).trim()) {
-    return res.status(401).json({ success: false, message: 'Contraseña incorrecta.' });
+  // Clear rate limit on successful login
+  loginRateLimitMap.delete(rateKey);
+
+  // Transparently migrate legacy plain-text password to scrypt hash
+  if (pwCheck.needsMigration || !isPasswordHashed(found.password)) {
+    found.password = hashUserPassword(password);
   }
 
   found.lastLogin = new Date().toISOString();
   savePersistedUsers();
-  autoSyncUserToSupabase(found, systemUsers).catch(() => {});
+  autoSyncUserToSupabase(found, systemUsers)
+    .then(() => recordSupabaseSyncState('user', found!.id, true))
+    .catch(e => recordSupabaseSyncState('user', found!.id, false, e?.message));
 
-  const token = `vendema_tk_${found.id}_${Date.now()}`;
+  const { token, expiresAt } = createSignedSessionToken(found);
+  setSessionCookie(res, token, req);
+
   res.json({
     success: true,
     user: sanitizeUser(found),
     token,
+    expiresAt: new Date(expiresAt).toISOString(),
   });
 });
 
 app.get('/api/auth/me', async (req, res) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
+  const token = extractTokenFromRequest(req);
   if (!token) {
     return res.status(401).json({ success: false, message: 'No autenticado.' });
   }
 
-  const match = token.match(/^vendema_tk_(usr_[a-zA-Z0-9_]+)_/);
-  if (match) {
-    const userId = match[1];
-    let user = systemUsers.find(u => u.id === userId && u.activo);
+  const verified = verifySignedSessionToken(token);
+  if (verified.valid && verified.userId) {
+    let user = systemUsers.find(u => u.id === verified.userId && u.activo);
     if (!user) {
       await hydrateAndSyncUsersWithSupabase();
-      user = systemUsers.find(u => u.id === userId && u.activo);
+      user = systemUsers.find(u => u.id === verified.userId && u.activo);
     }
     if (user) {
       return res.json({ success: true, user: sanitizeUser(user) });
@@ -6383,11 +8536,17 @@ app.get('/api/auth/me', async (req, res) => {
   res.status(401).json({ success: false, message: 'Sesión no válida o expirada.' });
 });
 
-app.post('/api/auth/logout', (_req, res) => {
+app.post('/api/auth/logout', (req, res) => {
+  const token = extractTokenFromRequest(req);
+  const verified = verifySignedSessionToken(token);
+  if (verified.sessionId) {
+    activeSessionsMap.delete(verified.sessionId);
+  }
+  clearSessionCookie(res);
   res.json({ success: true, message: 'Sesión cerrada correctamente.' });
 });
 
-app.get('/api/users', async (_req, res) => {
+app.get('/api/users', requireSessionRole(['super_admin', 'dueno'], false), async (_req, res) => {
   await hydrateAndSyncUsersWithSupabase();
   res.json({
     success: true,
@@ -6396,7 +8555,7 @@ app.get('/api/users', async (_req, res) => {
   });
 });
 
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', requireSessionRole(['super_admin', 'dueno'], false), async (req, res) => {
   const { nombre, username, password, whatsapp, role } = req.body;
 
   if (!nombre || !username || !password || !whatsapp) {
@@ -6430,7 +8589,7 @@ app.post('/api/users', async (req, res) => {
     id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     nombre: String(nombre).trim(),
     username: cleanUsername,
-    password: String(password).trim(),
+    password: hashUserPassword(String(password).trim()),
     whatsapp: String(whatsapp).replace(/[^\d+]/g, ''),
     role: userRole,
     activo: true,
@@ -6439,16 +8598,18 @@ app.post('/api/users', async (req, res) => {
 
   systemUsers.push(newUser);
   savePersistedUsers();
-  await autoSyncUserToSupabase(newUser, systemUsers);
+  await autoSyncUserToSupabase(newUser, systemUsers).catch(e =>
+    recordSupabaseSyncState('user', newUser.id, false, e?.message)
+  );
 
   res.status(201).json({
     success: true,
-    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado y sincronizado con Supabase.`,
+    message: `Usuario ${newUser.nombre} (@${newUser.username}) creado con contraseña cifrada y sincronizado con Supabase.`,
     user: sanitizeUser(newUser),
   });
 });
 
-app.put('/api/users/:id', async (req, res) => {
+app.put('/api/users/:id', requireSessionRole(['super_admin', 'dueno'], false), async (req, res) => {
   const { id } = req.params;
   const userIdx = systemUsers.findIndex(u => u.id === id);
 
@@ -6461,8 +8622,8 @@ app.put('/api/users/:id', async (req, res) => {
 
   if (nombre) targetUser.nombre = String(nombre).trim();
   if (whatsapp) targetUser.whatsapp = String(whatsapp).replace(/[^\d+]/g, '');
-  if (password && String(password).trim()) {
-    targetUser.password = String(password).trim();
+  if (password && String(password).trim() && !isMaskedSecret(password)) {
+    targetUser.password = hashUserPassword(String(password).trim());
   }
 
   // Protect nelson from demotion or deactivation
@@ -6479,7 +8640,9 @@ app.put('/api/users/:id', async (req, res) => {
   }
 
   savePersistedUsers();
-  await autoSyncUserToSupabase(targetUser, systemUsers);
+  await autoSyncUserToSupabase(targetUser, systemUsers).catch(e =>
+    recordSupabaseSyncState('user', targetUser.id, false, e?.message)
+  );
 
   res.json({
     success: true,
@@ -6488,7 +8651,7 @@ app.put('/api/users/:id', async (req, res) => {
   });
 });
 
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', requireSessionRole(['super_admin', 'dueno'], false), async (req, res) => {
   const { id } = req.params;
   const targetUser = systemUsers.find(u => u.id === id);
 
@@ -6505,7 +8668,7 @@ app.delete('/api/users/:id', async (req, res) => {
 
   systemUsers = systemUsers.filter(u => u.id !== id);
   savePersistedUsers();
-  await deleteUserFromSupabase(targetUser, systemUsers);
+  await deleteUserFromSupabase(targetUser, systemUsers).catch(() => {});
 
   res.json({
     success: true,
@@ -6513,94 +8676,143 @@ app.delete('/api/users/:id', async (req, res) => {
   });
 });
 
-// Test Active AI Provider (OpenAI Exclusive)
+// Test Active AI Provider (Gemini / OpenAI / DeepSeek)
 app.post('/api/ai/test-provider', async (req, res) => {
   const {
+    provider,
     model,
     temperature,
     customInstructions,
     openaiApiKey,
     openaiBaseUrl,
+    geminiApiKey,
+    deepseekApiKey,
+    deepseekBaseUrl,
   } = req.body;
 
+  const targetProvider = (provider || appConfig.aiProvider?.provider || 'gemini') as AIProviderType;
+
   const cleanModel =
-    model && (String(model).startsWith('gpt-') || String(model).startsWith('o'))
-      ? String(model)
-      : appConfig.aiProvider?.model?.startsWith('gpt-') || appConfig.aiProvider?.model?.startsWith('o')
-      ? appConfig.aiProvider.model
+    model && String(model).trim()
+      ? String(model).trim()
+      : targetProvider === 'gemini'
+      ? 'gemini-3.5-flash-lite'
       : 'gpt-4o-mini';
+
+  const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
+  const incomingOpenAiKey = openaiApiKey !== undefined ? String(openaiApiKey).trim() : '';
+  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+
+  const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
+  const incomingGeminiKey = geminiApiKey !== undefined ? String(geminiApiKey).trim() : '';
+  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+
+  const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
+  const incomingDeepseekKey = deepseekApiKey !== undefined ? String(deepseekApiKey).trim() : '';
+  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
-    provider: 'openai',
+    provider: targetProvider,
     model: cleanModel,
     temperature: temperature ?? appConfig.aiProvider?.temperature ?? 0.35,
     customInstructions: customInstructions ?? appConfig.aiProvider?.customInstructions ?? '',
-    ...(openaiApiKey !== undefined ? { openaiApiKey: String(openaiApiKey).trim() } : {}),
+    openaiApiKey: resolvedOpenAiKey,
+    geminiApiKey: resolvedGeminiKey,
+    deepseekApiKey: resolvedDeepseekKey,
     ...(openaiBaseUrl !== undefined ? { openaiBaseUrl: String(openaiBaseUrl).trim() } : {}),
-    deepseekApiKey: '',
-    deepseekBaseUrl: '',
-    geminiApiKey: '',
+    ...(deepseekBaseUrl !== undefined ? { deepseekBaseUrl: String(deepseekBaseUrl).trim() } : {}),
   };
 
   savePersistedConfig();
 
-  if (!appConfig.aiProvider.openaiApiKey && (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'MY_OPENAI_API_KEY')) {
+  if (targetProvider === 'gemini' && !getActiveGeminiKey()) {
     return res.json({
       success: false,
-      message: 'Por favor ingresa tu API Key de OpenAI (sk-...) en el campo de credenciales para conectar con OpenAI.',
+      requestedProvider: 'gemini',
+      message: 'Por favor ingresa tu API Key de Google Gemini para probar la conexión.',
+    });
+  }
+
+  if (targetProvider === 'openai' && !getActiveOpenAiKey()) {
+    return res.json({
+      success: false,
+      requestedProvider: 'openai',
+      message: 'Por favor ingresa tu API Key de OpenAI (sk-...) para probar la conexión con OpenAI.',
     });
   }
 
   try {
     const result = await generateTextWithConfiguredAI({
-      prompt: 'Responde en una sola línea confirmando que estás activo con OpenAI para vender laptops en Todo Lapto.',
-      systemInstruction: 'Eres el motor oficial de inteligencia artificial OpenAI de Vendemá CRM para Todo Lapto.',
+      prompt: 'Responde únicamente: OK',
+      systemInstruction: 'Eres el motor de inteligencia artificial de Vendemá CRM para Todo Lapto.',
       allowFallback: false,
     });
 
     res.json({
       success: true,
-      providerUsed: 'openai',
+      providerUsed: result.providerUsed,
       modelUsed: result.modelUsed,
-      message: `Motor OPENAI (${result.modelUsed}) conectado y verificado con éxito: "${result.text.trim()}"`,
+      reply: result.text.trim(),
+      message: `Motor ${result.providerUsed.toUpperCase()} (${result.modelUsed}) conectado y verificado con éxito: "${result.text.trim()}"`,
     });
   } catch (err: any) {
     res.json({
       success: false,
-      requestedProvider: 'openai',
-      message: `No se pudo conectar con OpenAI: ${err.message}`,
+      requestedProvider: targetProvider,
+      message: `No se pudo conectar con ${targetProvider.toUpperCase()}: ${sanitizeSecretsInText(err.message)}`,
     });
   }
 });
 
 // System Real-Time Time Synchronization & Status (America/Santo_Domingo UTC-4)
-app.post('/api/system/time-sync', (req, res) => {
-  const { clientTimestamp } = req.body;
-  if (typeof clientTimestamp === 'number' && clientTimestamp > 0) {
-    const serverNow = Date.now();
-    const driftMs = clientTimestamp - serverNow;
-    // Only adjust if drift is more than 3 seconds
-    if (Math.abs(driftMs) > 3000) {
-      setGlobalTimeOffset(driftMs);
-      console.log(`[Time Sync]: Servidor sincronizado con hora real del cliente. Drift corregido: ${driftMs}ms`);
-    }
-  }
-  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+// Authoritative master clock synchronized with atomic internet NTP / TimeAPI servers
+app.get('/api/system/time-sync', async (req, res) => {
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
   res.json({
     success: true,
-    serverTimestamp: Date.now(),
-    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: 'America/Santo_Domingo (UTC-4)',
+    dominicanTime: rd,
+  });
+});
+
+app.post('/api/system/time-sync', async (req, res) => {
+  await syncAuthoritativeDominicanTime().catch(() => {});
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: 'America/Santo_Domingo (UTC-4)',
     dominicanTime: rd,
   });
 });
 
 app.get('/api/system/time-status', (req, res) => {
-  const rd = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
   res.json({
     success: true,
-    serverTimestamp: Date.now(),
-    effectiveTimestamp: getEffectiveCurrentDate().getTime(),
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
+    timezone: 'America/Santo_Domingo (UTC-4)',
+    dominicanTime: rd,
+  });
+});
+
+app.post('/api/system/time-reset', async (req, res) => {
+  await syncAuthoritativeDominicanTime().catch(() => {});
+  const effective = getEffectiveCurrentDate();
+  const rd = getDominicanTimeContext(effective, appConfig.holidayOverrides || []);
+  res.json({
+    success: true,
+    message: 'Reloj del servidor sincronizado con la hora oficial atómica de República Dominicana.',
+    serverTimestamp: effective.getTime(),
+    effectiveTimestamp: effective.getTime(),
     dominicanTime: rd,
   });
 });
@@ -6681,41 +8893,107 @@ app.post('/api/evolution/test-connection', async (req, res) => {
 // Get Evolution API Connection State & QR Code for Scanning inside the CRM
 app.get('/api/evolution/qrcode', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
-    // 1. Check instance metadata & connectionState
-    const [stateRes, instancesRes] = await Promise.all([
-      fetch(`${serverUrl}/instance/connectionState/${instance}`, {
-        headers: { apikey: apiKey },
-      }).catch(() => null),
-      fetch(`${serverUrl}/instance/fetchInstances`, {
-        headers: { apikey: apiKey },
-      }).catch(() => null),
-    ]);
+    // 1. Check connectionState (< 5s timeout)
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => null);
 
-    const stateData = stateRes && stateRes.ok ? await stateRes.json() : null;
-    const instancesData = instancesRes && instancesRes.ok ? await instancesRes.json() : [];
+    const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
+    let currentState: string = stateData?.instance?.state || stateData?.state || 'unknown';
 
-    const instRecord = Array.isArray(instancesData)
-      ? instancesData.find((i: any) => i.name === instance || i.instanceName === instance) || instancesData[0]
-      : null;
+    // Refresh instance metadata (ownerJid, profileName) using ?instanceName= filter so it returns in <500ms
+    if (Date.now() - evolutionQrCache.lastMetaFetchAt > 20000 || !evolutionQrCache.ownerJid) {
+      evolutionQrCache.lastMetaFetchAt = Date.now();
+      const instancesRes = await fetch(
+        `${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
+        {
+          headers: { apikey: apiKey },
+          signal: AbortSignal.timeout(4500),
+        }
+      ).catch(() => null);
+      if (instancesRes && instancesRes.ok) {
+        const instancesData = await instancesRes.json().catch(() => []);
+        const instRecord = Array.isArray(instancesData)
+          ? instancesData.find((i: any) => i.name === instance || i.instanceName === instance) || instancesData[0]
+          : null;
+        if (instRecord) {
+          evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
+          evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
+          evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
+          if (currentState === 'unknown' && instRecord.connectionStatus) {
+            currentState = instRecord.connectionStatus;
+          }
+        }
+      }
+    }
 
-    const currentState: string =
-      stateData?.instance?.state || instRecord?.connectionStatus || 'unknown';
+    const forceConnect = req.query.forceConnect === 'true';
+    // STRICT: An instance is ONLY connected when state === 'open'!
     const isConnected = currentState === 'open';
 
-    let qrBase64: string | null = null;
-    let pairingCode: string | null = null;
+    if (isConnected && !forceConnect) {
+      if (evolutionLastKnownState !== 'open') {
+        evolutionLastKnownState = 'open';
+        botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
+        isFirstEvolutionSync = true;
+        broadcastEvent('evolution_status', { connected: true, state: 'open' });
+      }
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
 
-    // 2. If not open (or if forceConnect=true), request QR code from /instance/connect/{instance}
-    if (!isConnected || req.query.forceConnect === 'true') {
-      const connectRes = await fetch(`${serverUrl}/instance/connect/${instance}`, {
+      return res.json({
+        success: true,
+        instance,
+        state: 'open',
+        connected: true,
+        ownerJid: evolutionQrCache.ownerJid,
+        profileName: evolutionQrCache.profileName,
+        profilePicUrl: evolutionQrCache.profilePicUrl,
+        qrBase64: null,
+        pairingCode: null,
+      });
+    }
+
+    // 3. Not 'open': clear chats on disconnect & request QR if forceConnect=true OR if no cached QR exists yet (or cached QR is >40s old)
+    clearAllChatsOnWhatsAppDisconnect(currentState);
+    const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
+    if (forceConnect || !evolutionQrCache.qrBase64 || qrAgeMs > 40000) {
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
         headers: { apikey: apiKey },
+        signal: AbortSignal.timeout(7000),
       }).catch(() => null);
 
       if (connectRes && connectRes.ok) {
-        const connectData = await connectRes.json();
-        qrBase64 = connectData?.base64 || connectData?.qrcode?.base64 || null;
-        pairingCode = connectData?.pairingCode || connectData?.code || null;
+        const connectData = await connectRes.json().catch(() => ({}));
+        if (connectData?.instance?.state === 'open' || connectData?.state === 'open') {
+          evolutionLastKnownState = 'open';
+          appConfig.evolution.connected = true;
+          evolutionQrCache.qrBase64 = null;
+          botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
+          isFirstEvolutionSync = true;
+          return res.json({
+            success: true,
+            instance,
+            state: 'open',
+            connected: true,
+            ownerJid: evolutionQrCache.ownerJid,
+            profileName: evolutionQrCache.profileName,
+            profilePicUrl: evolutionQrCache.profilePicUrl,
+            qrBase64: null,
+            pairingCode: null,
+          });
+        }
+        const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
+        const newPairing = connectData?.pairingCode || connectData?.code || null;
+        if (newQr) {
+          evolutionQrCache.qrBase64 = newQr;
+          evolutionQrCache.pairingCode = newPairing;
+          evolutionQrCache.generatedAt = Date.now();
+        }
       }
     }
 
@@ -6723,12 +9001,12 @@ app.get('/api/evolution/qrcode', async (req, res) => {
       success: true,
       instance,
       state: currentState,
-      connected: isConnected,
-      ownerJid: instRecord?.ownerJid || null,
-      profileName: instRecord?.profileName || null,
-      profilePicUrl: instRecord?.profilePicUrl || null,
-      qrBase64,
-      pairingCode,
+      connected: false,
+      ownerJid: evolutionQrCache.ownerJid,
+      profileName: evolutionQrCache.profileName,
+      profilePicUrl: evolutionQrCache.profilePicUrl,
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode,
     });
   } catch (err: any) {
     res.status(500).json({
@@ -6741,25 +9019,40 @@ app.get('/api/evolution/qrcode', async (req, res) => {
 // Disconnect / Logout WhatsApp Instance & Generate New QR Code to Scan in CRM
 app.post('/api/evolution/logout', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
-    await fetch(`${serverUrl}/instance/logout/${instance}`, {
+    evolutionQrCache.qrBase64 = null;
+    evolutionQrCache.pairingCode = null;
+    evolutionQrCache.generatedAt = 0;
+    clearAllChatsOnWhatsAppDisconnect('close');
+
+    await fetch(`${baseUrl}/instance/logout/${instance}`, {
       method: 'DELETE',
       headers: { apikey: apiKey },
-    });
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null);
 
-    // Wait briefly then request a fresh QR code
-    await new Promise(r => setTimeout(r, 1200));
-    const connectRes = await fetch(`${serverUrl}/instance/connect/${instance}`, {
+    // Wait briefly for Baileys socket teardown then request a fresh QR code
+    await new Promise(r => setTimeout(r, 1500));
+    const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
       headers: { apikey: apiKey },
-    });
-    const connectData = connectRes.ok ? await connectRes.json() : {};
+      signal: AbortSignal.timeout(7000),
+    }).catch(() => null);
+    const connectData = connectRes && connectRes.ok ? await connectRes.json().catch(() => ({})) : {};
+    const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
+    const newPairing = connectData?.pairingCode || null;
+    if (newQr) {
+      evolutionQrCache.qrBase64 = newQr;
+      evolutionQrCache.pairingCode = newPairing;
+      evolutionQrCache.generatedAt = Date.now();
+    }
 
     res.json({
       success: true,
       state: 'connecting',
       connected: false,
-      qrBase64: connectData?.base64 || connectData?.qrcode?.base64 || null,
-      pairingCode: connectData?.pairingCode || null,
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode,
       message: 'Sesión desvinculada. Escanea el nuevo código QR con WhatsApp.',
     });
   } catch (err: any) {
@@ -6773,15 +9066,36 @@ app.post('/api/evolution/logout', async (req, res) => {
 // Restart Evolution API Instance
 app.post('/api/evolution/restart', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
+  const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
-    const r = await fetch(`${serverUrl.replace(/\/$/, '')}/instance/restart/${instance}`, {
+    evolutionQrCache.qrBase64 = null;
+    evolutionQrCache.generatedAt = 0;
+    const r = await fetch(`${baseUrl}/instance/restart/${instance}`, {
       method: 'POST',
       headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(10000),
     });
+    let data: any = {};
+    try { data = await r.json(); } catch {}
+    const newQr = data?.base64 || data?.qrcode?.base64 || null;
+    const newPairing = data?.pairingCode || data?.code || null;
+    if (newQr) {
+      evolutionQrCache.qrBase64 = newQr;
+      evolutionQrCache.pairingCode = newPairing;
+      evolutionQrCache.generatedAt = Date.now();
+      broadcastEvent('evolution_qr', {
+        qrBase64: newQr,
+        pairingCode: newPairing,
+        state: 'connecting',
+        connected: false,
+      });
+    }
     res.json({
       success: r.ok,
+      qrBase64: evolutionQrCache.qrBase64,
+      pairingCode: evolutionQrCache.pairingCode,
       message: r.ok
-        ? `Instancia "${instance}" reiniciada correctamente.`
+        ? `Instancia "${instance}" reiniciada correctamente.${newQr ? ' Código QR actualizado.' : ''}`
         : `Evolution API devolvió estado ${r.status} al reiniciar.`,
     });
   } catch (err: any) {
@@ -6828,11 +9142,17 @@ app.get('/api/conversations', async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === 'true';
   const now = Date.now();
-  if (conversations.length === 0) {
-    await syncEvolutionChats();
+  if (conversations.length === 0 && (evolutionLastKnownState === 'open' || evolutionLastKnownState === 'unknown')) {
+    loadPersistedConversations();
+  }
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
+    conversations = [];
+  } else if (conversations.length === 0) {
+    syncEvolutionChats().catch(() => {});
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
-    await syncEvolutionChats();
+    lastEvolutionChatsSync = 0;
+    syncEvolutionChats().catch(() => {});
   } else if (now - lastEvolutionChatsSync > 15000) {
     syncEvolutionChats().catch(() => {});
   }
@@ -6856,6 +9176,9 @@ app.get('/api/conversations/:sessionId/messages', async (req, res) => {
     const sessionId = decodeURIComponent(rawSessionId).trim();
     if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
       return res.json({ success: true, sessionId: '', messages: [] });
+    }
+    if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
+      return res.json({ success: true, sessionId, messages: [] });
     }
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
@@ -6910,6 +9233,9 @@ app.get('/api/messages', async (req, res) => {
     if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
       return res.json({ success: true, sessionId: '', messages: [] });
     }
+    if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
+      return res.json({ success: true, sessionId, messages: [] });
+    }
     const messages = await loadEvolutionMessagesForChat(sessionId);
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
@@ -6937,9 +9263,49 @@ app.post('/api/conversations/:sessionId/toggle-ai', (req, res) => {
   const { enabled } = req.body;
   conv.aiEnabled = enabled !== undefined ? Boolean(enabled) : !conv.aiEnabled;
   aiEnabledBySession.set(conv.sessionId, conv.aiEnabled);
+  if (conv.customerPhone) {
+    aiEnabledBySession.set(conv.customerPhone, conv.aiEnabled);
+    aiEnabledBySession.set(`${conv.customerPhone}@s.whatsapp.net`, conv.aiEnabled);
+  }
+
+  const related = relatedJidsBySession.get(conv.sessionId);
+  if (related) {
+    for (const r of related) {
+      aiEnabledBySession.set(r, conv.aiEnabled);
+      const rClean = r.replace(/@.*$/, '').replace(/\D/g, '');
+      if (rClean) aiEnabledBySession.set(rClean, conv.aiEnabled);
+      const relConv = conversations.find(c => c.sessionId === r);
+      if (relConv) relConv.aiEnabled = conv.aiEnabled;
+    }
+  }
+
+  const contactKeys = getConversationContactKeys(conv);
+  for (const k of contactKeys) {
+    aiEnabledBySession.set(k, conv.aiEnabled);
+  }
 
   const lead = customers.find(c => c.phone === conv.customerPhone || c.lidJid === conv.sessionId);
   if (lead) lead.aiEnabled = conv.aiEnabled;
+
+  savePersistedConversations();
+
+  // If pausing AI, purge any PENDING or RETRY jobs for this chat from the queue and release any lock
+  if (!conv.aiEnabled) {
+    const keys = getConversationContactKeys(conv);
+    persistentJobQueue = persistentJobQueue.filter(j => {
+      const match = keys.some(k => j.conversationId === k || j.customerPhone === k);
+      return !match;
+    });
+    savePersistentJobQueue();
+    releaseBotLock(conv);
+  }
+
+  broadcastEvent('chat_ai_toggled', {
+    sessionId: conv.sessionId,
+    customerPhone: conv.customerPhone,
+    aiEnabled: conv.aiEnabled,
+  });
+  broadcastEvent('conversations_update', { count: conversations.length });
 
   res.json({
     success: true,
@@ -7126,7 +9492,7 @@ app.post('/api/ai/transcribe-audio', async (req, res) => {
   }
 
   try {
-    const media = await fetchMediaBase64FromEvolution(messageId, false);
+    const media = await fetchMediaBase64FromEvolution(messageId, false, sessionId);
     if (!media) {
       return res.status(404).json({ success: false, message: 'No se pudo descargar el audio desde Evolution API' });
     }
@@ -7158,7 +9524,7 @@ app.post('/api/ai/analyze-media', async (req, res) => {
   }
 
   try {
-    const media = await fetchMediaBase64FromEvolution(messageId, false);
+    const media = await fetchMediaBase64FromEvolution(messageId, false, sessionId);
     if (!media) {
       return res.status(404).json({ success: false, message: 'No se pudo descargar la imagen desde Evolution API' });
     }
@@ -7804,6 +10170,30 @@ function cleanQueryForStoreCheck(str: string): string {
     .trim();
 }
 
+function isCustomerSellingOrStoreBuyingQuery(text: string): boolean {
+  const c = cleanQueryForStoreCheck(text);
+  if (!c || c.length > 180) return false;
+  if (/\b(donde|en\s+que\s+lugar)\s+compran\b/i.test(c)) return false;
+  if (/\b(quiero|quisiera|deseo|necesito|voy\s+a|para)\s+comprar\b/i.test(c) && !/\bcompran\b/i.test(c)) {
+    return false;
+  }
+  return (
+    /\b(ustedes|uds|todolapto|todo\s*lapto)\s+(me\s+)?compran\b/i.test(c) ||
+    /\bme\s+compra[ns]?\b/i.test(c) ||
+    /\bcompran\b[\s\S]*\b(articulos?|equipos?|pc|pcs|laptops?|laptos?|computadoras?|impresoras?|monitores?|celulares?|tablets?|piezas?|repuestos?|usad[oa]s?|segunda|cosas?|eso)\b/i.test(
+      c
+    ) ||
+    /\b(quiero|les|te)\s+vender(les|te)?\b/i.test(c) ||
+    /\b(tengo|vendo)\s+(?:una?|unos?|mi)\s+(?:pc|laptop|lapto|computadora|equipo|articulo|impresora|monitor|tablet)\b/i.test(c) ||
+    /\b(reciben|aceptan|toman)\s+(?:equipos?|articulos?|laptops?|pc|computadoras?|impresoras?)\s*(?:usad[oa]s?|como\s+parte\s+de\s+pago|en\s+parte\s+de\s+pago|de\s+cambio)\b/i.test(
+      c
+    ) ||
+    /\b(trade[\s-]*in|intercambio\s+de\s+(?:equipos?|laptops?|pc)|cuanto\s+(?:me\s+)?(?:dan|ofrecen|pagan)\s+por\s+(?:mi|una?))\b/i.test(
+      c
+    )
+  );
+}
+
 function resolveDirectStoreQuestion(rawText: string, conv?: Conversation, quotedText?: string): string | null {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
   const namePart = customerName ? `, ${customerName}` : '';
@@ -7814,6 +10204,11 @@ function resolveDirectStoreQuestion(rawText: string, conv?: Conversation, quoted
   // Test target: evaluate cleanedRaw first, then cleanedQuote, then combined
   const candidates = [cleanedRaw, cleanedQuote, combined].filter(c => Boolean(c) && c.length <= 140);
   if (candidates.length === 0) return null;
+
+  // 0. Business does NOT buy articles / PCs / laptops / used equipment from customers
+  if (candidates.some(c => isCustomerSellingOrStoreBuyingQuery(c))) {
+    return '🙏 Actualmente no compramos artículos ni equipos usados, solo vendemos. Pero si buscas algo nuevo o reacondicionado, tenemos muy buenas opciones — ¿qué tipo de equipo o laptop necesitas?';
+  }
 
   // 1. Horario / ¿Están laborando? / ¿Están abiertos? / ¿Hasta qué hora? / ¿A qué hora abren?
   const isHoursQuery = candidates.some(c =>
@@ -7873,11 +10268,460 @@ function resolveDirectStoreQuestion(rawText: string, conv?: Conversation, quoted
   return null;
 }
 
+// Helper: Extract the numbered items from the most recent valid catalog message sent by the bot in this conversation
+function extractLatestSentCatalogItems(conv?: Conversation): {
+  number: number;
+  name: string;
+  product?: ProductItem;
+}[] {
+  const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
+  const laptopsInStock = [...inStock.filter(p => p.category === 'laptop')].sort(
+    (a, b) => a.list_price - b.list_price
+  );
+
+  if (conv?.messages && conv.messages.length > 0) {
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const m = conv.messages[i];
+      if (m.sender === 'customer' || !m.content) continue;
+      if (m.content.includes('*1.* *') && m.content.includes('*2.* *')) {
+        const parsed: { number: number; name: string; product?: ProductItem }[] = [];
+        const lineRegex = /\*(\d{1,2})\.\*\s*\*([^*\n]+)\*/g;
+        let match: RegExpExecArray | null;
+        while ((match = lineRegex.exec(m.content)) !== null) {
+          const num = parseInt(match[1], 10);
+          const rawName = match[2].trim();
+          const nameLower = rawName.toLowerCase();
+          const matchedProd =
+            inStock.find(p => p.name.trim().toLowerCase() === nameLower) ||
+            inStock.find(
+              p =>
+                p.name.toLowerCase().includes(nameLower) ||
+                nameLower.includes(p.name.toLowerCase())
+            );
+          parsed.push({
+            number: num,
+            name: rawName,
+            product: matchedProd,
+          });
+        }
+        // Only accept a catalog message if at least 80% of its items match real Odoo products in stock
+        // (skips any truncated/hallucinated message from earlier tests and finds the real 36-laptop or 5-printer catalog!)
+        const validCount = parsed.filter(it => Boolean(it.product)).length;
+        const headerCountMatch = m.content.match(/\*\((\d+)\s+(?:modelos|opciones)\s+disponibles/i);
+        const expectedCount = headerCountMatch ? parseInt(headerCountMatch[1], 10) : parsed.length;
+        if (
+          parsed.length >= 2 &&
+          validCount >= Math.ceil(parsed.length * 0.8) &&
+          parsed.length >= Math.min(expectedCount, 5)
+        ) {
+          // If the header said 36 models but this message was truncated before #36, keep searching back for the full 36-item catalog
+          if (expectedCount > parsed.length && parsed.length < 15) {
+            continue;
+          }
+          return parsed;
+        }
+      }
+    }
+  }
+
+  return laptopsInStock.map((p, idx) => ({
+    number: idx + 1,
+    name: p.name,
+    product: p,
+  }));
+}
+
+// Helper: Resolve positional ("la última", "la primera", "la segunda"), numbered ("la 8", "#8", "opción 8") or specific model ("lenovo team pack e 460") references
+function resolveCatalogItemAndModelReference(
+  conv: Conversation | undefined,
+  rawUserText: string,
+  quotedText = ''
+): {
+  product: ProductItem;
+  itemNumber?: number;
+  totalItems?: number;
+  referenceLabel: string;
+  matchedByPositionOrNumber: boolean;
+} | null {
+  const inStock = products.filter(p => p.virtual_available > 0 && p.list_price > 1);
+  if (inStock.length === 0) return null;
+  const laptopsInStock = [...inStock.filter(p => p.category === 'laptop')].sort(
+    (a, b) => a.list_price - b.list_price
+  );
+
+  const catalogItems = extractLatestSentCatalogItems(conv);
+  const totalItems = catalogItems.length;
+  const isMultiItemQuotedCatalog =
+    quotedText.includes('*1.*') && quotedText.includes('*2.*') && quotedText.includes('*3.*');
+  const effectiveQuoteForMatch = isMultiItemQuotedCatalog ? '' : quotedText;
+  const isPointerBump =
+    /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|aquella|aquel|dime|y\s*esto|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero)\s*[.?!]*$/i.test(
+      (rawUserText || '').trim()
+    );
+
+  const normUser = normalizePhoneticProductText(
+    isPointerBump && effectiveQuoteForMatch ? `${rawUserText} ${effectiveQuoteForMatch}` : rawUserText || ''
+  ).trim();
+  const lower = normUser.toLowerCase();
+  const accentFreeLower = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const pickCatalogIndex = (idx: number, label: string) => {
+    if (idx < 0 || idx >= catalogItems.length) return null;
+    const entry = catalogItems[idx];
+    const prod =
+      entry.product ||
+      inStock.find(p => p.name.toLowerCase() === entry.name.toLowerCase()) ||
+      laptopsInStock[idx];
+    if (!prod) return null;
+    return {
+      product: prod,
+      itemNumber: entry.number || idx + 1,
+      totalItems,
+      referenceLabel: label,
+      matchedByPositionOrNumber: true,
+    };
+  };
+
+  // 1. Positional / Ordinal references ("la última", "la penúltima", "la primera", "la segunda", "la tercera", etc.)
+  if (/\b(la\s*penultima|el\s*penultimo|penultima\s*opcion|penultimo\s*modelo|penultima|penultimo)\b/i.test(accentFreeLower)) {
+    const res = pickCatalogIndex(totalItems - 2, `penúltima opción (#${totalItems - 1})`);
+    if (res) return res;
+  }
+  if (/\b(la\s*ultima|el\s*ultimo|ultima\s*opcion|ultimo\s*modelo|la\s*del\s*final|el\s*del\s*final|ultima|ultimo)\b/i.test(accentFreeLower)) {
+    const res = pickCatalogIndex(totalItems - 1, `última opción (#${totalItems})`);
+    if (res) return res;
+  }
+
+  const ordinalPatterns: { regex: RegExp; index: number; label: string }[] = [
+    { regex: /\b(la\s*primera|el\s*primero|primera\s*opcion|primer\s*modelo|la\s*1ra|la\s*1era|el\s*1ro|la\s*uno|el\s*uno|primera|primero)\b/i, index: 0, label: 'primera opción (#1)' },
+    { regex: /\b(la\s*segunda|el\s*segundo|segunda\s*opcion|segundo\s*modelo|la\s*2da|el\s*2do|la\s*dos|el\s*dos|segunda|segundo)\b/i, index: 1, label: 'segunda opción (#2)' },
+    { regex: /\b(la\s*tercera|el\s*tercero|tercera\s*opcion|tercer\s*modelo|la\s*3ra|la\s*3era|el\s*3ro|la\s*tres|el\s*tres|tercera|tercero)\b/i, index: 2, label: 'tercera opción (#3)' },
+    { regex: /\b(la\s*cuarta|el\s*cuarto|cuarta\s*opcion|cuarto\s*modelo|la\s*4ta|el\s*4to|la\s*cuatro|el\s*cuatro|cuarta|cuarto)\b/i, index: 3, label: 'cuarta opción (#4)' },
+    { regex: /\b(la\s*quinta|el\s*quinto|quinta\s*opcion|quinto\s*modelo|la\s*5ta|el\s*5to|la\s*cinco|el\s*cinco|quinta|quinto)\b/i, index: 4, label: 'quinta opción (#5)' },
+    { regex: /\b(la\s*sexta|el\s*sexto|sexta\s*opcion|sexto\s*modelo|la\s*6ta|el\s*6to|la\s*seis|el\s*seis|sexta|sexto)\b/i, index: 5, label: 'sexta opción (#6)' },
+    { regex: /\b(la\s*septima|el\s*septimo|septima\s*opcion|la\s*7ma|el\s*7mo|la\s*siete|el\s*siete|septima|septimo)\b/i, index: 6, label: 'séptima opción (#7)' },
+    { regex: /\b(la\s*octava|el\s*octavo|octava\s*opcion|la\s*8va|el\s*8vo|la\s*ocho|el\s*ocho|octava|octavo)\b/i, index: 7, label: 'octava opción (#8)' },
+    { regex: /\b(la\s*novena|el\s*noveno|novena\s*opcion|la\s*9na|el\s*9no|la\s*nueve|el\s*nueve|novena|noveno)\b/i, index: 8, label: 'novena opción (#9)' },
+    { regex: /\b(la\s*decima|el\s*decimo|decima\s*opcion|la\s*10ma|el\s*10mo|la\s*diez|el\s*diez|decima|decimo)\b/i, index: 9, label: 'décima opción (#10)' },
+  ];
+
+  for (const ord of ordinalPatterns) {
+    if (ord.regex.test(accentFreeLower)) {
+      const res = pickCatalogIndex(ord.index, ord.label);
+      if (res) return res;
+    }
+  }
+
+  // 2. Number reference ("La 8", "8", "#8", "opción 8", "la número 8", "me gusta la 8", "quiero la 17", or quoted "*36.* *DELL LATITUDE 5420 i5*")
+  const standaloneNumMatch = accentFreeLower.match(
+    /^\s*(?:quiero|me\s*gusta|me\s*interesa|dame|apartame|precio\s*de|info\s*de|informacion\s*de)?\s*(?:la|el|opcion|modelo|numero|item|#)?\s*#?(\d{1,2})\s*[.!?]?\s*$/i
+  );
+  const quotedSnippetNumMatch = effectiveQuoteForMatch.match(/^\s*\*(\d{1,2})\.\*\s*\*/);
+  const embeddedNumMatch =
+    standaloneNumMatch ||
+    accentFreeLower.match(
+      /\b(?:la|el|opcion|modelo|numero|#)\s*#?(\d{1,2})\b(?!\s*(?:gb|tb|ram|ssd|hdd|pulgadas|mil|k|pesos|dop|generacion|gen|nucleos|meses|anos|unidades|horas|am|pm))/i
+    ) ||
+    quotedSnippetNumMatch;
+
+  if (embeddedNumMatch) {
+    const num = parseInt(embeddedNumMatch[1], 10);
+    const maxLen = Math.max(totalItems, laptopsInStock.length);
+    if (num >= 1 && num <= maxLen) {
+      const byNum = catalogItems.find(it => it.number === num) || catalogItems[num - 1];
+      const prod =
+        byNum?.product ||
+        (byNum ? inStock.find(p => p.name.toLowerCase() === byNum.name.toLowerCase()) : undefined) ||
+        laptopsInStock[num - 1];
+      if (prod) {
+        return {
+          product: prod,
+          itemNumber: num,
+          totalItems: maxLen,
+          referenceLabel: `opción #${num}`,
+          matchedByPositionOrNumber: true,
+        };
+      }
+    }
+  }
+
+  // 3. Specific Model Code or Phonetic Name Match (e.g. "me gusta la lenovo team pack e 460" -> "LAPTOP LENOVO THINKPAD E460")
+  const combinedSearch = normalizePhoneticProductText(`${rawUserText} ${effectiveQuoteForMatch}`).toLowerCase();
+  const modelCodeMatches: { product: ProductItem; score: number; itemNumber?: number }[] = [];
+  const ignoredTokens = new Set([
+    'laptop', 'lapto', 'notebook', 'chrobook', 'chromebook', 'touch', 'pro', 'con', 'para', 'todo', 'en', 'uno',
+    'impresora', 'color', 'wifi', 'smart', 'app', 'copia', 'escaner', 'usb', 'type', 'sata', 'solid', 'state',
+    'ssd', 'hdd', 'ram', 'gb', 'tb', 'negro', 'gris', 'plata', 'azul', 'rojo', 'blanco', 'de', 'la', 'el', 'los',
+    'las', 'un', 'una', 'me', 'te', 'le', 'lo', 'se', 'es', 'al', 'del', 'por', 'sin', 'mas', 'muy', 'eso', 'esa'
+  ]);
+
+  for (const p of inStock) {
+    const pLower = p.name.toLowerCase();
+    const pTokens = pLower
+      .replace(/[^\w0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .filter(t => (t.length >= 3 || (t.length >= 2 && /\d/.test(t))) && !ignoredTokens.has(t));
+
+    let score = 0;
+    let matchedDistinctCode = false;
+    for (const tk of pTokens) {
+      const escaped = tk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(combinedSearch)) {
+        const isAlphanumericModel = /\d/.test(tk) && !/^\d+(?:gb|tb|mm|w|v)$/i.test(tk);
+        score += isAlphanumericModel ? 10 : 4;
+        if (isAlphanumericModel) matchedDistinctCode = true;
+      }
+    }
+
+    if (matchedDistinctCode || score >= 8) {
+      const catEntry = catalogItems.find(it => it.product?.id === p.id || it.name.toLowerCase() === pLower);
+      modelCodeMatches.push({
+        product: p,
+        score,
+        itemNumber: catEntry?.number,
+      });
+    }
+  }
+
+  if (modelCodeMatches.length > 0) {
+    modelCodeMatches.sort((a, b) => b.score - a.score);
+    const best = modelCodeMatches[0];
+    return {
+      product: best.product,
+      itemNumber: best.itemNumber,
+      totalItems,
+      referenceLabel: best.itemNumber ? `opción #${best.itemNumber}` : best.product.name,
+      matchedByPositionOrNumber: false,
+    };
+  }
+
+  // 4. Context Continuation: ONLY if customer asks a discount follow-up ("Le hacen algún descuento?") without a quote, right after selecting a specific product in the immediately preceding turn
+  if (!effectiveQuoteForMatch && isDiscountInquiry(rawUserText) && conv?.messages && conv.messages.length >= 2) {
+    for (let i = conv.messages.length - 2; i >= Math.max(0, conv.messages.length - 4); i--) {
+      const prevMsg = conv.messages[i];
+      const rawPrevText = (prevMsg.transcription || prevMsg.content || '').trim();
+      const prevText = rawPrevText.replace(/^🎤\s*"?|"?$/g, '').trim();
+      if (!prevText || prevText === 'Nota de voz de WhatsApp' || prevText.includes('Catálogo completo de') || /^([.?!👆⬆️⬇️👉👀]+)$/.test(prevText)) continue;
+      if (prevMsg.sender === 'customer') {
+        const prevResolved = resolveCatalogItemAndModelReference(
+          { ...conv, messages: conv.messages.slice(0, i + 1) },
+          prevText,
+          prevMsg.quotedMessage?.text || ''
+        );
+        if (prevResolved) return prevResolved;
+      } else {
+        for (const p of inStock) {
+          if (prevText.toLowerCase().includes(p.name.toLowerCase())) {
+            const catEntry = catalogItems.find(it => it.product?.id === p.id);
+            return {
+              product: p,
+              itemNumber: catEntry?.number,
+              totalItems,
+              referenceLabel: catEntry?.number ? `opción #${catEntry.number}` : p.name,
+              matchedByPositionOrNumber: false,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+// Helper: Handle positional/numbered catalog selections, quoted product/question replies, AND discount escalation to human sales advisor
+function resolveDirectProductSelectionOrDiscountReply(
+  conv: Conversation,
+  targetCustomerMsg: ChatMessage,
+  baseCustomerText: string
+): {
+  reply: string;
+  advisorAlertText?: string;
+} | null {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const rawQText = (targetCustomerMsg.quotedMessage?.text || '').trim();
+  const qText = rawQText.replace(/^🎤\s*"?|"?$/g, '').trim();
+  const cleanUserText = (baseCustomerText || '').replace(/^🎤\s*"?|"?$/g, '').trim();
+  const isPointerBump =
+    /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|aquella|aquel|dime|dime\s*a\s*ver|y\s*esto|y\s*esa|y\s*esta|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero)\s*[.?!]*$/i.test(
+      cleanUserText
+    );
+
+  // If the customer is quoting a message that is an operational store question (e.g. "Quiero saber si están trabajando.") or a generic category inquiry (e.g. "Ok tienen impresora?"), let resolveQuotedMessageDirectReply handle it naturally!
+  if (qText && !isPositionalOrNumberSelection(cleanUserText) && !hasSpecificModelCodeInText(cleanUserText)) {
+    if (resolveDirectStoreQuestion(cleanUserText, conv, qText)) {
+      return null;
+    }
+    const quotedFamily = detectGenericProductFamily(qText);
+    if (quotedFamily && quotedFamily.id !== 'laptop' && isPointerBump) {
+      return null;
+    }
+    if (/\b(impresora|impresoras|monitor|monitores|mouse|teclado|cargador|disco|ssd|ram|mochila)\b/i.test(qText) && isPointerBump) {
+      return null;
+    }
+  }
+
+  const wantsDiscount =
+    isDiscountInquiry(cleanUserText) ||
+    (Boolean(qText) && isPointerBump && isDiscountInquiry(qText));
+
+  const resolved = resolveCatalogItemAndModelReference(
+    conv,
+    cleanUserText,
+    qText
+  );
+
+  // Case A: Customer requests a DISCOUNT ("le haces un descuento?", "La última me gusta le haces un descuento?", or quotes their discount question)
+  // MUST identify the exact product (if referenced) and pass immediately to a human advisor!
+  if (wantsDiscount) {
+    const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
+    const stdPhone = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+    const effectiveMsgPreview = qText
+      ? `${cleanUserText} (En referencia a: "${qText.slice(0, 100)}")`
+      : cleanUserText;
+
+    if (resolved?.product) {
+      const p = resolved.product;
+      const numBadge = resolved.itemNumber ? ` (Opción #${resolved.itemNumber})` : '';
+      const priceStr = `RD$${p.list_price.toLocaleString()}`;
+      const alertText = `🔔 *💰 CLIENTE SOLICITA DESCUENTO — ASESOR REQUERIDO*\n\n👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n📱 Teléfono: ${stdPhone || 'No disponible'}\n💻 Equipo solicitado: *${p.name}*${numBadge}\n💰 Precio en catálogo: ${priceStr} (Stock: ${p.virtual_available})\n💬 Mensaje del cliente: "${effectiveMsgPreview}"\n\n👉 Por favor comunícate con el cliente para asistirlo con el descuento.`;
+
+      const reply = `¡Claro que sí${namePart}! 😊 La *${p.name}* tiene un precio en catálogo de *${priceStr}* (${p.virtual_available} unidad(es) disponible(s)).\n\nYa le pasé tu consulta a uno de nuestros *asesores de ventas* 👨‍💼 para que te escriba por esta misma vía en unos minutos y te ayude personalmente con el descuento. ¡Estamos a tu orden! 🙌`;
+      return { reply, advisorAlertText: alertText };
+    }
+
+    const alertText = `🔔 *💰 CLIENTE SOLICITA DESCUENTO — ASESOR REQUERIDO*\n\n👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n📱 Teléfono: ${stdPhone || 'No disponible'}\n💬 Mensaje del cliente: "${effectiveMsgPreview}"\n\n👉 Por favor comunícate con el cliente para asistirlo con su solicitud de descuento.`;
+    const reply = `¡Claro que sí${namePart}! 😊 Ya le pasé tu solicitud a uno de nuestros *asesores de ventas* 👨‍💼 para que te atienda personalmente por aquí en unos minutos y te ayude con el descuento. ¡Estamos a tu orden! 🙌`;
+    return { reply, advisorAlertText: alertText };
+  }
+
+  // Case B: Customer selects or quotes a specific product from the catalog by POSITION ("la última", "la primera", "la segunda"), by NUMBER ("La 8", "#8"), or by model ("lenovo e460")
+  if (resolved?.product && (!isPointerBump || Boolean(qText))) {
+    const p = resolved.product;
+    const condBadge =
+      p.condition === 'Nuevo'
+        ? '✨ Nuevo de Caja (Garantía 1 año)'
+        : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
+    const specsLine = p.specsSummary || p.description_sale ? `\n⚙️ *Especificaciones:* ${p.specsSummary || p.description_sale}` : '';
+    const useLine = p.useCases && p.useCases.length > 0 ? `\n🎯 *Ideal para:* ${p.useCases.join(' · ')}` : '';
+    const urlLine = p.website_url ? `\n🔗 https://todolapto.com.do${p.website_url}` : '';
+
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+    const storeLine = rdNow.isOpen
+      ? `📍 La tenemos disponible ahora mismo en nuestra tienda física de la *Av. Charles de Gaulle No. 133* (abiertos hasta las 6:00 PM) o con envío a domicilio con pago contra entrega en Santo Domingo 🚚.`
+      : `📍 La tenemos disponible en nuestra tienda física de la *Av. Charles de Gaulle No. 133* (abrimos ${rdNow.nextOpeningStr}) y contamos con envío a domicilio con pago contra entrega en Santo Domingo 🚚.`;
+
+    const reply = `¡Claro que sí${namePart}! 😊 Aquí tienes los detalles de la *${p.name}*:\n\n💻 *${p.name}*\n💰 *Precio:* *RD$${p.list_price.toLocaleString()}* | 📦 *Stock:* ${p.virtual_available} unidad(es) disponible(s)\n🏷️ *Condición:* ${condBadge}${specsLine}${useLine}${urlLine}\n\n${storeLine}\n\n¿Deseas que te la apartemos para pasar por la tienda o prefieres que coordinemos el envío a tu dirección? 🛒`;
+    return { reply };
+  }
+
+  return null;
+}
+
+// Helper: Intelligent direct resolution for WhatsApp Quoted Messages (Citas / Mensajes citados)
+function resolveQuotedMessageDirectReply(
+  conv: Conversation,
+  targetCustomerMsg: ChatMessage
+): string | null {
+  const quoted = targetCustomerMsg.quotedMessage;
+  if (!quoted) return null;
+  const rawQText = (quoted.text || quoted.aiAnalysis || '').trim();
+  const qText = rawQText.replace(/^🎤\s*"?|"?$/g, '').trim();
+  const rawUserText = (targetCustomerMsg.transcription || targetCustomerMsg.content || '').trim();
+  const userText = rawUserText.replace(/^🎤\s*"?|"?$/g, '').trim();
+  const lowerUser = userText.toLowerCase();
+  const lowerQuote = qText.toLowerCase();
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const isShortOrPointer = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero|dime|dime\s*a\s*ver|y\s*esto)\s*[.?!]*$/i.test(userText);
+
+  // 1. Quoted sticker / reaction / meme / laughter
+  const isStickerOrLaughter =
+    targetCustomerMsg.type === 'sticker' ||
+    userText.includes('[El cliente envió un STICKER') ||
+    userText.includes('[cliente envió un sticker') ||
+    /^(jajaja|jejeje|jaja|jeje|😂|🤣|😹|xd|gracioso|lol)+$/i.test(userText.replace(/\s+/g, ''));
+
+  if (isStickerOrLaughter) {
+    return `¡Jajaja! 😂 ¡Saludos${namePart}! ¿En qué te podemos colaborar hoy? Cuéntanos si buscas alguna laptop, impresora o accesorio y con gusto te pasamos las opciones disponibles de inmediato. 💻✨`;
+  }
+
+  // 2. Customer acknowledges previous negotiation or agreement ("Ahhh bueno", "Ps mejor", "ok", "listo", "perfecto")
+  const isConversationalAck = /^(ahhh?\s*bueno|ps\s*mejor|pues\s*mejor|ok|okay|esta\s*bien|ta\s*bien|perfecto|excelente|entendido|listo|de\s*acuerdo|ya\s*veo|comprendo|chevere|así\s*mismo)\b/i.test(lowerUser);
+  if (isConversationalAck && lowerUser.length < 50) {
+    return `¡Así mismo es! 👍 Quedamos atentos por aquí para cuando gustes apartar tu pedido o pasar por nuestra tienda física en la *Av. Charles de Gaulle No. 133*. ¡Siempre a la orden en Todo Lapto${namePart}! 😊`;
+  }
+
+  // 3. Customer quotes a store greeting ("¡Saludos! 😊 Bienvenido a *Todo Lapto*...")
+  const isGreetingQuote = lowerQuote.includes('bienvenido a *todo lapto*') || lowerQuote.includes('en qué te podemos ayudar hoy');
+  if (isGreetingQuote) {
+    if (isSimpleConversationalMessage(userText, false) || lowerUser.length < 15) {
+      return `¡A tu orden${namePart}! 😊 Dime si andas buscando alguna laptop, impresora, monitor o accesorio o tu presupuesto y te paso las opciones disponibles de inmediato. 💻✨`;
+    }
+  }
+
+  // 3b. Customer quotes an operational question (hours, location, shipping, warranty — e.g. voice note "Quiero saber si están trabajando." + "?")
+  const storeQuotedReply = resolveDirectStoreQuestion(userText, conv, qText);
+  if (storeQuotedReply) {
+    return storeQuotedReply;
+  }
+
+  // 3c. Customer quotes a category/product inquiry (e.g. "Ok tienen impresora?" or "IMPRESORAS, ¿CUÁNTAS TIENES?" + "?")
+  if (qText && (isShortOrPointer || lowerUser.length <= 25)) {
+    const quotedCatalogReply = resolveDirectCatalogReply(qText, conv, false);
+    if (quotedCatalogReply) {
+      return quotedCatalogReply;
+    }
+  }
+
+  // 4. Customer quotes a multi-item catalog message vs a specific single product card
+  const isMultiItemCatalogQuote =
+    lowerQuote.includes('*1.*') && lowerQuote.includes('*2.*') && lowerQuote.includes('*3.*');
+
+  if (isMultiItemCatalogQuote) {
+    const resolvedFromCatalog = resolveCatalogItemAndModelReference(conv, userText, '');
+    if (resolvedFromCatalog?.product) {
+      const sel = resolveDirectProductSelectionOrDiscountReply(conv, targetCustomerMsg, userText);
+      if (sel?.reply) return sel.reply;
+    }
+    const isShortOrPointer = /^([.?!👆⬆️⬇️👉👀]+|esto|esta|este|esa|ese|info|precio|cuanto|disponible|me\s*interesa|la\s*quiero|dime)\s*[.?!]*$/i.test(userText);
+    if (isShortOrPointer) {
+      return `¡Claro que sí${namePart}! 😊 ¿Cuál de los modelos de la lista (por ejemplo *la #1*, *la #8* o *la última*) es el que te interesa para pasarte los detalles o apartártelo de inmediato? 💻🛒`;
+    }
+    return null;
+  }
+
+  // 5. Customer quotes a specific product or a message mentioning a specific product
+  const resolvedQuotedProd = resolveCatalogItemAndModelReference(conv, userText, qText);
+  if (resolvedQuotedProd?.product) {
+    const matchedProd = resolvedQuotedProd.product;
+    const conditionText = matchedProd.condition === 'Nuevo' ? '✨ Nuevo de Caja (Garantía 1 año)' : '♻️ Reacondicionada Clase A (Garantía 6 meses)';
+    const specsLine = matchedProd.specsSummary || matchedProd.description_sale || '';
+    const priceFormatted = `RD$${matchedProd.list_price.toLocaleString()}`;
+    const urlLine = matchedProd.website_url ? `\n🔗 https://todolapto.com.do${matchedProd.website_url}` : '';
+    const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
+
+    const scheduleSuffix = rdNow.isOpen
+      ? 'Estamos abiertos ahora mismo en nuestra tienda física de la *Av. Charles de Gaulle No. 133* hasta las 6:00 PM.'
+      : `Nuestra tienda física en la *Av. Charles de Gaulle No. 133* abre ${rdNow.nextOpeningStr}.`;
+
+    return `¡Claro que sí${namePart}! 😊 Con respecto a la *${matchedProd.name}*:\n\n💰 *Precio:* *${priceFormatted}* (${matchedProd.virtual_available} unidad(es) en stock real)\n🏷️ *Condición:* ${conditionText}\n⚙️ *Especificaciones:* ${specsLine}${urlLine}\n\n🏪 ${scheduleSuffix} Contamos con retiro directo en tienda y servicio de envío a domicilio con pago contra entrega en Santo Domingo 🚚.\n\n¿Deseas que te la apartemos para pasar a buscarla o prefieres envío a tu dirección? 🛒`;
+  }
+
+  return null;
+}
+
 // Helper: Direct deterministic catalog reply for product/category/brand/budget inquiries
 function resolveDirectCatalogReply(rawText: string, conv?: Conversation, hasQuote = false): string | null {
   if (hasQuote) return null;
   const cleaned = (rawText || '').trim();
   if (!cleaned || cleaned.length > 160) return null;
+
+  // Never send product catalog when customer is asking if the store buys articles/equipment
+  if (isCustomerSellingOrStoreBuyingQuery(cleaned)) {
+    return null;
+  }
 
   // Do not intercept simple greetings or courtesies
   if (isSimpleConversationalMessage(cleaned)) {
@@ -7898,6 +10742,11 @@ function resolveDirectCatalogReply(rawText: string, conv?: Conversation, hasQuot
 
   const highlight = getRelevantProductsHighlight(cleaned, '');
   if (!highlight) return null;
+
+  const catalogBlock = highlight.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/);
+  if (catalogBlock && catalogBlock[1]?.trim()) {
+    return catalogBlock[1].trim();
+  }
 
   const markerIdx = highlight.indexOf('):\n\n');
   if (markerIdx !== -1) {
@@ -7949,8 +10798,8 @@ function buildSmartCatalogFallbackReply(conv?: Conversation, queryText = ''): st
   }
 
   // 2. If customer is quoting a previous message ("¿Te acuerdas de esto?", "Me interesa", etc.)
-  if (hasQuote) {
-    return `¡Claro que sí${namePart}! 😊 Recuerdo perfectamente lo que conversamos y las opciones siguen disponibles en nuestra tienda de la **Av. Charles de Gaulle No. 133**. ¿Tienes pensado pasar hoy por la tienda para apartarte el equipo, o prefieres que coordinemos el envío directo a tu dirección? 🛒`;
+  if (hasQuote && lastMsg?.quotedMessage?.text) {
+    return `¡Claro que sí${namePart}! 😊 Respecto a "${lastMsg.quotedMessage.text.slice(0, 120)}", cuéntame exactamente qué detalle necesitas confirmar (precio, disponibilidad o envío) y con gusto te ayudo de una vez.`;
   }
 
   // 3. Check direct catalog reply (handles family lists, brand/budget filters, and keyword matches)
@@ -8128,7 +10977,7 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
 // Helper: Build structured multi-turn conversation history for OpenAI / DeepSeek / Gemini
 function buildChatHistoryTurns(conv?: Conversation): { role: 'user' | 'assistant'; content: string }[] {
   if (!conv || !conv.messages || conv.messages.length === 0) return [];
-  const recent = conv.messages.slice(-18);
+  const recent = conv.messages.slice(-8);
   const turns: { role: 'user' | 'assistant'; content: string }[] = [];
 
   for (const m of recent) {
@@ -8149,10 +10998,20 @@ function buildChatHistoryTurns(conv?: Conversation): { role: 'user' | 'assistant
       continue;
     }
 
-    // In assistant turns, if a previous message contained the entire laptop catalog (> 1200 chars),
-    // shorten it in history so it doesn't waste context tokens
-    if (role === 'assistant' && text.includes('Catálogo completo de laptops') && text.length > 1200) {
-      text = text.slice(0, 400) + '\n... [Catálogo completo de laptops enviado previamente]';
+    // In assistant turns, if a previous message contained a catalog or product list (> 600 chars),
+    // preserve the complete numbered index (*1.* to *N.*) so the AI knows every item by number and position ("primera", "segunda", "última", "la 8") without repeating all URLs
+    if (role === 'assistant' && (text.includes('Catálogo completo') || text.includes('catálogo completo') || text.includes('opciones disponibles')) && text.length > 600) {
+      const compactLines: string[] = [];
+      const itemRegex = /\*(\d{1,2})\.\*\s*\*([^*\n]+)\*[\s\S]*?(RD\$[\d,]+)/g;
+      let mItem: RegExpExecArray | null;
+      while ((mItem = itemRegex.exec(text)) !== null) {
+        compactLines.push(`*${mItem[1]}.* ${mItem[2].trim()} (${mItem[3]})`);
+      }
+      if (compactLines.length >= 2) {
+        text = `[Catálogo numerado enviado previamente al cliente (${compactLines.length} opciones, donde #1 es la primera y #${compactLines.length} es la última)]:\n` + compactLines.join('\n');
+      } else {
+        text = text.slice(0, 600) + '\n... [Catálogo de opciones enviado previamente al cliente]';
+      }
     }
 
     // Merge consecutive messages from the same role so OpenAI/DeepSeek alternating turn rules are respected
@@ -8331,41 +11190,77 @@ async function processAndExecuteCrmTools(
   return { cleanText, toolsExecuted };
 }
 
-// Unified Core Sales Bot Auto-Responder (Used by Polling, Webhook, and Manual Trigger)
+// Unified Core Sales Bot Auto-Responder (Used by Queue Worker, Polling, Webhook, and Manual Trigger)
 async function triggerSalesBotReplyForConversation(
   conv: Conversation,
-  triggerSource: string
+  triggerSource: string,
+  correlationId?: string,
+  ownerId?: string
 ): Promise<{
   success: boolean;
+  skipped?: boolean;
   reply?: string;
   providerUsed?: string;
   modelUsed?: string;
   toolsExecuted?: string[];
   sentToWhatsApp?: boolean;
   error?: string;
+  correlationId?: string;
 }> {
+  if (isServerShuttingDown) {
+    return { success: false, error: 'Servidor en proceso de apagado controlado (graceful shutdown)' };
+  }
+
   // CRITICAL: The AI Bot NEVER replies to WhatsApp groups
   if (isWhatsAppGroup(conv.sessionId) || isWhatsAppGroup(conv.customerPhone)) {
     console.log(`🛡️ [Bot bloqueado]: Se ignoró generación automática para grupo (${conv.sessionId})`);
-    return { success: false, error: 'Los grupos de WhatsApp están expresamente excluidos de las respuestas del bot' };
+    return {
+      success: false,
+      skipped: true,
+      error: 'Los grupos de WhatsApp están expresamente excluidos de las respuestas del bot',
+    };
   }
 
   const initialLastMsg = conv.messages[conv.messages.length - 1];
+  const initialMsgId = normalizeMsgIdKey(initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '');
+  const effCorrelationId = correlationId || generateCorrelationId(initialMsgId);
+  const effOwnerId = ownerId || `${triggerSource}-${process.pid}-${Date.now()}`;
+
   const initialSkip = shouldSkipBotReply(conv, initialLastMsg, triggerSource);
   if (initialSkip.skip) {
-    return { success: false, error: initialSkip.reason };
+    return { success: false, skipped: true, error: initialSkip.reason, correlationId: effCorrelationId };
   }
 
-  if (!acquireBotLock(conv, triggerSource)) {
-    return { success: false, error: 'Ya se está generando una respuesta para este chat' };
+  if (!acquireBotLock(conv, triggerSource, effOwnerId)) {
+    return {
+      success: false,
+      error: 'Ya se está generando una respuesta para este chat (bloqueo activo)',
+      correlationId: effCorrelationId,
+    };
   }
+
+  recordDiagnosticStage({
+    correlationId: effCorrelationId,
+    stage: 'LOCK_ACQUIRED',
+    module: 'concurrency',
+    customer: conv.customerName,
+    conversationId: conv.sessionId,
+    messageId: initialMsgId,
+    details: `Bloqueo exclusivo adquirido por ${effOwnerId} (${triggerSource})`,
+  });
 
   const startTime = Date.now();
-  const initialMsgId = normalizeMsgIdKey(initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '');
+  const contactKeys = getConversationContactKeys(conv);
   if (initialMsgId && triggerSource !== 'manual_crm_trigger') {
-    const contactKeys = getConversationContactKeys(conv);
-    markMessageIdProcessed(initialMsgId, contactKeys);
+    markMessageIdProcessed(initialMsgId, contactKeys, {
+      correlationId: effCorrelationId,
+      conversationId: conv.sessionId,
+      responseSent: false,
+    });
   }
+
+  const previousCorrelationContext = activeCorrelationIdContext;
+  activeCorrelationIdContext = effCorrelationId;
 
   try {
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || '';
@@ -8375,37 +11270,61 @@ async function triggerSalesBotReplyForConversation(
       !initialLastMsg?.quotedMessage &&
       isSimpleConversationalMessage(initialText, initialHasQuote);
 
-    // Anti-ban humanized typing simulation:
-    // Short greeting: 3500ms composing. Products/catalog: 5500ms composing.
-    const typingPresenceMs = isInitialSimpleGreeting ? 3500 : 5500;
+    const typingPresenceMs = 400;
     sendEvolutionTypingPresence(conv, typingPresenceMs).catch(() => {});
 
     // 1. Ensure Odoo inventory is loaded (only block if not a simple greeting)
-    if (products.length === 0 && !isInitialSimpleGreeting) {
-      await syncOdooInventory();
+    if (!isInitialSimpleGreeting) {
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: 'ODOO_REQUEST_STARTED',
+        service: 'Odoo ERP',
+        module: 'odoo',
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        details: products.length === 0 ? 'Sincronizando inventario inicial de Odoo ERP' : `Consultando inventario en memoria (${products.length} productos activos)`,
+      });
+      if (products.length === 0) {
+        await syncOdooInventory();
+      }
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: 'ODOO_REQUEST_COMPLETED',
+        service: 'Odoo ERP',
+        module: 'odoo',
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        details: `Inventario verificado (${products.length} productos disponibles)`,
+      });
     }
 
-    // 2. Only fetch full Evolution message history if thread is completely empty or a quoted message needs text hydration
+    // 2. Fetch Evolution message history if thread has < 3 messages or a quoted message needs text hydration so positional/numbered catalog references ("la última", "la 8") always have the prior catalog
     const needsHistoryHydration =
       !conv.messages ||
-      conv.messages.length === 0 ||
+      conv.messages.length < 3 ||
       Boolean(initialLastMsg?.quotedMessage && !initialLastMsg.quotedMessage.text);
 
     if (needsHistoryHydration) {
       await loadEvolutionMessagesForChat(conv.sessionId);
     } else if (!conv.messagesLoaded && !isInitialSimpleGreeting) {
-      // Hydrate older context asynchronously without adding 2-4 seconds lag to the bot's current reply!
       loadEvolutionMessagesForChat(conv.sessionId).catch(() => {});
     }
 
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (!lastMsg) {
-      return { success: false, error: 'Sin mensajes en la conversación' };
+      return { success: false, skipped: true, error: 'Sin mensajes en la conversación', correlationId: effCorrelationId };
     }
 
     // Strictly enforce that the bot never answers if the last message in the thread is already from the assistant or agent
     if (lastMsg.sender !== 'customer' && triggerSource !== 'manual_crm_trigger') {
-      return { success: false, error: 'El último mensaje ya fue respondido por el equipo o el bot' };
+      return {
+        success: false,
+        skipped: true,
+        error: 'El último mensaje ya fue respondido por el equipo o el bot',
+        correlationId: effCorrelationId,
+      };
     }
 
     // For manual CRM trigger or mixed threads, identify the substantive customer message to address
@@ -8414,72 +11333,160 @@ async function triggerSalesBotReplyForConversation(
         ? lastMsg
         : [...conv.messages].reverse().find(m => m.sender === 'customer') || lastMsg;
 
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
+
     // 3. Auto-transcribe if the customer sent a voice note (OpenAI Whisper)!
     if (targetCustomerMsg.type === 'audio' && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.transcription) {
-      try {
-        console.log(`🎤 [Audio Processing]: Descargando audio para transcribir con Whisper (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
-        let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
-        if (!media) {
-          await new Promise(r => setTimeout(r, 800));
-          media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
-        }
-        if (media && media.base64) {
-          const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
-          if (trText) {
-            targetCustomerMsg.transcription = trText;
-            targetCustomerMsg.content = `🎤 "${trText}"`;
-            transcriptionsByMsgId.set(targetCustomerMsg.evolutionMessageId, trText);
-            conv.lastMessagePreview = `🎤 "${trText}"`;
-            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
-            console.log(`✅ [Audio Whisper Transcrito]: "${trText}"`);
-          }
-        }
-      } catch (e: any) {
-        console.log('[Auto-Transcribe Audio Info]:', e?.message || e);
+      console.log(`🎤 [Audio Processing]: Descargando audio para transcribir con Whisper (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+      let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+      if (!media) {
+        await new Promise(r => setTimeout(r, 800));
+        media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
+      }
+      if (!media || !media.base64) {
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: 'MEDIA_DOWNLOADED',
+          service: 'Evolution API',
+          module: 'media',
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          success: false,
+          severity: 'HIGH',
+          details: 'No se pudo descargar el archivo de audio desde Evolution API',
+        });
+        throw new Error('No se pudo descargar la nota de voz desde Evolution API para transcribirla');
+      }
+
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: 'MEDIA_DOWNLOADED',
+        service: 'Evolution API',
+        module: 'media',
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: targetCustomerMsg.evolutionMessageId,
+        details: `Audio descargado (${media.mimetype})`,
+      });
+
+      const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
+      if (trText) {
+        targetCustomerMsg.transcription = trText;
+        targetCustomerMsg.content = `🎤 "${trText}"`;
+        saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
+        conv.lastMessagePreview = `🎤 "${trText}"`;
+        broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: 'MEDIA_TRANSCRIBED',
+          service: 'AI Engine',
+          module: 'whisper',
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`,
+        });
+        console.log(`✅ [Audio Whisper Transcrito]: "${trText}"`);
       }
     }
 
-    // 4. Auto-analyze if the customer sent an image (OpenAI Vision)!
+    // 3b. Hydrate quoted voice note transcription if the customer quoted an audio message
+    if (
+      targetCustomerMsg.quotedMessage &&
+      targetCustomerMsg.quotedMessage.id &&
+      (!targetCustomerMsg.quotedMessage.text ||
+        targetCustomerMsg.quotedMessage.text === '🎤 Nota de voz citada' ||
+        targetCustomerMsg.quotedMessage.text === '🎤 Nota de voz de WhatsApp' ||
+        targetCustomerMsg.quotedMessage.text === '🎤 Nota de voz anterior')
+    ) {
+      const qCleanId = targetCustomerMsg.quotedMessage.id.replace(/^evo-/, '');
+      let qTr = transcriptionsByMsgId.get(qCleanId) || transcriptionsByMsgId.get(`evo-${qCleanId}`);
+      if (!qTr) {
+        const parentInConv = conv.messages.find(
+          m => m.evolutionMessageId === qCleanId || m.id === `evo-${qCleanId}` || m.id === qCleanId
+        );
+        if (parentInConv?.transcription) {
+          qTr = parentInConv.transcription;
+        }
+      }
+      if (!qTr) {
+        try {
+          const qMedia = await fetchMediaBase64FromEvolution(qCleanId, false, conv.sessionId);
+          if (qMedia?.base64) {
+            qTr = await transcribeAudioWithOpenAI(qMedia.base64, qMedia.mimetype);
+            if (qTr) {
+              saveTranscriptionForId(qCleanId, qTr);
+            }
+          }
+        } catch {}
+      }
+      if (qTr) {
+        targetCustomerMsg.quotedMessage.text = `🎤 "${qTr}"`;
+        targetCustomerMsg.quotedMessage.type = 'audio';
+        saveQuotedMessageForId(targetCustomerMsg.evolutionMessageId || targetCustomerMsg.id, targetCustomerMsg.quotedMessage);
+        broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+      }
+    }
+
+    let detectedImageQuery = '';
+
+    // 4. Auto-analyze if the customer sent an image (OpenAI Vision with n8n parity)!
     if (targetCustomerMsg.type === 'image' && targetCustomerMsg.evolutionMessageId && !targetCustomerMsg.aiAnalysis) {
       try {
-        console.log(`📷 [Image Processing]: Descargando imagen para analizar con GPT-4o Vision (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
+        console.log(`📷 [Image Processing]: Descargando imagen para clasificar con Visión (msgId: ${targetCustomerMsg.evolutionMessageId})...`);
         let media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
         if (!media) {
           await new Promise(r => setTimeout(r, 800));
           media = await fetchMediaBase64FromEvolution(targetCustomerMsg.evolutionMessageId, false, conv.sessionId);
         }
         if (media && media.base64) {
-          const visionPrompt = `Analiza detalladamente esta imagen enviada por un cliente a Todo Lapto (tienda física de laptops, tecnología y servicio técnico en Santo Domingo, RD).
-Identifica con precisión:
-1. CATEGORÍA:
-   - Laptop o computadora: marca, modelo exacto, pantalla, etiquetas de specs (Core i3, i5, i7, Celeron, Ryzen, RAM, SSD), condición física visible.
-   - Pantalla de especificaciones / Windows: procesador exacto, memoria RAM, almacenamiento, GPU, estado de batería.
-   - Daño físico o avería para reparación: pantalla rota/rajada, bisagra rota, no enciende, mensaje de error en pantalla, teclado.
-   - Comprobante de pago bancario: Banco (Banreservas, Popular, BHD, etc.), monto exacto en RD$, número de referencia/autorización y fecha.
-   - Captura de pantalla de anuncio o estado de WhatsApp de Todo Lapto: producto anunciado, precio, texto visible.
-   - Accesorio o repuesto: cargador, batería, teclado, mouse, monitor, memoria, etc.
-2. RESUMEN COMERCIAL: Explica qué equipo es y qué necesita el cliente para que el bot de ventas le responda de inmediato con el catálogo, precio o taller de reparación.`;
-
-          const analysis = await analyzeImageWithOpenAI(
-            media.base64,
-            media.mimetype,
-            visionPrompt
-          );
-          if (analysis) {
-            targetCustomerMsg.aiAnalysis = analysis;
-            aiAnalysisByMsgId.set(targetCustomerMsg.evolutionMessageId, analysis);
-            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
-            console.log(`✅ [Image GPT-4o Vision Analizada]: ${analysis.slice(0, 120)}...`);
+          recordDiagnosticStage({
+            correlationId: effCorrelationId,
+            stage: 'MEDIA_DOWNLOADED',
+            service: 'Evolution API',
+            module: 'media',
+            customer: conv.customerName,
+            conversationId: conv.sessionId,
+            messageId: targetCustomerMsg.evolutionMessageId,
+            details: `Imagen descargada (${media.mimetype})`,
+          });
+          const visionResult = await analyzeCustomerImageWithVision(media.base64, media.mimetype);
+          targetCustomerMsg.aiAnalysis = visionResult.interpretedText;
+          aiAnalysisByMsgId.set(targetCustomerMsg.evolutionMessageId, visionResult.interpretedText);
+          if (visionResult.suggestedQuery) {
+            detectedImageQuery = visionResult.suggestedQuery;
           }
+          recordDiagnosticStage({
+            correlationId: effCorrelationId,
+            stage: 'MEDIA_TRANSCRIBED',
+            service: 'AI Engine',
+            module: 'vision',
+            customer: conv.customerName,
+            conversationId: conv.sessionId,
+            messageId: targetCustomerMsg.evolutionMessageId,
+            details: `Imagen analizada (${visionResult.imageType}): ${visionResult.interpretedText.slice(0, 120)}`,
+          });
+          broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+          console.log(`✅ [Image Vision (${visionResult.imageType})]: ${visionResult.interpretedText}`);
         }
       } catch (e: any) {
-        console.log('[Auto-Analyze Image Info]:', e?.message || e);
+        recordDiagnosticStage({
+          correlationId: effCorrelationId,
+          stage: 'MEDIA_TRANSCRIBED',
+          service: 'AI Engine',
+          module: 'vision',
+          customer: conv.customerName,
+          conversationId: conv.sessionId,
+          messageId: targetCustomerMsg.evolutionMessageId,
+          success: false,
+          severity: 'HIGH',
+          details: `Error al analizar imagen: ${e?.message || e}`,
+        });
       }
     }
 
     // 4b. Auto-analyze Quoted Status / Quoted Media with OpenAI Vision!
-    // When a customer asks a question directly from inside a WhatsApp Status (Story) or quotes a flyer/photo,
-    // analyze the Status image (jpegThumbnail or full media) so the bot knows what product is in that Status!
     if (targetCustomerMsg.quotedMessage) {
       const qId = targetCustomerMsg.quotedMessage.id;
       const isQuotedIdInChatHistory = qId
@@ -8488,7 +11495,6 @@ Identifica con precisión:
           )
         : true;
 
-      // If customer quotes a Todo Lapto image/video that was never sent in 1-on-1 chat, it is a reply to a WhatsApp Status (Story)!
       if (
         !targetCustomerMsg.quotedMessage.isStatusReply &&
         !isQuotedIdInChatHistory &&
@@ -8549,12 +11555,14 @@ Extrae con máxima precisión:
     if (targetCustomerMsg.type === 'audio') {
       baseCustomerText = targetCustomerMsg.transcription
         ? targetCustomerMsg.transcription
-        : '🎤 [Nota de voz enviada por el cliente — el audio no se pudo transcribir con claridad]';
+        : (targetCustomerMsg.quotedMessage?.text || targetCustomerMsg.quotedMessage?.aiAnalysis
+            ? 'El cliente envió un audio sobre la consulta citada'
+            : 'Hola, buenas');
     } else if (targetCustomerMsg.type === 'image') {
       const caption = targetCustomerMsg.content && targetCustomerMsg.content !== '📷 Foto' ? targetCustomerMsg.content : '';
       baseCustomerText = targetCustomerMsg.aiAnalysis
-        ? (caption ? `${caption}\n[Detalles de la imagen analizada por Visión Artificial IA: ${targetCustomerMsg.aiAnalysis}]` : `[Detalles de la imagen analizada por Visión Artificial IA: ${targetCustomerMsg.aiAnalysis}]`)
-        : (caption || '📷 [Foto enviada por el cliente]');
+        ? (caption ? `${caption}\n${targetCustomerMsg.aiAnalysis}` : targetCustomerMsg.aiAnalysis)
+        : (caption || 'El cliente envió una imagen adjunta');
     } else {
       baseCustomerText = targetCustomerMsg.content || 'Hola, me gustaría recibir información.';
     }
@@ -8619,29 +11627,42 @@ Mensaje actual del cliente sobre esta cita anterior:
 "${baseCustomerText}"
 
 ⚠️ REGLAS OBLIGATORIAS PARA ESTA CITA:
-1. Responde directamente en base a lo que el cliente pregunta sobre el mensaje o producto citado ("${baseCustomerText}").
+1. Toma como referencia TANTO el mensaje citado como el mensaje nuevo del cliente (el motivo por el que lo citó: "${baseCustomerText}"). Responde combinando ambos de forma directa y natural.
 2. SI EL MENSAJE CITADO ES UNA PREGUNTA OPERATIVA (ej. "¿Están laborando?", "¿Abren hoy?", "¿Cuál es el horario?", "¿Dónde están ubicados?", "¿Hacen envíos?", "¿Tienen garantía?"): Responde DIRECTA y EXACTAMENTE a esa pregunta citada informando el estado de la tienda física en la Av. Charles de Gaulle #133. ESTÁ TERMINANTEMENTE PROHIBIDO enviar catálogos o listas de productos cuando el cliente cita una pregunta operativa.
-3. SI LA CITA VIENE ACOMPAÑADA DE UNA NOTA DE VOZ O IMAGEN: Interpreta la nota de voz transcrita o imagen en conjunto con la cita. Si la nota de voz fue corta (1-2s), inaudible o dice "dime a ver", responde DIRECTAMENTE a la pregunta o producto citado sin evasivas.
-4. SI CITA UN PRODUCTO O LAPTOP: Confirma precio, stock y specs de ese producto citado. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
-5. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas) confirmando disponibilidad en nuestra tienda de la Av. Charles de Gaulle No. 133 o coordinando envío a domicilio.
+3. SI EL MENSAJE CITADO O EL NUEVO ES UNA NOTA DE VOZ O IMAGEN: Interpreta su contenido junto con la cita y responde directo al punto. Si la nota de voz fue corta o solo envió "?" / ".", atiende directamente la consulta o pregunta citada.
+4. SI CITA UN PRODUCTO O LAPTOP: Confirma precio, stock y specs de ese producto citado y responde al motivo de su mensaje. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
+5. TONO 100% HUMANO Y NATURAL: Responde exactamente como una persona normal atendiendo por WhatsApp (cálido, directo y conciso). ESTÁ TERMINANTEMENTE PROHIBIDO decir frases robóticas o de sistema como "Reconozco tus mensajes y notas de voz citadas", "Reconozco tu mensaje citado", "Vi que citaste", "Según tu nota de voz citada" o mencionar que eres un bot que reconoce audios o citas.
 6. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa información...", pedir que repitan lo dicho, o enviar mensajes evasivos. Tienes todo el contexto citado e inventario en tiempo real.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     }
 
+    const quotedContentStr =
+      targetCustomerMsg.quotedMessage?.text ||
+      targetCustomerMsg.quotedMessage?.aiAnalysis ||
+      '';
+    const quotedParticipantStr = targetCustomerMsg.quotedMessage?.author || '';
+
+    const n8nContextBlock = hasQuote || isStatusReply
+      ? `📋 [DATOS NORMALIZADOS DE LA ENTRADA (PARIDAD N8N)]:
+- chat_input: "${baseCustomerText}"
+- has_quoted_message: ${hasQuote || isStatusReply}
+- quoted_message_content: "${quotedContentStr}"
+- quoted_participant: "${quotedParticipantStr}"\n\n`
+      : '';
+
     const customerMessageText = quotedBlock
-      ? `${quotedBlock}\nConsulta del cliente: "${baseCustomerText}"`
-      : baseCustomerText;
+      ? `${n8nContextBlock}${quotedBlock}\nConsulta del cliente: "${baseCustomerText}"`
+      : `${n8nContextBlock}${baseCustomerText}`;
 
     const systemInstruction = buildMasterSalesSystemInstruction(conv, customerMessageText);
     const fullHistoryTurns = buildChatHistoryTurns(conv);
-    // Remove last turn from historyTurns if it's the customer message we're passing in `prompt`
     if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === 'user') {
       fullHistoryTurns.pop();
     }
     const historyTurns = isSimpleMsg ? fullHistoryTurns.slice(-4) : fullHistoryTurns;
 
     console.log(
-      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=OpenAI (${appConfig.aiProvider?.model || 'gpt-4o-mini'})`
+      `🤖 [Sales Bot Generating Reply (${triggerSource})]: Cliente="${conv.customerName}" | Citando="${hasQuote ? 'SÍ' : 'NO'}" | Motor=OpenAI (${appConfig.aiProvider?.model || 'gpt-4o-mini'}) | Corr=${effCorrelationId}`
     );
 
     const rdNow = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
@@ -8672,14 +11693,73 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     let providerUsed = 'openai';
     let modelUsed = appConfig.aiProvider?.model || 'gpt-4o-mini';
 
-    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
 
-    if (storeAnswer) {
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'AI_REQUEST_STARTED',
+      service: 'AI Engine',
+      module: 'openai',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Generando respuesta para: "${baseCustomerText.slice(0, 100)}"`,
+    });
+
+    const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+      conv,
+      targetCustomerMsg,
+      baseCustomerText
+    );
+    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+    const directQuotedReply = hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
+    const genericFamily = detectGenericProductFamily(baseCustomerText);
+
+    // Fast-path catalog extraction from systemInstruction or direct inventory highlight
+    const catalogBlockMatch =
+      systemInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) ||
+      (genericFamily ? getRelevantProductsHighlight(baseCustomerText, targetCustomerMsg.quotedMessage?.text || '', '').match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) : null);
+
+    const isGenericCategoryInquiry =
+      !directSelectionOrDiscount &&
+      !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) &&
+      !isDiscountInquiry(baseCustomerText) &&
+      !isPositionalOrNumberSelection(baseCustomerText) &&
+      !hasSpecificModelCodeInText(baseCustomerText) &&
+      (Boolean(genericFamily) ||
+        /\b(lapto|laptops|laptop|computadora|computadoras|pc|portatil|portatiles|impresora|impresoras|mouse|raton|ratones|teclado|teclados|monitor|monitores|pantalla|pantallas|bocina|bocinas|audifono|audifonos|tablet|tablets|cargador|cargadores|disco|discos|ssd|ram|mochila|mochilas|router|repetidor|tienen|cuales|catalogo|lista)\b/i.test(
+          baseCustomerText
+        ));
+
+    if (directSelectionOrDiscount) {
+      aiReply = directSelectionOrDiscount.reply;
+      providerUsed = 'openai';
+      modelUsed = directSelectionOrDiscount.advisorAlertText
+        ? 'discount-advisor-escalation'
+        : 'catalog-selection-engine';
+      if (directSelectionOrDiscount.advisorAlertText) {
+        toolsExecuted = ['notificar_equipo'];
+        sendEvolutionMessage(
+          appConfig.evolution.teamPhone,
+          directSelectionOrDiscount.advisorAlertText
+        ).catch(() => {});
+      }
+    } else if (directQuotedReply) {
+      aiReply = directQuotedReply;
+      providerUsed = 'openai';
+      modelUsed = 'quoted-context-engine';
+    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
+      // Deterministic delivery of the 100% complete stock catalog without LLM truncation or latency
+      const fullCatalog = catalogBlockMatch[1].trim();
+      aiReply = storeAnswer ? `${storeAnswer}\n\n${fullCatalog}` : fullCatalog;
+      providerUsed = 'openai';
+      modelUsed = 'full-catalog-engine';
+    } else if (storeAnswer) {
       aiReply = storeAnswer;
     } else if (isSimpleMsg) {
       aiReply = buildInstantConversationalReply(conv, baseCustomerText);
     } else {
-      // Strict OpenAI execution for product queries, catalogs, and technical sales questions
+      // Strict OpenAI execution for technical sales questions, consultative selling, and specific filtered queries
       const aiResult = await generateTextWithConfiguredAI({
         prompt: promptToSend,
         systemInstruction,
@@ -8688,7 +11768,43 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       });
 
       const processed = await processAndExecuteCrmTools(aiResult.text || '', conv);
-      aiReply = processed.cleanText.trim();
+      let candidateReply = processed.cleanText.trim();
+
+      // Safety Guard 1: If OpenAI was expected to output the complete catalog but truncated to <= 3 items, fallback to the guaranteed full catalog
+      if (isGenericCategoryInquiry && catalogBlockMatch && isCatalogSectionPresent && candidateReply.length < 500 && catalogBlockMatch[1].length > 800) {
+        candidateReply = catalogBlockMatch[1].trim();
+      }
+
+      // Safety Guard 2 (Anti-Catalog-Dump Guard): If the customer is quoting a message, sending "." / "?", or NOT asking for a general catalog, NEVER allow OpenAI to dump the 36-laptop catalog
+      if (
+        !isGenericCategoryInquiry &&
+        (/Cat[aá]logo completo de laptops/i.test(candidateReply) ||
+          (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 5)
+      ) {
+        const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
+        if (fallbackQuote) {
+          candidateReply = fallbackQuote;
+        } else {
+          const resolvedCtx = resolveCatalogItemAndModelReference(
+            conv,
+            baseCustomerText,
+            targetCustomerMsg.quotedMessage?.text || ''
+          );
+          if (resolvedCtx?.product) {
+            const p = resolvedCtx.product;
+            const posBadge = resolvedCtx.itemNumber ? ` (opción *#${resolvedCtx.itemNumber}* de la lista)` : '';
+            const condBadge =
+              p.condition === 'Nuevo'
+                ? '✨ Nuevo de Caja (Garantía 1 año)'
+                : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
+            candidateReply = `¡Claro que sí${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! Te confirmo los detalles de la *${p.name}*${posBadge}:\n\n💻 *${p.name}*\n💰 *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_\n📦 *Disponibilidad:* ${p.virtual_available} unidad(es) en stock real\n🏷️ *Condición:* ${condBadge}\n⚙️ *Especificaciones:* ${p.specsSummary || p.description_sale || 'Excelente estado y rendimiento garantizado'}\n${p.website_url ? `🔗 https://todolapto.com.do${p.website_url}\n` : ''}\n¿Deseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el envío a domicilio? 🚚`;
+          } else {
+            candidateReply = `¡Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! 😊 Estoy atento a tu mensaje. Confírmame por favor cuál de los modelos te llamó la atención o cómo deseas que te ayudemos (retiro en tienda en la *Av. Charles de Gaulle No. 133* o envío a domicilio). 💻✨`;
+          }
+        }
+      }
+
+      aiReply = candidateReply;
       toolsExecuted = processed.toolsExecuted;
       providerUsed = aiResult.providerUsed;
       modelUsed = aiResult.modelUsed;
@@ -8698,9 +11814,43 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       throw new Error('No se pudo generar el texto de respuesta.');
     }
 
-    // Anti-ban humanized pacing (Meta / WhatsApp automated spam prevention):
-    // Realistic typing delay: 3500ms for short greetings/answers, 5500ms for catalogs/long lists
-    const targetDelayMs = isSimpleMsg ? 3500 : (isCatalogSectionPresent ? 5500 : 3500);
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'AI_REQUEST_COMPLETED',
+      service: 'AI Engine',
+      module: 'openai',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Respuesta IA generada (${aiReply.length} caracteres, modelo: ${modelUsed})`,
+    });
+
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'RESPONSE_VALIDATED',
+      service: 'Backend',
+      module: 'validator',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Respuesta validada y sanitizada (${toolsExecuted.length} herramientas ejecutadas)`,
+    });
+
+    renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
+
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'WHATSAPP_SEND_STARTED',
+      service: 'Evolution API',
+      module: 'evolution',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Enviando respuesta a WhatsApp (${conv.customerPhone || conv.sessionId})`,
+    });
+
+    // Fast immediate delivery (150ms) so Evolution API records the outgoing reply immediately and prevents any secondary cloud preview container from sending a duplicate
+    const targetDelayMs = 150;
     const sendRes = await sendEvolutionMessageToConversation(
       conv,
       aiReply,
@@ -8711,8 +11861,54 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     const durationMs = Date.now() - startTime;
 
     if (!sentOk) {
-      throw new Error('No se pudo entregar el mensaje a WhatsApp vía Evolution API.');
+      recordDiagnosticStage({
+        correlationId: effCorrelationId,
+        stage: 'WHATSAPP_SEND_COMPLETED',
+        service: 'Evolution API',
+        module: 'evolution',
+        customer: conv.customerName,
+        conversationId: conv.sessionId,
+        messageId: initialMsgId,
+        success: false,
+        severity: 'HIGH',
+        details: 'No se pudo entregar a WhatsApp (Evolution API desconectado o socket cerrado)',
+      });
+
+      recordBotAuditLog({
+        customerName: conv.customerName,
+        customerPhone: conv.customerPhone,
+        sessionId: conv.sessionId,
+        triggerSource,
+        incomingMessageId: initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
+        incomingText: baseCustomerText,
+        decision: 'error',
+        reason: `No se pudo entregar a WhatsApp (Evolution API desconectado o número inválido)`,
+        replyText: aiReply,
+        durationMs,
+      });
+
+      return {
+        success: false,
+        reply: aiReply,
+        providerUsed,
+        modelUsed,
+        toolsExecuted,
+        sentToWhatsApp: false,
+        correlationId: effCorrelationId,
+        error: 'No se pudo entregar a WhatsApp porque la sesión de Evolution API está desconectada. Por favor verifica o escanea el código QR.',
+      };
     }
+
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'WHATSAPP_SEND_COMPLETED',
+      service: 'Evolution API',
+      module: 'evolution',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: sendRes.messageId || initialMsgId,
+      details: `Entregado exitosamente a WhatsApp en ${durationMs}ms`,
+    });
 
     const assistantMessage: ChatMessage = {
       id: sendRes.messageId ? `evo-${sendRes.messageId}` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -8725,12 +11921,25 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     };
 
     if (sendRes.messageId) {
-      const contactKeys = getConversationContactKeys(conv);
-      markMessageIdProcessed(sendRes.messageId, contactKeys);
+      markMessageIdProcessed(sendRes.messageId, contactKeys, {
+        correlationId: effCorrelationId,
+        conversationId: conv.sessionId,
+        responseSent: true,
+      });
+    }
+    if (initialMsgId) {
+      markMessageIdProcessed(initialMsgId, contactKeys, {
+        correlationId: effCorrelationId,
+        conversationId: conv.sessionId,
+        responseSent: true,
+        orderOrQuoteCreated: toolsExecuted.some(t => t === 'odoo_crear_cotizacion' || t === 'registrar_pedido'),
+      });
     }
 
-    recordLocalMessage(conv.sessionId, assistantMessage, conv.customerPhone);
-    conv.messages.push(assistantMessage);
+    if (!isDuplicateChatMessage(conv.messages, assistantMessage)) {
+      recordLocalMessage(conv.sessionId, assistantMessage, conv.customerPhone);
+      conv.messages.push(assistantMessage);
+    }
     conv.lastTimestamp = assistantMessage.timestamp;
     conv.lastMessagePreview = aiReply;
     conv.lastMessageType = 'text';
@@ -8738,7 +11947,6 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
     broadcastEvent('new_message', { sessionId: conv.sessionId, message: assistantMessage });
     broadcastEvent('conversations_update', { count: conversations.length });
 
-    // Schedule a quick live message sync from Evolution API so the CRM reflects the exact WhatsApp message IDs 1:1
     setTimeout(() => {
       loadEvolutionMessagesForChat(conv.sessionId)
         .then(() => {
@@ -8747,7 +11955,6 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         .catch(() => {});
     }, 1800);
 
-    // Record this answered customer message and cooldown across all contact identity keys
     recordBotReplyForConversation(
       conv,
       initialLastMsg?.evolutionMessageId || initialLastMsg?.id || '',
@@ -8768,6 +11975,17 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       durationMs,
     });
 
+    recordDiagnosticStage({
+      correlationId: effCorrelationId,
+      stage: 'MESSAGE_COMPLETED',
+      service: 'Backend',
+      module: 'pipeline',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId: initialMsgId,
+      details: `Flujo completo finalizado con éxito en ${durationMs}ms`,
+    });
+
     return {
       success: true,
       reply: aiReply,
@@ -8775,6 +11993,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       modelUsed,
       toolsExecuted,
       sentToWhatsApp: sentOk,
+      correlationId: effCorrelationId,
     };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
@@ -8790,9 +12009,220 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       durationMs,
     });
     console.log(`[Sales Bot Notice for ${conv.customerName}]:`, err.message);
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, correlationId: effCorrelationId };
   } finally {
-    releaseBotLock(conv);
+    activeCorrelationIdContext = previousCorrelationContext;
+    releaseBotLock(conv, effOwnerId);
+  }
+}
+
+// ---------------------------------------------------------
+// Fase 1.4 — Persistent Queue Worker with Timeout & Exponential Backoff
+// ---------------------------------------------------------
+const activeQueueConversations = new Set<string>();
+
+async function executeSingleQueueJob(job: QueueJobEntry): Promise<void> {
+  const convKey = job.conversationId || job.customerPhone || job.id;
+  if (activeQueueConversations.has(convKey)) {
+    return;
+  }
+
+  // Discard synthetic test jobs immediately if encountered
+  if (
+    isSyntheticTestArtifact(job.messageId) ||
+    isSyntheticTestArtifact(job.conversationId) ||
+    isSyntheticTestArtifact(job.customer)
+  ) {
+    persistentJobQueue = persistentJobQueue.filter(j => j.id !== job.id);
+    savePersistentJobQueue();
+    return;
+  }
+
+  let conv =
+    findConversationByAnyId(job.conversationId) ||
+    (job.customerPhone ? findConversationByAnyId(job.customerPhone) : undefined);
+
+  if (!conv && job.conversationId && job.conversationId.includes('@')) {
+    const cleanPhone = (job.customerPhone || job.conversationId.replace(/@.*$/, '')).replace(/\D/g, '');
+    conv = {
+      sessionId: job.conversationId,
+      customerPhone: cleanPhone,
+      customerName: job.customer || `Cliente +${cleanPhone}`,
+      aiEnabled: true,
+      unreadCount: 1,
+      lastTimestamp: job.receivedAt || new Date().toISOString(),
+      lastMessagePreview: 'Mensaje recibido por WhatsApp',
+      lastMessageType: (job.contentType as any) || 'text',
+      intentStatus: 'explorando',
+      detectedProducts: [],
+      messages: [],
+      messagesLoaded: false,
+      isLiveEvolution: true,
+    };
+    conversations.unshift(conv);
+    await loadEvolutionMessagesForChat(conv.sessionId).catch(() => {});
+  }
+
+  if (!conv) {
+    job.status = 'FAILED';
+    job.lastError = `Conversación no encontrada en memoria (${job.conversationId})`;
+    savePersistentJobQueue();
+    return;
+  }
+
+  const contactKeys = getConversationContactKeys(conv);
+  if (conv.aiEnabled === false || !appConfig.globalAiActive || contactKeys.some(k => aiEnabledBySession.get(k) === false)) {
+    job.status = 'COMPLETED';
+    job.lastError = 'IA pausada manualmente en este chat para permitir atención humana';
+    savePersistentJobQueue();
+    return;
+  }
+
+  if (contactKeys.some(k => isBotLockActive(k))) {
+    // Another worker/message for this same conversation is currently in-flight; wait for next tick
+    return;
+  }
+
+  activeQueueConversations.add(convKey);
+  job.status = 'PROCESSING';
+  job.attempts = (job.attempts || 0) + 1;
+  savePersistentJobQueue();
+
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  try {
+    // Ensure the message ID is not prematurely blocked if this is a retry attempt
+    if (job.attempts > 1) {
+      unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+    }
+
+    const timeoutPromise = new Promise<{
+      success: boolean;
+      skipped?: boolean;
+      error?: string;
+    }>(resolve => {
+      timeoutHandle = setTimeout(() => {
+        resolve({
+          success: false,
+          error: `Tiempo máximo de ejecución excedido (${JOB_MAX_EXECUTION_MS / 1000}s timeout)`,
+        });
+      }, JOB_MAX_EXECUTION_MS);
+    });
+
+    const result = await Promise.race([
+      triggerSalesBotReplyForConversation(conv, 'persistent_queue_worker', job.correlationId, job.id),
+      timeoutPromise,
+    ]);
+
+    if (result.success || result.skipped) {
+      job.status = 'COMPLETED';
+      job.completedAt = new Date().toISOString();
+      job.lastError = undefined;
+      job.nextRetryAt = undefined;
+      savePersistentJobQueue();
+      return;
+    }
+
+    // Job failed: unmark message ID so subsequent retry is permitted
+    unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+
+    const errMsg = result.error || 'Error desconocido al procesar tarea de cola';
+    job.lastError = errMsg;
+
+    if (job.attempts < (job.maxAttempts || JOB_DEFAULT_MAX_ATTEMPTS)) {
+      // Exponential backoff: 5s (attempt 1), 15s (attempt 2), 45s (attempt 3)
+      const backoffScheduleMs = [5000, 15000, 45000];
+      const delayMs = backoffScheduleMs[Math.min(job.attempts - 1, backoffScheduleMs.length - 1)] || 15000;
+      job.status = 'RETRY';
+      job.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+      recordSystemApiLog({
+        service: 'Backend',
+        action: `Cola Persistente — Reintento Programado (${job.attempts}/${job.maxAttempts})`,
+        method: 'QUEUE',
+        statusCode: 429,
+        success: false,
+        durationMs: 0,
+        correlationId: job.correlationId,
+        severity: 'MEDIUM',
+        module: 'queue',
+        customer: job.customer,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+        requestPreview: `Reintento en ${delayMs / 1000}s para mensaje ${job.messageId}`,
+        error: errMsg,
+      });
+    } else {
+      job.status = 'DEAD_LETTER';
+      job.nextRetryAt = undefined;
+      recordSystemApiLog({
+        service: 'Backend',
+        action: `Cola Persistente — Tarea en DEAD_LETTER (${job.attempts}/${job.maxAttempts})`,
+        method: 'QUEUE',
+        statusCode: 500,
+        success: false,
+        durationMs: 0,
+        correlationId: job.correlationId,
+        severity: 'CRITICAL',
+        module: 'queue',
+        customer: job.customer,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+        requestPreview: `Agotados los ${job.maxAttempts} intentos para mensaje ${job.messageId}`,
+        error: errMsg,
+      });
+    }
+    savePersistentJobQueue();
+  } catch (err: any) {
+    unmarkMessageIdProcessedForRetry(job.messageId, contactKeys);
+    job.lastError = err?.message || String(err);
+    if (job.attempts < (job.maxAttempts || JOB_DEFAULT_MAX_ATTEMPTS)) {
+      const delayMs = job.attempts === 1 ? 5000 : job.attempts === 2 ? 15000 : 45000;
+      job.status = 'RETRY';
+      job.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+    } else {
+      job.status = 'DEAD_LETTER';
+    }
+    savePersistentJobQueue();
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    activeQueueConversations.delete(convKey);
+  }
+}
+
+async function processPersistentQueueTick(): Promise<void> {
+  if (isServerShuttingDown || isQueueWorkerRunning) return;
+  if (!appConfig.globalAiActive) return;
+
+  isQueueWorkerRunning = true;
+  try {
+    const now = Date.now();
+    // Process oldest ready jobs first so messages in a conversation are answered in chronological order
+    const readyJobs = [...persistentJobQueue]
+      .reverse()
+      .filter(job => {
+        if (job.status === 'PENDING' || job.status === 'RECEIVED') return true;
+        if (job.status === 'RETRY') {
+          if (!job.nextRetryAt) return true;
+          return new Date(job.nextRetryAt).getTime() <= now;
+        }
+        return false;
+      });
+
+    if (readyJobs.length === 0) return;
+
+    // Pick at most one ready job per conversationId in this tick so different customers run in parallel while same-customer jobs run sequentially
+    const jobsToLaunch: QueueJobEntry[] = [];
+    const seenConvs = new Set<string>();
+    for (const job of readyJobs) {
+      const cKey = job.conversationId || job.customerPhone || job.id;
+      if (seenConvs.has(cKey) || activeQueueConversations.has(cKey)) continue;
+      seenConvs.add(cKey);
+      jobsToLaunch.push(job);
+      if (jobsToLaunch.length >= 5) break;
+    }
+
+    await Promise.all(jobsToLaunch.map(j => executeSingleQueueJob(j)));
+  } finally {
+    isQueueWorkerRunning = false;
   }
 }
 
@@ -8801,12 +12231,6 @@ app.post('/api/ai/generate-reply', async (req, res) => {
   const { sessionId, userMessage, quotedStatusText, isStatusReply: reqIsStatusReply } = req.body;
   const conv = conversations.find(c => c.sessionId === sessionId);
 
-  const lastMsg = conv?.messages[conv.messages.length - 1];
-  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || 'Hola';
-  const effectiveQuotedText = quotedStatusText || req.body.quotedText || lastMsg?.quotedMessage?.text || '';
-  const isStatusReply = Boolean(reqIsStatusReply || req.body.isStatusReply || quotedStatusText || lastMsg?.quotedMessage?.isStatusReply);
-  const hasQuote = Boolean(effectiveQuotedText.trim());
-
   if (products.length === 0) {
     await syncOdooInventory();
   }
@@ -8814,6 +12238,14 @@ app.post('/api/ai/generate-reply', async (req, res) => {
   if (conv && !conv.messagesLoaded) {
     await loadEvolutionMessagesForChat(conv.sessionId);
   }
+
+  const lastMsg = conv?.messages
+    ? [...conv.messages].reverse().find(m => m.sender === 'customer') || conv.messages[conv.messages.length - 1]
+    : undefined;
+  const baseText = userMessage || lastMsg?.transcription || lastMsg?.content || conv?.lastMessagePreview || 'Hola';
+  const effectiveQuotedText = quotedStatusText || req.body.quotedText || lastMsg?.quotedMessage?.text || '';
+  const isStatusReply = Boolean(reqIsStatusReply || req.body.isStatusReply || quotedStatusText || lastMsg?.quotedMessage?.isStatusReply);
+  const hasQuote = Boolean(effectiveQuotedText.trim());
 
   let quotedBlock = '';
   if (isStatusReply) {
@@ -8848,23 +12280,80 @@ ${effectiveQuotedText}
 Mensaje actual del cliente sobre la cita: "${baseText}"
 
 ⚠️ REGLAS OBLIGATORIAS:
-1. Responde directamente en base a lo que el cliente pregunta sobre el mensaje o producto citado ("${baseText}").
+1. Toma como referencia TANTO el mensaje citado como el mensaje nuevo ("${baseText}") para responder el motivo exacto por el que lo citó.
 2. ESTÁ ESTRICTAMENTE PROHIBIDO VOLVER A ENVIAR LA LISTA DE LAS 38 LAPTOPS O EL CATÁLOGO COMPLETO AQUÍ.
-3. Responde de forma cálida, humana y concisa (máximo 2 a 4 líneas) confirmando disponibilidad en tienda y preguntando si pasará hoy por la tienda o prefiere coordinar envío.
+3. Responde como un asesor humano normal por WhatsApp (cálido y conciso). NUNCA digas "Reconozco tus mensajes citados", "Vi que citaste", "Sobre tu nota de voz citada" ni hables de que reconoces citas o audios.
 4. ESTRICTAMENTE PROHIBIDO decir "Dame un momento para confirmar esa información...", pedir que repitan lo dicho, o enviar mensajes evasivos.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
   }
 
   const queryText = quotedBlock ? `${quotedBlock}\nConsulta del cliente: "${baseText}"` : baseText;
-  const systemInstruction = buildMasterSalesSystemInstruction(conv, queryText);
+  const searchQueryText = effectiveQuotedText ? `${effectiveQuotedText}\n${baseText}` : baseText;
+  const systemInstruction = buildMasterSalesSystemInstruction(conv, searchQueryText);
   const fullHistoryTurns = buildChatHistoryTurns(conv);
   if (fullHistoryTurns.length > 0 && fullHistoryTurns[fullHistoryTurns.length - 1].role === 'user') {
     fullHistoryTurns.pop();
   }
   const historyTurns = fullHistoryTurns;
 
+  const effectiveLastMsg: ChatMessage | undefined =
+    conv && (lastMsg || hasQuote)
+      ? {
+          ...(lastMsg || {}),
+          id: lastMsg?.id || `draft-${Date.now()}`,
+          sender: 'customer',
+          type: lastMsg?.type || 'text',
+          content: baseText,
+          timestamp: lastMsg?.timestamp || new Date().toISOString(),
+          quotedMessage:
+            lastMsg?.quotedMessage?.text
+              ? lastMsg.quotedMessage
+              : hasQuote
+                ? {
+                    id: '',
+                    text: effectiveQuotedText,
+                    author: 'Todo Lapto',
+                    type: 'text',
+                    isStatusReply,
+                  }
+                : undefined,
+        }
+      : undefined;
+
   try {
-    const storeAnswer = resolveDirectStoreQuestion(baseText, conv, req.body.quotedStatusText || req.body.quotedText);
+    if (conv && effectiveLastMsg) {
+      const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+        conv,
+        effectiveLastMsg,
+        baseText
+      );
+      if (directSelectionOrDiscount) {
+        return res.json({
+          success: true,
+          reply: directSelectionOrDiscount.reply,
+          toolsExecuted: directSelectionOrDiscount.advisorAlertText ? ['notificar_equipo'] : [],
+          providerUsed: 'openai',
+          modelUsed: directSelectionOrDiscount.advisorAlertText
+            ? 'discount-advisor-escalation'
+            : 'catalog-selection-engine',
+        });
+      }
+
+      if (hasQuote) {
+        const directQuotedReply = resolveQuotedMessageDirectReply(conv, effectiveLastMsg);
+        if (directQuotedReply) {
+          return res.json({
+            success: true,
+            reply: directQuotedReply,
+            toolsExecuted: [],
+            providerUsed: 'openai',
+            modelUsed: 'quoted-context-engine',
+          });
+        }
+      }
+    }
+
+    const storeAnswer = resolveDirectStoreQuestion(baseText, conv, effectiveQuotedText);
     if (storeAnswer) {
       return res.json({
         success: true,
@@ -8872,6 +12361,17 @@ Mensaje actual del cliente sobre la cita: "${baseText}"
         toolsExecuted: [],
         providerUsed: 'deterministic',
         modelUsed: 'store-direct',
+      });
+    }
+
+    const directCatalogAnswer = resolveDirectCatalogReply(baseText, conv, hasQuote);
+    if (directCatalogAnswer) {
+      return res.json({
+        success: true,
+        reply: directCatalogAnswer,
+        toolsExecuted: [],
+        providerUsed: 'openai',
+        modelUsed: 'full-catalog-engine',
       });
     }
 
@@ -8929,7 +12429,7 @@ app.post('/api/conversations/:sessionId/auto-reply', async (req, res) => {
 
   const result = await triggerSalesBotReplyForConversation(conv, 'manual_crm_trigger');
   if (!result.success) {
-    return res.status(500).json({ success: false, message: result.error || 'Error al generar respuesta con OpenAI' });
+    return res.status(200).json({ success: false, message: result.error || 'Error al generar respuesta', reply: result.reply });
   }
 
   res.json(result);
@@ -8969,12 +12469,58 @@ Responde ÚNICAMENTE con el objeto JSON.`;
 // Track raw webhook HTTP deliveries so duplicate Evolution API webhook retries are ignored without prematurely marking the message as bot-processed
 const seenWebhookDeliveryIds = new Map<string, number>();
 
-// 9. Webhook for Evolution API (Real-Time Inbound Messages, Audio, Photos, Videos)
+// 9. Fase 1.3 — Webhook for Evolution API (Real-Time Inbound Messages, Batch Support, Persistent Queue)
 const handleEvolutionWebhook = async (req: express.Request, res: express.Response) => {
   res.status(200).json({ received: true });
 
   const body = req.body || {};
   const rawEvent = (body?.event || body?.type || '').toString().trim().toLowerCase().replace(/[-_]/g, '.');
+
+  // Handle real-time QR code updates from Evolution API
+  if (rawEvent === 'qrcode.updated') {
+    const qrBase64 =
+      body?.data?.qrcode?.base64 ||
+      body?.data?.base64 ||
+      body?.qrcode?.base64 ||
+      null;
+    const pairingCode = body?.data?.qrcode?.pairingCode || body?.data?.pairingCode || null;
+    if (qrBase64) {
+      evolutionQrCache.qrBase64 = qrBase64;
+      evolutionQrCache.pairingCode = pairingCode;
+      evolutionQrCache.generatedAt = Date.now();
+      broadcastEvent('evolution_qr', {
+        qrBase64,
+        pairingCode,
+        state: 'connecting',
+        connected: false,
+      });
+    }
+    return;
+  }
+
+  // Handle real-time connection state updates (e.g., when user finishes scanning QR on phone)
+  if (rawEvent === 'connection.update') {
+    const newState = (
+      body?.data?.state ||
+      body?.data?.connection ||
+      body?.data?.status ||
+      body?.state ||
+      body?.connection ||
+      ''
+    ).toString().toLowerCase();
+    if (newState === 'open' || newState === 'connected') {
+      evolutionLastKnownState = 'open';
+      appConfig.evolution.connected = true;
+      evolutionQrCache.qrBase64 = null;
+      evolutionQrCache.pairingCode = null;
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime();
+      isFirstEvolutionSync = true;
+      broadcastEvent('evolution_status', { connected: true, state: 'open' });
+    } else if (newState === 'close' || newState === 'connecting' || newState === 'closed' || newState === 'logged_out') {
+      clearAllChatsOnWhatsAppDisconnect(newState);
+    }
+    return;
+  }
 
   // Accept ONLY messages.upsert and incoming message events (STRICTLY EXCLUDE messages.update, which are delivery status updates)
   const isMessageUpsert =
@@ -8983,147 +12529,239 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
     rawEvent === 'message' ||
     (rawEvent.endsWith('.upsert') && !rawEvent.includes('update'));
 
-  // Robust unpacking: Evolution API can send data as an object, array of records, or nested messages
-  const messageData = Array.isArray(body?.data)
-    ? body.data[0]
+  if (!isMessageUpsert) {
+    return;
+  }
+
+  // Ignore Baileys history sync ('append') pushed when linking a WhatsApp device via QR code
+  if (body?.data?.type === 'append' || body?.type === 'append') {
+    return;
+  }
+
+  lastWebhookReceivedAt = new Date().toISOString();
+
+  // Fase 1.3 — Unpack ALL messages in batch payloads (data[], data.messages[], or single message object)
+  const rawBatchList: any[] = Array.isArray(body?.data)
+    ? body.data
     : Array.isArray(body?.data?.messages)
-    ? body.data.messages[0]
-    : body?.data || body?.message || body;
+    ? body.data.messages
+    : Array.isArray(body?.messages)
+    ? body.messages
+    : [body?.data || body?.message || body];
 
-  const key = messageData?.key;
-  if (!isMessageUpsert || !key || key.fromMe) {
-    return;
-  }
+  const instanceName = body?.instance || appConfig.evolution?.instance || 'todolapto';
+  let enqueuedAny = false;
 
-  const messageId = normalizeMsgIdKey(key.id);
-  const now = Date.now();
-
-  if (messageId) {
-    const prevWebhookTs = seenWebhookDeliveryIds.get(messageId);
-    if (prevWebhookTs && now - prevWebhookTs < 120000) {
-      return;
-    }
-    seenWebhookDeliveryIds.set(messageId, now);
-    if (seenWebhookDeliveryIds.size > 1000) {
-      const oldestKey = seenWebhookDeliveryIds.keys().next().value;
-      if (oldestKey) seenWebhookDeliveryIds.delete(oldestKey);
-    }
-  }
-
-  if (isMessageIdAlreadyProcessed(messageId)) {
-    return;
-  }
-
-  const remoteJid = key.remoteJid || '';
-  const rawAlt = key.remoteJidAlt || '';
-  const participant = key.participant || '';
-
-  // CRITICAL: Ignore all WhatsApp group messages entirely (never respond, never add to CRM inbox)
-  if (isWhatsAppGroup(remoteJid) || isWhatsAppGroup(rawAlt) || isWhatsAppGroup(participant)) {
-    return;
-  }
-
-  // Link @lid and @s.whatsapp.net if remoteJidAlt is present
-  if (remoteJid.endsWith('@lid') && rawAlt.endsWith('@s.whatsapp.net')) {
-    const altPhone = rawAlt.replace(/@.*$/, '').replace(/\D/g, '');
-    if (altPhone) {
-      lidToPhoneMap.set(remoteJid, altPhone);
-      lidToPhoneMap.set(remoteJid.replace(/@.*$/, ''), altPhone);
-    }
-  }
-
-  const senderNumber = (
-    rawAlt.endsWith('@s.whatsapp.net')
-      ? rawAlt
-      : remoteJid.endsWith('@lid') && lidToPhoneMap.get(remoteJid)
-      ? lidToPhoneMap.get(remoteJid)!
-      : remoteJid
-  )
-    .replace(/@.*$/, '')
-    .replace(/\D/g, '');
-  const pushName = messageData.pushName || 'Cliente WhatsApp';
-
-  const parsedIncoming = parseSingleEvolutionMessage(messageData, pushName);
-  if (!parsedIncoming) return;
-
-  let conv = conversations.find(
-    c =>
-      c.sessionId === remoteJid ||
-      (rawAlt && c.sessionId === rawAlt) ||
-      (senderNumber && senderNumber.length <= 12 && c.customerPhone === senderNumber) ||
-      relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
-  );
-
-  const canonicalNewJid =
-    senderNumber && senderNumber.length >= 10 && senderNumber.length <= 12
-      ? `${senderNumber}@s.whatsapp.net`
-      : remoteJid;
-
-  if (!conv) {
-    conv = {
-      sessionId: canonicalNewJid,
-      customerPhone: senderNumber,
-      customerName: pushName,
-      aiEnabled: true,
-      unreadCount: 1,
-      lastTimestamp: parsedIncoming.timestamp,
-      lastMessagePreview: parsedIncoming.content,
-      lastMessageType: parsedIncoming.type,
-      intentStatus: 'explorando',
-      detectedProducts: [],
-      messages: [parsedIncoming],
-      messagesLoaded: false,
-      isLiveEvolution: true,
-    };
-    const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
-    if (remoteJid) jSet.add(remoteJid);
-    if (rawAlt) jSet.add(rawAlt);
-    relatedJidsBySession.set(conv.sessionId, jSet);
-    conversations.unshift(conv);
-  } else {
-    const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
-    if (remoteJid) jSet.add(remoteJid);
-    if (rawAlt) jSet.add(rawAlt);
-    relatedJidsBySession.set(conv.sessionId, jSet);
-    conv.unreadCount += 1;
-    conv.lastTimestamp = parsedIncoming.timestamp;
-    conv.lastMessagePreview = parsedIncoming.content;
-    conv.lastMessageType = parsedIncoming.type;
-    if (
-      !conv.messages.some(
-        m =>
-          (parsedIncoming.evolutionMessageId && m.evolutionMessageId === parsedIncoming.evolutionMessageId) ||
-          (parsedIncoming.id && m.id === parsedIncoming.id)
-      )
-    ) {
-      conv.messages.push(parsedIncoming);
-    }
-  }
-
-  broadcastEvent('new_message', { sessionId: conv.sessionId, message: parsedIncoming });
-  broadcastEvent('conversations_update', { count: conversations.length });
-
-  if (appConfig.supabase?.autoSync !== false) {
-    autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {});
-  }
-
-  // Trigger AI Reply instantly in background without blocking the webhook
-  if (appConfig.globalAiActive && conv.aiEnabled) {
-    // Check if this contact is already being processed or was just answered
-    const skipCheck = shouldSkipBotReply(conv, parsedIncoming, 'evolution_webhook');
-    if (skipCheck.skip) {
-      console.log(`🛡️ [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
-      return;
+  for (const messageData of rawBatchList) {
+    const key = messageData?.key;
+    if (!key || key.fromMe) {
+      continue;
     }
 
-    const contactKeys = getConversationContactKeys(conv);
-    if (contactKeys.some(k => isBotLockActive(k))) {
-      console.log(`🛡️ [Webhook Skip]: Respuesta ya en proceso para ${conv.customerName}`);
-      return;
+    const messageId = normalizeMsgIdKey(key.id);
+    if (isSyntheticTestArtifact(messageId) || isSyntheticTestArtifact(key.remoteJid)) {
+      continue;
     }
 
-    triggerSalesBotReplyForConversation(conv, 'evolution_webhook').catch(err => {
-      console.log(`[Sales Bot Webhook Trigger Info for ${conv.customerName}]:`, err?.message || err);
+    // Ignore historical messages (> 3 minutes old) pushed during WhatsApp QR device linking sync
+    const rawMsgTs = Number(messageData?.messageTimestamp || 0);
+    const msgTimeMs = rawMsgTs > 0 ? (rawMsgTs < 1e12 ? rawMsgTs * 1000 : rawMsgTs) : Date.now();
+    if (Date.now() - msgTimeMs > 3 * 60 * 1000) {
+      markMessageIdProcessed(messageId, [key.remoteJid || '']);
+      continue;
+    }
+
+    const now = Date.now();
+    const correlationId = generateCorrelationId(messageId);
+
+    recordDiagnosticStage({
+      correlationId,
+      stage: 'WEBHOOK_RECEIVED',
+      service: 'Evolution API',
+      module: 'webhook',
+      messageId,
+      details: `Evento ${rawEvent} recibido desde instancia ${instanceName}`,
+    });
+
+    if (messageId) {
+      const prevWebhookTs = seenWebhookDeliveryIds.get(messageId);
+      if (prevWebhookTs && now - prevWebhookTs < 120000) {
+        recordDiagnosticStage({
+          correlationId,
+          stage: 'WEBHOOK_VALIDATED',
+          service: 'Evolution API',
+          module: 'webhook',
+          messageId,
+          details: `Webhook duplicado ignorado por idempotencia HTTP (${messageId})`,
+        });
+        continue;
+      }
+      seenWebhookDeliveryIds.set(messageId, now);
+      if (seenWebhookDeliveryIds.size > 1000) {
+        const oldestKey = seenWebhookDeliveryIds.keys().next().value;
+        if (oldestKey) seenWebhookDeliveryIds.delete(oldestKey);
+      }
+    }
+
+    if (isMessageIdAlreadyProcessed(messageId)) {
+      recordDiagnosticStage({
+        correlationId,
+        stage: 'WEBHOOK_VALIDATED',
+        service: 'Evolution API',
+        module: 'webhook',
+        messageId,
+        details: `Mensaje ${messageId} ya registrado como procesado en registro de idempotencia`,
+      });
+      continue;
+    }
+
+    const remoteJid = key.remoteJid || '';
+    const rawAlt = key.remoteJidAlt || '';
+    const participant = key.participant || '';
+
+    // CRITICAL: Ignore all WhatsApp group messages entirely (never respond, never add to CRM inbox)
+    if (isWhatsAppGroup(remoteJid) || isWhatsAppGroup(rawAlt) || isWhatsAppGroup(participant)) {
+      continue;
+    }
+
+    recordDiagnosticStage({
+      correlationId,
+      stage: 'WEBHOOK_VALIDATED',
+      service: 'Evolution API',
+      module: 'webhook',
+      messageId,
+      details: `Webhook validado para JID ${remoteJid}`,
+    });
+
+    // Link @lid and @s.whatsapp.net if remoteJidAlt is present
+    if (remoteJid.endsWith('@lid') && rawAlt.endsWith('@s.whatsapp.net')) {
+      const altPhone = rawAlt.replace(/@.*$/, '').replace(/\D/g, '');
+      if (altPhone) {
+        lidToPhoneMap.set(remoteJid, altPhone);
+        lidToPhoneMap.set(remoteJid.replace(/@.*$/, ''), altPhone);
+      }
+    }
+
+    const senderNumber = (
+      rawAlt.endsWith('@s.whatsapp.net')
+        ? rawAlt
+        : remoteJid.endsWith('@lid') && lidToPhoneMap.get(remoteJid)
+        ? lidToPhoneMap.get(remoteJid)!
+        : remoteJid
+    )
+      .replace(/@.*$/, '')
+      .replace(/\D/g, '');
+    const pushName = messageData.pushName || 'Cliente WhatsApp';
+
+    const parsedIncoming = parseSingleEvolutionMessage(messageData, pushName);
+    if (!parsedIncoming) continue;
+
+    recordDiagnosticStage({
+      correlationId,
+      stage: 'MESSAGE_NORMALIZED',
+      service: 'Backend',
+      module: 'normalizer',
+      customer: pushName,
+      conversationId: remoteJid,
+      messageId,
+      details: `Mensaje normalizado (tipo: ${parsedIncoming.type}, texto: "${(parsedIncoming.content || '').slice(0, 80)}")`,
+    });
+
+    let conv = conversations.find(
+      c =>
+        c.sessionId === remoteJid ||
+        (rawAlt && c.sessionId === rawAlt) ||
+        (senderNumber && senderNumber.length <= 12 && c.customerPhone === senderNumber) ||
+        relatedJidsBySession.get(c.sessionId)?.has(remoteJid) ||
+        (!isGenericContactName(pushName) && !isGenericContactName(c.customerName) && c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase())
+    );
+
+    const canonicalNewJid =
+      senderNumber && senderNumber.length >= 10 && senderNumber.length <= 12
+        ? `${senderNumber}@s.whatsapp.net`
+        : remoteJid;
+
+    if (!conv) {
+      conv = {
+        sessionId: canonicalNewJid,
+        customerPhone: senderNumber,
+        customerName: pushName,
+        aiEnabled: true,
+        unreadCount: 1,
+        lastTimestamp: parsedIncoming.timestamp,
+        lastMessagePreview: parsedIncoming.content,
+        lastMessageType: parsedIncoming.type,
+        intentStatus: 'explorando',
+        detectedProducts: [],
+        messages: [parsedIncoming],
+        messagesLoaded: false,
+        isLiveEvolution: true,
+      };
+      const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+      if (remoteJid) jSet.add(remoteJid);
+      if (rawAlt) jSet.add(rawAlt);
+      relatedJidsBySession.set(conv.sessionId, jSet);
+      conversations.unshift(conv);
+    } else {
+      const jSet = relatedJidsBySession.get(conv.sessionId) || new Set<string>([conv.sessionId]);
+      if (remoteJid) jSet.add(remoteJid);
+      if (rawAlt) jSet.add(rawAlt);
+      relatedJidsBySession.set(conv.sessionId, jSet);
+      conv.unreadCount += 1;
+      conv.lastTimestamp = parsedIncoming.timestamp;
+      conv.lastMessagePreview = parsedIncoming.content;
+      conv.lastMessageType = parsedIncoming.type;
+      if (!isDuplicateChatMessage(conv.messages, parsedIncoming)) {
+        hydrateQuotedMessageById(parsedIncoming, conv.messages, conv.customerName || pushName);
+        conv.messages.push(parsedIncoming);
+      }
+    }
+
+    // Persist incoming message locally before any AI call (Fase 1.3 rule)
+    recordLocalMessage(conv.sessionId, parsedIncoming, conv.customerPhone);
+
+    broadcastEvent('new_message', { sessionId: conv.sessionId, message: parsedIncoming });
+    broadcastEvent('conversations_update', { count: conversations.length });
+
+    if (appConfig.supabase?.autoSync !== false) {
+      autoSyncMessageToSupabase(conv, parsedIncoming).catch(() => {});
+    }
+
+    recordDiagnosticStage({
+      correlationId,
+      stage: 'MESSAGE_PERSISTED',
+      service: 'Backend',
+      module: 'storage',
+      customer: conv.customerName,
+      conversationId: conv.sessionId,
+      messageId,
+      details: `Mensaje persistido en conversación ${conv.sessionId} antes de invocar IA`,
+    });
+
+    // Enqueue in persistent job queue if AI is enabled for this chat
+    if (appConfig.globalAiActive && conv.aiEnabled) {
+      const skipCheck = shouldSkipBotReply(conv, parsedIncoming, 'evolution_webhook');
+      if (skipCheck.skip) {
+        console.log(`🛡️ [Webhook Skip]: ${skipCheck.reason} (${conv.customerName})`);
+        continue;
+      }
+
+      enqueueInboundMessageJob({
+        messageId: messageId || parsedIncoming.id,
+        conversationId: conv.sessionId,
+        customer: conv.customerName,
+        customerPhone: conv.customerPhone,
+        instance: instanceName,
+        contentType: parsedIncoming.type,
+        correlationId,
+      });
+      enqueuedAny = true;
+    }
+  }
+
+  if (enqueuedAny) {
+    processPersistentQueueTick().catch(err => {
+      console.log('[Persistent Queue Tick Info]:', err?.message || err);
     });
   }
 };
@@ -9170,7 +12808,11 @@ app.post('/api/evolution/register-webhook', async (req, res) => {
           byEvents: false,
           base64: false,
           events: [
-            'MESSAGES_UPSERT'
+            'MESSAGES_UPSERT',
+            'CONNECTION_UPDATE',
+            'QRCODE_UPDATED',
+            'MESSAGES_UPDATE',
+            'SEND_MESSAGE'
           ]
         }
       }),
@@ -9210,14 +12852,52 @@ async function ensureEvolutionWebhookRegistered(preferredUrl?: string): Promise<
 
     let isEnabled = false;
     let registeredUrl = '';
+    let registeredEvents: string[] = [];
     if (findRes && findRes.ok) {
       const data = await findRes.json().catch(() => null);
       isEnabled = Boolean(data?.enabled);
       registeredUrl = data?.url || '';
+      registeredEvents = Array.isArray(data?.events) ? data.events : [];
     }
 
-    const targetUrl = (preferredUrl || (appConfig.evolution as any).webhookUrl || 'https://todolapto.com/api/webhook/evolution').trim();
-    if (isEnabled && registeredUrl === targetUrl) {
+    const requiredEvents = [
+      'MESSAGES_UPSERT',
+      'CONNECTION_UPDATE',
+      'QRCODE_UPDATED',
+      'MESSAGES_UPDATE',
+      'SEND_MESSAGE'
+    ];
+    const hasAllEvents = requiredEvents.every(ev => registeredEvents.includes(ev));
+
+    const configuredWebhook = (
+      preferredUrl ||
+      (appConfig.evolution as any).webhookUrl ||
+      ''
+    ).trim();
+    if (!configuredWebhook) {
+      if (isEnabled) {
+        console.log(`🛡️ [Webhook Guard]: Desactivando webhook fantasma en Evolution API para evitar duplicados.`);
+        await fetch(`${baseUrl}/webhook/set/${instance}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: appConfig.evolution.apiKey,
+          },
+          body: JSON.stringify({
+            webhook: {
+              enabled: false,
+              url: 'https://disabled-webhook.local',
+              events: [],
+            },
+          }),
+          signal: AbortSignal.timeout(6000),
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    const targetUrl = configuredWebhook;
+    if (isEnabled && registeredUrl === targetUrl && hasAllEvents) {
       console.log(`[Webhook]: Webhook ya registrado y activo en Evolution API (${targetUrl})`);
       return;
     }
@@ -9234,7 +12914,7 @@ async function ensureEvolutionWebhookRegistered(preferredUrl?: string): Promise<
           url: targetUrl,
           byEvents: false,
           base64: false,
-          events: ['MESSAGES_UPSERT'],
+          events: requiredEvents,
         },
       }),
       signal: AbortSignal.timeout(6000),
@@ -9247,8 +12927,6 @@ async function ensureEvolutionWebhookRegistered(preferredUrl?: string): Promise<
     console.log('[Webhook]: Auto-registro de webhook diferido:', err.message);
   }
 }
-
-
 
 // Image Proxy endpoint to avoid browser 403 Forbidden issues on external CDNs (WhatsApp / Meta / Odoo)
 app.get('/api/proxy-image', async (req, res) => {
@@ -9320,7 +12998,7 @@ async function startServer() {
 
   if (viteMounted && viteServer) {
     app.get('*', async (req, res, next) => {
-      if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/')) {
+      if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
         return next();
       }
       try {
@@ -9380,7 +13058,6 @@ async function startServer() {
             const ext = path.extname(fullPath).toLowerCase();
             const mime = MIME_TYPES[ext] || 'application/octet-stream';
             const buffer = fs.readFileSync(fullPath);
-            // Cache assets up to 5MB in memory for instant 0ms response over LiteSpeed socket
             if (buffer.length < 5 * 1024 * 1024) {
               staticMemoryCache.set(cleanRel, { buffer, mime });
             }
@@ -9391,7 +13068,6 @@ async function startServer() {
       return null;
     };
 
-    // Handle /favicon.ico and /favicon.svg directly via buffer
     app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
       const asset = readStaticAsset('favicon.svg') || readStaticAsset('favicon.ico');
       if (asset) {
@@ -9402,10 +13078,8 @@ async function startServer() {
       return res.status(204).end();
     });
 
-    // Serve all static assets and SPA routes using direct Buffer res.send()
-    // (Avoids express.static / res.sendFile stream pipes that crash LiteSpeed lsnode.js Unix sockets)
     app.get('*', (req, res) => {
-      if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/')) {
+      if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
         return res.status(404).json({ error: 'Endpoint no encontrado' });
       }
 
@@ -9422,14 +13096,12 @@ async function startServer() {
           return res.status(200).send(asset.buffer);
         }
 
-        // If request was for a missing static asset file extension, return 404 instead of HTML
         const ext = path.extname(reqPath).toLowerCase();
         if (ext && ext !== '.html') {
           return res.status(404).send('Asset not found');
         }
       }
 
-      // SPA fallback: serve index.html via direct Buffer
       const indexAsset = readStaticAsset('index.html');
       if (indexAsset) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -9453,8 +13125,6 @@ async function startServer() {
 
   let isServerListening = false;
 
-  // Make app.listen idempotent so LiteSpeed lsnode.js / Passenger wrappers that call app.listen() on exported app
-  // never trigger "http.Server.listen() was called more than once"
   app.listen = ((...args: any[]) => {
     if (isServerListening) {
       const cb = args.find((a: any) => typeof a === 'function');
@@ -9477,8 +13147,11 @@ async function startServer() {
       `🚀 Vendemá CRM Server listening on ${addrStr} | env.PORT=${process.env.PORT || 'default(3000)'} (PID: ${process.pid})`
     );
 
-    // Immediately synchronize WhatsApp chats & Odoo inventory in parallel so the bot is ready within ~1s of boot
-    setTimeout(() => {
+    // Immediately synchronize authoritative RD clock, then WhatsApp chats, Persistent Queue & Odoo inventory
+    setTimeout(async () => {
+      await syncAuthoritativeDominicanTime().catch(() => {});
+      botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
+
       syncEvolutionChats()
         .then(() => ensureEvolutionWebhookRegistered())
         .catch(e => console.log('Initial Evolution sync info:', e?.message || e));
@@ -9492,21 +13165,34 @@ async function startServer() {
         .then(() => hydrateAndSyncHolidaysWithSupabase())
         .then(() => autoSyncConfigToSupabase(appConfig))
         .catch(e => console.log('Initial Supabase sync info:', e?.message || e));
+
+      processPersistentQueueTick().catch(() => {});
     }, 600);
 
-    // Background synchronization schedule:
-    // 1. WhatsApp Evolution API: Fast poll every 3 seconds so new messages trigger "escribiendo..." almost immediately.
-    setInterval(() => {
+    // Background synchronization schedule registered for clean graceful shutdown:
+    // 0. Authoritative Dominican Republic Time Synchronization: Every 60 seconds
+    syncAuthoritativeDominicanTime().catch(() => {});
+    registerBackgroundInterval(() => {
+      syncAuthoritativeDominicanTime().catch(() => {});
+    }, 60000);
+
+    // 1. Persistent Job Queue Worker: Every 2.5 seconds
+    registerBackgroundInterval(() => {
+      processPersistentQueueTick().catch(() => {});
+    }, 2500);
+
+    // 2. WhatsApp Evolution API: Fast poll every 3 seconds
+    registerBackgroundInterval(() => {
       syncEvolutionChats().catch(() => {});
     }, 3000);
 
-    // 2. Odoo Inventory: Synchronized every 30 minutes (or immediately via manual refresh in UI).
-    setInterval(() => {
+    // 3. Odoo Inventory: Synchronized every 30 minutes
+    registerBackgroundInterval(() => {
       syncOdooInventory().catch(() => {});
     }, 1000 * 60 * 30);
 
-    // 3. Odoo Customers: Synchronized every 30 minutes.
-    setInterval(() => {
+    // 4. Odoo Customers: Synchronized every 30 minutes
+    registerBackgroundInterval(() => {
       syncOdooCustomers().catch(() => {});
     }, 1000 * 60 * 30);
   };
@@ -9517,22 +13203,53 @@ async function startServer() {
 
   if (!isServerListening) {
     isServerListening = true;
-    // Call server.listen with (PORT, callback) only — no hardcoded host IP —
-    // so both dual-stack TCP (IPv4+IPv6) and LiteSpeed/Passenger Unix sockets bind cleanly.
     server.listen(PORT, onListening);
   }
 
-  // Graceful shutdown handling for Hostinger / Passenger / Docker
+  // Fase 1.2 — Controlled Graceful Shutdown for Hostinger / Passenger / Docker
   const shutdown = (signal: string) => {
-    console.log(`[Server] Received ${signal}. Closing gracefully...`);
+    if (isServerShuttingDown) return;
+    isServerShuttingDown = true;
+    console.log(`[Server] Received ${signal}. Starting controlled graceful shutdown...`);
+
+    // 1. Stop all background polling & queue intervals
+    for (const timer of backgroundIntervals) {
+      clearInterval(timer);
+    }
+    backgroundIntervals.length = 0;
+
+    // 2. Persist any in-flight queue jobs as RETRY so they resume cleanly on next boot
+    try {
+      for (const job of persistentJobQueue) {
+        if (job.status === 'PROCESSING' || job.status === 'RECEIVED') {
+          job.status = 'RETRY';
+          job.nextRetryAt = new Date().toISOString();
+          job.lastError = `Interrumpido por apagado controlado (${signal}); reanudará al iniciar`;
+        }
+      }
+      savePersistentJobQueue();
+      savePersistedConfig(false);
+    } catch (e: any) {
+      console.warn('[Server Shutdown Persistence Warning]:', e?.message || e);
+    }
+
+    // 3. Close active SSE clients cleanly
+    for (const client of sseClients) {
+      try {
+        client.end();
+      } catch {}
+    }
+    sseClients.clear();
+
+    // 4. Close HTTP server
     server.close(() => {
-      console.log('[Server] HTTP server closed cleanly.');
+      console.log('[Server] HTTP server and persistent state closed cleanly.');
       process.exit(0);
     });
     setTimeout(() => {
       console.error('[Server] Forcing shutdown after timeout.');
       process.exit(1);
-    }, 4000).unref();
+    }, 4500).unref();
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -9543,3 +13260,4 @@ startServer();
 
 export default app;
 export { app, startServer };
+

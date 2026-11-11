@@ -450,7 +450,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
     }
   };
 
-  // Transcribe Voice Note with Gemini
+  // Transcribe Voice Note with OpenAI Whisper
   const handleTranscribeVoiceNote = async (msg: ChatMessage) => {
     if (!activeConversation || !msg.evolutionMessageId) return;
     setTranscribingIds(prev => ({ ...prev, [msg.id]: true }));
@@ -482,7 +482,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
     }
   };
 
-  // Analyze Photo / Receipt with Gemini Vision
+  // Analyze Photo / Receipt with OpenAI Vision
   const handleAnalyzeImage = async (msg: ChatMessage) => {
     if (!activeConversation || !msg.evolutionMessageId) return;
     setAnalyzingIds(prev => ({ ...prev, [msg.id]: true }));
@@ -1234,7 +1234,7 @@ export const LiveInbox: React.FC<LiveInboxProps> = ({
                         {analysisText && (
                           <div className="p-2.5 rounded-lg bg-lime-950/40 border border-lime-800/40 text-[11px] text-slate-200">
                             <span className="text-[10px] font-bold text-lime-400 uppercase block mb-0.5">
-                              Visión IA (Gemini):
+                              Visión IA (OpenAI Vision):
                             </span>
                             <p className="whitespace-pre-wrap">{analysisText}</p>
                           </div>

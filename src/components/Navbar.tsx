@@ -12,11 +12,14 @@ import {
   LogOut,
   Crown,
   Briefcase,
-  Headphones
+  Headphones,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   setGlobalHolidayOverrides, 
   getDominicanTimeContext, 
+  getEffectiveCurrentDate,
+  syncTimeWithServer,
   type DominicanTimeContext 
 } from '../utils/businessSchedule';
 import type { AppConfig, UserAccount } from '../types';
@@ -42,31 +45,56 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
 }) => {
   const [rdTime, setRdTime] = useState<DominicanTimeContext>(() =>
-    getDominicanTimeContext(new Date(), config.holidayOverrides || [])
+    getDominicanTimeContext(getEffectiveCurrentDate(), config.holidayOverrides || [])
   );
+
+  const [whatsAppConnected, setWhatsAppConnected] = useState<boolean>(Boolean(config.evolution.connected));
+
+  useEffect(() => {
+    const checkStatus = () => {
+      fetch('/api/evolution/qrcode')
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            setWhatsAppConnected(data.state === 'open');
+          }
+        })
+        .catch(() => {});
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     setGlobalHolidayOverrides(config.holidayOverrides || []);
   }, [config.holidayOverrides]);
 
+  // Initial and periodic authoritative Dominican time synchronization with server
+  useEffect(() => {
+    const sync = () => {
+      syncTimeWithServer()
+        .then(() => {
+          setRdTime(getDominicanTimeContext(getEffectiveCurrentDate(), config.holidayOverrides || []));
+        })
+        .catch(() => {});
+    };
+    sync();
+
+    // Re-sync on window focus to ensure zero drift
+    window.addEventListener('focus', sync);
+    return () => window.removeEventListener('focus', sync);
+  }, [config.holidayOverrides]);
+
   // Live real-time Dominican Republic ticking clock (every 1 second)
   useEffect(() => {
     const updateClock = () => {
-      setRdTime(getDominicanTimeContext(new Date(), config.holidayOverrides || []));
+      setRdTime(getDominicanTimeContext(getEffectiveCurrentDate(), config.holidayOverrides || []));
     };
     updateClock();
     const interval = setInterval(updateClock, 1000);
     return () => clearInterval(interval);
   }, [config.holidayOverrides]);
-
-  // Sync client real-world time with server on mount
-  useEffect(() => {
-    fetch('/api/system/time-sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientTimestamp: Date.now() }),
-    }).catch(() => {});
-  }, []);
 
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isDueno = currentUser?.role === 'dueno';
@@ -245,6 +273,27 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             />
           </button>
+
+          {/* WhatsApp Evolution Session Status Indicator */}
+          {!whatsAppConnected ? (
+            <button
+              onClick={() => setCurrentTab('settings')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/80 border border-rose-500/60 text-rose-200 hover:bg-rose-900 transition-all cursor-pointer shadow-sm animate-pulse"
+              title="WhatsApp Desconectado (Connection Closed): Haz clic aquí para escanear el Código QR y reconectar el Bot"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden sm:inline font-bold">Escanear QR WhatsApp</span>
+            </button>
+          ) : (
+            <div
+              onClick={() => setCurrentTab('settings')}
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-950/40 border border-emerald-600/40 text-emerald-300 cursor-pointer hover:bg-emerald-900/40 transition-colors"
+              title="WhatsApp conectado correctamente en Evolution API"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>WhatsApp Activo</span>
+            </div>
+          )}
 
           {/* User Profile Pill & Logout */}
           {currentUser && (
