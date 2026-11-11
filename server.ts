@@ -7678,7 +7678,7 @@ function buildFiveServiceHealthSnapshot(): ServiceHealthProbe[] {
   return [backendProbe, supabaseProbe, evolutionProbe, openaiProbe, odooProbe];
 }
 
-app.get('/api/system/logs', (req, res) => {
+app.get('/api/system/logs', requireSessionRole(['super_admin'], false), (req, res) => {
   const service = req.query.service as string | undefined;
   const status = req.query.status as string | undefined;
   const severity = req.query.severity as string | undefined;
@@ -7774,7 +7774,7 @@ app.get('/api/system/logs', (req, res) => {
   });
 });
 
-app.get('/api/system/diagnostics', (_req, res) => {
+app.get('/api/system/diagnostics', requireSessionRole(['super_admin'], false), (_req, res) => {
   const activeLocks = getActiveConversationLocks();
   const fiveServices = buildFiveServiceHealthSnapshot();
   const mapProbe = (svcName: string) => {
@@ -7871,7 +7871,7 @@ app.post('/api/system/queue/clear', (_req, res) => {
   });
 });
 
-app.post('/api/system/logs/clear', (_req, res) => {
+app.post('/api/system/logs/clear', requireSessionRole(['super_admin'], false), (_req, res) => {
   systemApiLogs.length = 0;
   persistentJobQueue = persistentJobQueue.filter(
     j => j.status === 'PROCESSING' || j.status === 'PENDING' || j.status === 'RECEIVED'
@@ -7892,7 +7892,7 @@ app.post('/api/system/logs/clear', (_req, res) => {
   res.json({ success: true, message: 'Registros del sistema vaciados con éxito' });
 });
 
-app.post('/api/system/logs/test-ping', async (_req, res) => {
+app.post('/api/system/logs/test-ping', requireSessionRole(['super_admin'], false), async (_req, res) => {
   const results: any = { backend: { ok: true, status: 200, durationMs: 1 }, supabase: null, evolution: null, odoo: null, openai: null };
 
   // 0. Test Supabase Connection
@@ -12785,9 +12785,35 @@ app.get(['/api/webhook/evolution', '/api/webhook', '/webhook/evolution', '/webho
 app.post('/api/evolution/register-webhook', async (req, res) => {
   try {
     const rawUrl = (req.body?.webhookUrl || '').trim();
-    if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
-      return res.status(400).json({ success: false, message: 'Faltan credenciales de Evolution API' });
+    const bodyServerUrl = typeof req.body?.serverUrl === 'string' ? req.body.serverUrl.trim() : '';
+    const bodyInstance = typeof req.body?.instance === 'string' ? req.body.instance.trim() : '';
+    const bodyApiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+
+    const candidateServerUrl = (bodyServerUrl || appConfig.evolution.serverUrl || '').replace(/\/$/, '');
+    const candidateInstance = bodyInstance || appConfig.evolution.instance || '';
+    const candidateApiKey =
+      bodyApiKey && !isMaskedSecret(bodyApiKey) ? bodyApiKey : appConfig.evolution.apiKey || '';
+
+    if (!candidateServerUrl || !candidateInstance || !candidateApiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan credenciales de Evolution API (Servidor, Instancia o API Key).',
+      });
     }
+    if (/\.supabase\.co/i.test(candidateServerUrl)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'El "Servidor Evolution API" apunta actualmente a Supabase en lugar de tu servidor Evolution API. Corrígelo (ej. https://evolution-evolution-api.blrfh6.easypanel.host) y guarda antes de vincular el webhook.',
+      });
+    }
+    appConfig.evolution.serverUrl = candidateServerUrl;
+    appConfig.evolution.instance = candidateInstance;
+    appConfig.evolution.apiKey = candidateApiKey;
+    if (bodyServerUrl || bodyInstance || (bodyApiKey && !isMaskedSecret(bodyApiKey))) {
+      savePersistedConfig();
+    }
+
     const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, '');
     const instance = appConfig.evolution.instance;
     const hostHeader = req.get('x-forwarded-host') || req.get('host') || 'todolapto.com';

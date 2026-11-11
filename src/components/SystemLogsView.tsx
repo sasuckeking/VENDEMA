@@ -86,10 +86,18 @@ export const SystemLogsView: React.FC<SystemLogsViewProps> = ({ onRefreshStats }
     openai?: { ok: boolean; status: number; model?: string; reply?: string; error?: string };
   } | null>(null);
 
+  const getAuthHeaders = (extra?: Record<string, string>) => {
+    const token = localStorage.getItem('vendema_auth_token');
+    return {
+      ...(extra || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
   const fetchLogs = useCallback(async (isSilent = false) => {
     if (!isSilent) setRefreshing(true);
     try {
-      const res = await fetch('/api/system/logs');
+      const res = await fetch('/api/system/logs', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs || []);
@@ -116,14 +124,6 @@ export const SystemLogsView: React.FC<SystemLogsViewProps> = ({ onRefreshStats }
     }, 4000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLogs]);
-
-  const getAuthHeaders = (extra?: Record<string, string>) => {
-    const token = localStorage.getItem('vendema_auth_token');
-    return {
-      ...(extra || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-  };
 
   const handleClearLogs = async () => {
     if (!window.confirm('¿Deseas vaciar el historial de registros del sistema?')) return;

@@ -58,6 +58,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const isReadOnly = !isSuperAdmin;
   const [settingsSubTab, setSettingsSubTab] = useState<'config' | 'logs'>('config');
 
+  useEffect(() => {
+    if (!isSuperAdmin && settingsSubTab !== 'config') {
+      setSettingsSubTab('config');
+    }
+  }, [isSuperAdmin, settingsSubTab]);
+
   // Helper to read persisted AI config from localStorage as fallback
   const getSavedLocalAi = (): Partial<NonNullable<AppConfig['aiProvider']>> => {
     try {
@@ -249,7 +255,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
       const res = await fetch('/api/evolution/register-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookUrl }),
+        body: JSON.stringify({
+          webhookUrl,
+          serverUrl: evolutionUrl.trim(),
+          instance: evolutionInstance.trim(),
+          apiKey: evolutionApiKey.trim(),
+        }),
       });
       const data = await res.json();
       setWebhookRegisterResult(data);
@@ -750,36 +761,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
         )}
       </div>
 
-      {/* Sub-navigation tabs: Configuración vs System Logs */}
-      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#0F141C] border border-white/[0.07] w-fit shadow-md">
-        <button
-          type="button"
-          onClick={() => setSettingsSubTab('config')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            settingsSubTab === 'config'
-              ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
-          }`}
-        >
-          <Settings className="w-4 h-4 text-lime-400" />
-          <span>Configuración & Conexiones</span>
-        </button>
+      {/* Sub-navigation tabs: Configuración vs System Logs (Super Admin Only) */}
+      {isSuperAdmin && (
+        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#0F141C] border border-white/[0.07] w-fit shadow-md">
+          <button
+            type="button"
+            onClick={() => setSettingsSubTab('config')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              settingsSubTab === 'config'
+                ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+          >
+            <Settings className="w-4 h-4 text-lime-400" />
+            <span>Configuración & Conexiones</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setSettingsSubTab('logs')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            settingsSubTab === 'logs'
-              ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
-          }`}
-        >
-          <Activity className="w-4 h-4 text-lime-400" />
-          <span>Registros del Sistema (System Logs)</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setSettingsSubTab('logs')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              settingsSubTab === 'logs'
+                ? 'bg-lime-500/20 text-lime-300 border border-lime-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+          >
+            <Activity className="w-4 h-4 text-lime-400" />
+            <span>Registros del Sistema (System Logs)</span>
+          </button>
+        </div>
+      )}
 
-      {settingsSubTab === 'logs' ? (
+      {isSuperAdmin && settingsSubTab === 'logs' ? (
         <SystemLogsView />
       ) : (
         <form onSubmit={handleSave} className="space-y-6">
