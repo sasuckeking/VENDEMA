@@ -246,6 +246,7 @@ export interface UserAccount {
   whatsapp: string;
   role: UserRole;
   activo: boolean;
+  createdBy?: string;
   createdAt: string;
   lastLogin?: string;
 }

@@ -888,6 +888,7 @@ const DEFAULT_USERS: UserAccount[] = [
     whatsapp: '18496260800',
     role: 'super_admin',
     activo: true,
+    createdBy: 'system',
     createdAt: new Date().toISOString(),
   },
   {
@@ -898,6 +899,7 @@ const DEFAULT_USERS: UserAccount[] = [
     whatsapp: '18094228738',
     role: 'dueno',
     activo: true,
+    createdBy: 'nelson',
     createdAt: new Date().toISOString(),
   },
   {
@@ -908,6 +910,7 @@ const DEFAULT_USERS: UserAccount[] = [
     whatsapp: '18492588738',
     role: 'empleado',
     activo: true,
+    createdBy: 'nelson',
     createdAt: new Date().toISOString(),
   },
 ];
@@ -8546,17 +8549,43 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true, message: 'Sesión cerrada correctamente.' });
 });
 
-app.get('/api/users', requireSessionRole(['super_admin', 'dueno'], false), async (_req, res) => {
+app.get('/api/users', requireSessionRole(['super_admin', 'dueno'], false), async (req, res) => {
   await hydrateAndSyncUsersWithSupabase();
+  const requester = (req as any).currentUser as UserAccount | undefined;
+  const isRequesterSuperAdmin = requester?.role === 'super_admin';
+  const isRequesterDueno = requester?.role === 'dueno';
+
+  let visibleUsers = systemUsers;
+
+  if (!isRequesterSuperAdmin) {
+    // 1. EL ADMIN NADIE LO PUEDE VER: Ocultar completamente cuentas super_admin a cualquier rol que no sea super_admin
+    visibleUsers = visibleUsers.filter(u => u.role !== 'super_admin');
+
+    // 2. EL DUEÑO SOLO VERÁ SUS PROPIOS USUARIOS CREADOS POR ÉL (y su propia cuenta)
+    if (isRequesterDueno && requester) {
+      const requesterId = requester.id;
+      const requesterUName = requester.username.toLowerCase();
+      visibleUsers = visibleUsers.filter(u => {
+        const isSelf = u.id === requesterId || u.username.toLowerCase() === requesterUName;
+        const wasCreatedByMe = Boolean(
+          u.createdBy && (u.createdBy === requesterId || u.createdBy.toLowerCase() === requesterUName)
+        );
+        return isSelf || wasCreatedByMe;
+      });
+    }
+  }
+
   res.json({
     success: true,
-    users: systemUsers.map(sanitizeUser),
-    total: systemUsers.length,
+    users: visibleUsers.map(sanitizeUser),
+    total: visibleUsers.length,
   });
 });
 
 app.post('/api/users', requireSessionRole(['super_admin', 'dueno'], false), async (req, res) => {
   const { nombre, username, password, whatsapp, role } = req.body;
+  const requester = (req as any).currentUser as UserAccount | undefined;
+  const isRequesterSuperAdmin = requester?.role === 'super_admin';
 
   if (!nombre || !username || !password || !whatsapp) {
     return res.status(400).json({
@@ -8583,7 +8612,14 @@ app.post('/api/users', requireSessionRole(['super_admin', 'dueno'], false), asyn
   }
 
   const validRoles: UserRole[] = ['super_admin', 'dueno', 'empleado'];
-  const userRole: UserRole = validRoles.includes(role) ? role : 'empleado';
+  let userRole: UserRole = validRoles.includes(role) ? role : 'empleado';
+
+  // Seguridad: si quien crea NO es super_admin, no puede crear cuentas super_admin
+  if (!isRequesterSuperAdmin && userRole === 'super_admin') {
+    userRole = 'empleado';
+  }
+
+  const creatorIdentifier = requester?.username || requester?.id || 'nelson';
 
   const newUser: UserAccount = {
     id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -8593,6 +8629,7 @@ app.post('/api/users', requireSessionRole(['super_admin', 'dueno'], false), asyn
     whatsapp: String(whatsapp).replace(/[^\d+]/g, ''),
     role: userRole,
     activo: true,
+    createdBy: creatorIdentifier,
     createdAt: new Date().toISOString(),
   };
 
@@ -8618,6 +8655,31 @@ app.put('/api/users/:id', requireSessionRole(['super_admin', 'dueno'], false), a
   }
 
   const targetUser = systemUsers[userIdx];
+  const requester = (req as any).currentUser as UserAccount | undefined;
+  const isRequesterSuperAdmin = requester?.role === 'super_admin';
+
+  // 1. Nadie que no sea super_admin puede modificar una cuenta super_admin
+  if (targetUser.role === 'super_admin' && !isRequesterSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'No tienes permisos para modificar cuentas de Super Administrador.',
+    });
+  }
+
+  // 2. Si quien modifica es dueño, solo puede modificar su propia cuenta o usuarios creados por él
+  if (!isRequesterSuperAdmin && requester) {
+    const isSelf = targetUser.id === requester.id || targetUser.username.toLowerCase() === requester.username.toLowerCase();
+    const wasCreatedByMe = Boolean(
+      targetUser.createdBy && (targetUser.createdBy === requester.id || targetUser.createdBy.toLowerCase() === requester.username.toLowerCase())
+    );
+    if (!isSelf && !wasCreatedByMe) {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo puedes modificar tu propia cuenta o los usuarios creados por ti.',
+      });
+    }
+  }
+
   const { nombre, whatsapp, password, role, activo } = req.body;
 
   if (nombre) targetUser.nombre = String(nombre).trim();
@@ -8632,7 +8694,11 @@ app.put('/api/users/:id', requireSessionRole(['super_admin', 'dueno'], false), a
     targetUser.activo = true;
   } else {
     if (role && ['super_admin', 'dueno', 'empleado'].includes(role)) {
-      targetUser.role = role;
+      if (role === 'super_admin' && !isRequesterSuperAdmin) {
+        // Ignorar intento de asignación a super_admin por un no-admin
+      } else {
+        targetUser.role = role;
+      }
     }
     if (activo !== undefined) {
       targetUser.activo = Boolean(activo);
@@ -8659,11 +8725,34 @@ app.delete('/api/users/:id', requireSessionRole(['super_admin', 'dueno'], false)
     return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
   }
 
-  if (targetUser.username.toLowerCase() === 'nelson') {
+  const requester = (req as any).currentUser as UserAccount | undefined;
+  const isRequesterSuperAdmin = requester?.role === 'super_admin';
+
+  // 1. Nadie puede eliminar al super_admin (nelson) ni cuentas super_admin
+  if (targetUser.username.toLowerCase() === 'nelson' || targetUser.role === 'super_admin') {
     return res.status(403).json({
       success: false,
       message: 'No es posible eliminar al Super Administrador principal (nelson).',
     });
+  }
+
+  // 2. Si quien elimina es dueño, no puede eliminar su propia cuenta y solo puede eliminar usuarios creados por él
+  if (!isRequesterSuperAdmin && requester) {
+    if (targetUser.id === requester.id || targetUser.username.toLowerCase() === requester.username.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        message: 'No puedes eliminar tu propia cuenta de Dueño.',
+      });
+    }
+    const wasCreatedByMe = Boolean(
+      targetUser.createdBy && (targetUser.createdBy === requester.id || targetUser.createdBy.toLowerCase() === requester.username.toLowerCase())
+    );
+    if (!wasCreatedByMe) {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo puedes eliminar los usuarios creados por ti.',
+      });
+    }
   }
 
   systemUsers = systemUsers.filter(u => u.id !== id);

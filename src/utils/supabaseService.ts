@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     whatsapp VARCHAR(32) NOT NULL,
     role VARCHAR(32) DEFAULT 'empleado' NOT NULL,
     activo BOOLEAN DEFAULT TRUE,
+    created_by VARCHAR(64),
     last_login TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -452,6 +453,7 @@ export async function loadUsersFromSupabase(url?: string, anonKey?: string): Pro
         whatsapp: row.whatsapp || '',
         role: (['super_admin', 'dueno', 'empleado'].includes(row.role) ? row.role : 'empleado') as UserRole,
         activo: row.activo !== undefined ? Boolean(row.activo) : true,
+        createdBy: row.created_by || undefined,
         createdAt: row.created_at || new Date().toISOString(),
         lastLogin: row.last_login || undefined,
       }));
@@ -569,6 +571,7 @@ export async function autoSyncUserToSupabase(user: UserAccount, allUsers?: UserA
         whatsapp: user.whatsapp || '',
         role: user.role,
         activo: user.activo ?? true,
+        created_by: user.createdBy || null,
         last_login: user.lastLogin || null,
         updated_at: new Date().toISOString(),
       },

@@ -45,6 +45,7 @@ const DEFAULT_FALLBACK_USERS: UserAccount[] = [
     whatsapp: '18496260800',
     role: 'super_admin',
     activo: true,
+    createdBy: 'system',
     createdAt: new Date().toISOString(),
   },
   {
@@ -55,6 +56,7 @@ const DEFAULT_FALLBACK_USERS: UserAccount[] = [
     whatsapp: '18094228738',
     role: 'dueno',
     activo: true,
+    createdBy: 'nelson',
     createdAt: new Date().toISOString(),
   },
   {
@@ -65,6 +67,7 @@ const DEFAULT_FALLBACK_USERS: UserAccount[] = [
     whatsapp: '18492588738',
     role: 'empleado',
     activo: true,
+    createdBy: 'nelson',
     createdAt: new Date().toISOString(),
   },
 ];
@@ -106,7 +109,10 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
     try {
       let apiUsers: UserAccount[] = [];
       try {
-        const res = await fetch('/api/users');
+        const token = localStorage.getItem('vendema_auth_token');
+        const res = await fetch('/api/users', {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
         const contentType = res.headers.get('content-type') || '';
         if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
@@ -127,23 +133,56 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
       } catch {}
 
       const mergedMap = new Map<string, UserAccount>();
-      for (const u of DEFAULT_FALLBACK_USERS) {
+
+      // Fallback base según rol
+      const fallbackBase = isSuperAdmin
+        ? DEFAULT_FALLBACK_USERS
+        : DEFAULT_FALLBACK_USERS.filter(
+            u =>
+              u.role !== 'super_admin' &&
+              (u.username.toLowerCase() === currentUser.username.toLowerCase() || u.id === currentUser.id)
+          );
+
+      for (const u of fallbackBase) {
         mergedMap.set(u.username.toLowerCase(), { ...u });
       }
       for (const u of localStored) {
-        if (u.username) mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
+        if (!u.username) continue;
+        if (!isSuperAdmin && u.role === 'super_admin') continue;
+        mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
       }
       for (const u of supaUsers) {
-        if (u.username) mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
+        if (!u.username) continue;
+        if (!isSuperAdmin && u.role === 'super_admin') continue;
+        mergedMap.set(u.username.toLowerCase(), { ...mergedMap.get(u.username.toLowerCase()), ...u });
       }
       for (const u of apiUsers) {
-        if (u.username) {
-          const existing = mergedMap.get(u.username.toLowerCase());
-          mergedMap.set(u.username.toLowerCase(), { ...existing, ...u, password: existing?.password || u.password });
-        }
+        if (!u.username) continue;
+        if (!isSuperAdmin && u.role === 'super_admin') continue;
+        const existing = mergedMap.get(u.username.toLowerCase());
+        mergedMap.set(u.username.toLowerCase(), { ...existing, ...u, password: existing?.password || u.password });
       }
 
-      const finalUsers = Array.from(mergedMap.values());
+      let finalUsers = Array.from(mergedMap.values());
+
+      // 1. EL ADMIN NADIE LO PUEDE VER: Ocultar completamente cuentas super_admin a no-administradores
+      if (!isSuperAdmin) {
+        finalUsers = finalUsers.filter(u => u.role !== 'super_admin');
+      }
+
+      // 2. EL DUEÑO SOLO VERÁ SUS PROPIOS USUARIOS CREADOS POR ÉL (y su propia cuenta)
+      if (isDueno) {
+        const myId = currentUser.id;
+        const myUsername = currentUser.username.toLowerCase();
+        finalUsers = finalUsers.filter(u => {
+          const isSelf = u.id === myId || u.username.toLowerCase() === myUsername;
+          const wasCreatedByMe = Boolean(
+            u.createdBy && (u.createdBy === myId || u.createdBy.toLowerCase() === myUsername)
+          );
+          return isSelf || wasCreatedByMe;
+        });
+      }
+
       setUsers(finalUsers);
       try {
         localStorage.setItem('vendema_local_users', JSON.stringify(finalUsers));
@@ -192,6 +231,10 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
   };
 
   const openEditModal = (u: UserAccount) => {
+    if (!isSuperAdmin && u.role === 'super_admin') {
+      setErrorMessage('No tienes permisos para ver ni editar cuentas de Super Administrador.');
+      return;
+    }
     setModalMode('edit');
     setSelectedUser(u);
     setFormNombre(u.nombre);
@@ -217,14 +260,17 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
         }
 
         const cleanU = formUsername.trim().replace(/^@+/, '').toLowerCase().replace(/\s+/g, '');
+        const newUserRole: UserRole = !isSuperAdmin && formRole === 'super_admin' ? 'empleado' : formRole;
+        const creatorId = currentUser.username || currentUser.id || 'nelson';
         const newUserObj: UserAccount = {
           id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           nombre: formNombre.trim(),
           username: cleanU,
           password: formPassword.trim(),
           whatsapp: formWhatsapp.trim().replace(/[^\d+]/g, ''),
-          role: formRole,
+          role: newUserRole,
           activo: true,
+          createdBy: creatorId,
           createdAt: new Date().toISOString(),
         };
 
@@ -243,6 +289,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
               password: newUserObj.password,
               whatsapp: newUserObj.whatsapp,
               role: newUserObj.role,
+              createdBy: newUserObj.createdBy,
             }),
           });
           const ct = res.headers.get('content-type') || '';
@@ -318,9 +365,26 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
   };
 
   const handleDeleteUser = async (u: UserAccount) => {
-    if (u.username.toLowerCase() === 'nelson') {
+    if (u.username.toLowerCase() === 'nelson' || u.role === 'super_admin') {
       setErrorMessage('No es posible eliminar al Super Administrador principal (nelson).');
       return;
+    }
+
+    if (!isSuperAdmin && u.username === currentUser.username) {
+      setErrorMessage('No puedes eliminar tu propia cuenta.');
+      return;
+    }
+
+    if (!isSuperAdmin && isDueno) {
+      const myId = currentUser.id;
+      const myUsername = currentUser.username.toLowerCase();
+      const wasCreatedByMe = Boolean(
+        u.createdBy && (u.createdBy === myId || u.createdBy.toLowerCase() === myUsername)
+      );
+      if (!wasCreatedByMe) {
+        setErrorMessage('Solo puedes eliminar usuarios creados por ti.');
+        return;
+      }
     }
 
     try {
@@ -472,37 +536,44 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
       )}
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
         <div className="p-4 rounded-xl bg-[#0F141C] border border-white/[0.06] space-y-1">
           <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Total de Usuarios</span>
+            <span>{isSuperAdmin ? 'Total de Usuarios' : 'Mis Usuarios'}</span>
             <Users className="w-4 h-4 text-slate-400" />
           </div>
           <div className="text-2xl font-black text-white">{users.length}</div>
-          <span className="text-[11px] text-slate-500">Cuentas con acceso activo</span>
+          <span className="text-[11px] text-slate-500">
+            {isSuperAdmin ? 'Cuentas con acceso activo en el CRM' : 'Cuentas gestionadas por ti'}
+          </span>
         </div>
 
-        <div className="p-4 rounded-xl bg-[#0F141C] border border-white/[0.06] space-y-1">
-          <div className="flex items-center justify-between text-xs text-purple-300 font-semibold">
-            <span>Super Administrador</span>
-            <Crown className="w-4 h-4 text-purple-400" />
+        {/* Super Administrador: ONLY VISIBLE TO SUPER ADMIN */}
+        {isSuperAdmin && (
+          <div className="p-4 rounded-xl bg-[#0F141C] border border-white/[0.06] space-y-1">
+            <div className="flex items-center justify-between text-xs text-purple-300 font-semibold">
+              <span>Super Administrador</span>
+              <Crown className="w-4 h-4 text-purple-400" />
+            </div>
+            <div className="text-2xl font-black text-purple-200">{totalSuperAdmins}</div>
+            <span className="text-[11px] text-purple-400/80">Control total del CRM (@nelson)</span>
           </div>
-          <div className="text-2xl font-black text-purple-200">{totalSuperAdmins}</div>
-          <span className="text-[11px] text-purple-400/80">Control total del CRM (@nelson)</span>
-        </div>
+        )}
 
         <div className="p-4 rounded-xl bg-[#0F141C] border border-white/[0.06] space-y-1">
           <div className="flex items-center justify-between text-xs text-cyan-300 font-semibold">
-            <span>Dueños del Negocio</span>
+            <span>{isSuperAdmin ? 'Dueños del Negocio' : 'Mi Cuenta (Dueño)'}</span>
             <Briefcase className="w-4 h-4 text-cyan-400" />
           </div>
           <div className="text-2xl font-black text-cyan-200">{totalDuenos}</div>
-          <span className="text-[11px] text-cyan-400/80">Ventas, finanzas e inventario</span>
+          <span className="text-[11px] text-cyan-400/80">
+            {isSuperAdmin ? 'Ventas, finanzas e inventario' : 'Acceso administrativo a tus vendedores'}
+          </span>
         </div>
 
         <div className="p-4 rounded-xl bg-[#0F141C] border border-white/[0.06] space-y-1">
           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
-            <span>Empleados / Asesores</span>
+            <span>{isSuperAdmin ? 'Empleados / Asesores' : 'Mis Empleados'}</span>
             <Headphones className="w-4 h-4 text-slate-400" />
           </div>
           <div className="text-2xl font-black text-slate-100">{totalEmpleados}</div>
@@ -619,9 +690,14 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                         </span>
                       </td>
 
-                      {/* Dates */}
+                      {/* Dates & Creator */}
                       <td className="py-3.5 px-4 text-slate-400 text-[11px]">
                         <div>{new Date(u.createdAt).toLocaleDateString('es-DO', { timeZone: 'America/Santo_Domingo' })}</div>
+                        {u.createdBy && (
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            Creado por: @{u.createdBy}
+                          </div>
+                        )}
                         {u.lastLogin && (
                           <div className="text-[10px] text-slate-500 font-mono">
                             Acceso (RD): {new Date(u.lastLogin).toLocaleTimeString('es-DO', { timeZone: 'America/Santo_Domingo', hour: '2-digit', minute: '2-digit', hour12: true })}
@@ -643,7 +719,11 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                             </button>
                           )}
 
-                          {isSuperAdmin && !isPrincipalNelson && (
+                          {/* Permiso de eliminar:
+                              - Super Admin elimina a todos excepto nelson
+                              - Dueño solo elimina usuarios creados por él */}
+                          {((isSuperAdmin && !isPrincipalNelson) ||
+                            (isDueno && !isCurrent && Boolean(u.createdBy && (u.createdBy === currentUser.id || u.createdBy.toLowerCase() === currentUser.username.toLowerCase())))) && (
                             <button
                               type="button"
                               onClick={() => handleDeleteUser(u)}
@@ -779,7 +859,7 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                   Rol y Nivel de Jerarquía
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className={`grid grid-cols-1 ${isSuperAdmin ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2`}>
                   {[
                     {
                       id: 'super_admin' as UserRole,
@@ -799,7 +879,9 @@ export const UsersView: React.FC<UsersViewProps> = ({ currentUser, onLogout }) =
                       desc: 'Atención WhatsApp y pedidos',
                       disabled: false,
                     },
-                  ].map(r => {
+                  ]
+                    .filter(r => (isSuperAdmin ? true : r.id !== 'super_admin'))
+                    .map(r => {
                     const active = formRole === r.id;
                     return (
                       <button
