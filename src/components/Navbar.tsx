@@ -51,12 +51,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [whatsAppConnected, setWhatsAppConnected] = useState<boolean>(Boolean(config.evolution.connected));
 
   useEffect(() => {
+    if (config.evolution?.connected) {
+      setWhatsAppConnected(true);
+    }
+  }, [config.evolution?.connected]);
+
+  useEffect(() => {
     const checkStatus = () => {
       fetch('/api/evolution/qrcode')
         .then(r => r.json())
         .then(data => {
           if (data.success) {
-            setWhatsAppConnected(data.state === 'open');
+            setWhatsAppConnected(data.state === 'open' || Boolean(data.connected));
           }
         })
         .catch(() => {});
