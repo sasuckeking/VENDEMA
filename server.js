@@ -2071,17 +2071,47 @@ async function loadFullSystemConfigFromSupabase(url, anonKey) {
   }
   return null;
 }
+function isMaskedSecret(val) {
+  if (!val) return true;
+  const trimmed = String(val).trim();
+  return !trimmed || trimmed.includes("\u2022\u2022\u2022\u2022") || trimmed.includes("****");
+}
 async function autoSyncConfigToSupabase(config) {
   const client = getSupabaseClient(config.supabase?.url, config.supabase?.anonKey);
   if (!client) return;
   try {
+    let existingRow = null;
+    const hasMaskedAi = config.aiProvider?.openaiApiKey && isMaskedSecret(config.aiProvider.openaiApiKey);
+    const hasMaskedEvo = config.evolution?.apiKey && isMaskedSecret(config.evolution.apiKey);
+    const hasMaskedOdoo = config.odoo?.apiKey && isMaskedSecret(config.odoo.apiKey);
+    if (hasMaskedAi || hasMaskedEvo || hasMaskedOdoo) {
+      try {
+        const { data } = await client.from("configuracion_sistema").select("ai_provider, odoo_config, evolution_config").eq("config_key", "main").maybeSingle();
+        existingRow = data;
+      } catch {
+      }
+    }
+    const safeAiProvider = config.aiProvider ? {
+      ...config.aiProvider,
+      openaiApiKey: config.aiProvider.openaiApiKey && !isMaskedSecret(config.aiProvider.openaiApiKey) ? config.aiProvider.openaiApiKey : existingRow?.ai_provider?.openaiApiKey || config.aiProvider.openaiApiKey || "",
+      geminiApiKey: config.aiProvider.geminiApiKey && !isMaskedSecret(config.aiProvider.geminiApiKey) ? config.aiProvider.geminiApiKey : existingRow?.ai_provider?.geminiApiKey || config.aiProvider.geminiApiKey || "",
+      deepseekApiKey: config.aiProvider.deepseekApiKey && !isMaskedSecret(config.aiProvider.deepseekApiKey) ? config.aiProvider.deepseekApiKey : existingRow?.ai_provider?.deepseekApiKey || config.aiProvider.deepseekApiKey || ""
+    } : {};
+    const safeEvolution = config.evolution ? {
+      ...config.evolution,
+      apiKey: config.evolution.apiKey && !isMaskedSecret(config.evolution.apiKey) ? config.evolution.apiKey : existingRow?.evolution_config?.apiKey || config.evolution.apiKey || ""
+    } : {};
+    const safeOdoo = config.odoo ? {
+      ...config.odoo,
+      apiKey: config.odoo.apiKey && !isMaskedSecret(config.odoo.apiKey) ? config.odoo.apiKey : existingRow?.odoo_config?.apiKey || config.odoo.apiKey || ""
+    } : {};
     await client.from("configuracion_sistema").upsert(
       {
         config_key: "main",
         global_ai_active: config.globalAiActive,
-        ai_provider: config.aiProvider || {},
-        odoo_config: config.odoo || {},
-        evolution_config: config.evolution || {},
+        ai_provider: safeAiProvider,
+        odoo_config: safeOdoo,
+        evolution_config: safeEvolution,
         supabase_config: {
           url: config.supabase?.url || "",
           connected: config.supabase?.connected ?? true,
@@ -2451,7 +2481,7 @@ function maskSecretValue(raw) {
   }
   return `\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${tail}`;
 }
-function isMaskedSecret(val) {
+function isMaskedSecret2(val) {
   if (!val) return true;
   const trimmed = String(val).trim();
   return !trimmed || trimmed.includes("\u2022\u2022\u2022\u2022") || trimmed.includes("****");
@@ -2579,7 +2609,7 @@ app.get(["/ready", "/api/ready"], (_req, res) => {
       usersLoaded: usersReady,
       supabaseConfigured: Boolean(appConfig?.supabase?.url && appConfig?.supabase?.anonKey),
       evolutionConfigured: Boolean(appConfig?.evolution?.serverUrl && appConfig?.evolution?.instance),
-      openaiConfigured: Boolean(appConfig?.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey)),
+      openaiConfigured: Boolean(appConfig?.aiProvider?.openaiApiKey && !isMaskedSecret2(appConfig.aiProvider.openaiApiKey)),
       odooConfigured: Boolean(appConfig?.odoo?.url && appConfig?.odoo?.db)
     },
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
@@ -2632,7 +2662,7 @@ function syncCredentialsToEnv(cfg, persistToFile = false) {
       OPENAI_API_KEY: cfg.aiProvider?.openaiApiKey || ""
     };
     for (const [key, val] of Object.entries(vars)) {
-      if (val && !isMaskedSecret(val)) {
+      if (val && !isMaskedSecret2(val)) {
         process.env[key] = val;
       }
     }
@@ -2779,12 +2809,12 @@ function getPublicMaskedConfig(cfg) {
       anonKey: maskSecretValue(rawSupabase)
     } : void 0,
     secretStatus: {
-      hasOpenaiKey: Boolean(rawOpenai && !isMaskedSecret(rawOpenai)),
-      hasGeminiKey: Boolean(rawGemini && !isMaskedSecret(rawGemini)),
-      hasDeepseekKey: Boolean(rawDeepseek && !isMaskedSecret(rawDeepseek)),
-      hasOdooKey: Boolean(rawOdoo && !isMaskedSecret(rawOdoo)),
-      hasEvolutionKey: Boolean(rawEvolution && !isMaskedSecret(rawEvolution)),
-      hasSupabaseKey: Boolean(rawSupabase && !isMaskedSecret(rawSupabase))
+      hasOpenaiKey: Boolean(rawOpenai && !isMaskedSecret2(rawOpenai)),
+      hasGeminiKey: Boolean(rawGemini && !isMaskedSecret2(rawGemini)),
+      hasDeepseekKey: Boolean(rawDeepseek && !isMaskedSecret2(rawDeepseek)),
+      hasOdooKey: Boolean(rawOdoo && !isMaskedSecret2(rawOdoo)),
+      hasEvolutionKey: Boolean(rawEvolution && !isMaskedSecret2(rawEvolution)),
+      hasSupabaseKey: Boolean(rawSupabase && !isMaskedSecret2(rawSupabase))
     }
   };
 }
@@ -2805,9 +2835,9 @@ function loadPersistedConfig() {
         if (!migratedModel || migratedModel.includes("gemini") || migratedModel === "gpt-4o-mini") {
           migratedModel = "gpt-4o-mini";
         }
-        const loadedOpenAiKey = !isMaskedSecret(saved.aiProvider.openaiApiKey) ? String(saved.aiProvider.openaiApiKey).trim() : process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY.trim() : "";
-        const loadedGeminiKey = !isMaskedSecret(saved.aiProvider.geminiApiKey) ? String(saved.aiProvider.geminiApiKey).trim() : process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY.trim() : "";
-        const loadedDeepseekKey = !isMaskedSecret(saved.aiProvider.deepseekApiKey) ? String(saved.aiProvider.deepseekApiKey).trim() : process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY.trim() : "";
+        const loadedOpenAiKey = !isMaskedSecret2(saved.aiProvider.openaiApiKey) ? String(saved.aiProvider.openaiApiKey).trim() : process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "MY_OPENAI_API_KEY" ? process.env.OPENAI_API_KEY.trim() : "";
+        const loadedGeminiKey = !isMaskedSecret2(saved.aiProvider.geminiApiKey) ? String(saved.aiProvider.geminiApiKey).trim() : process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" ? process.env.GEMINI_API_KEY.trim() : "";
+        const loadedDeepseekKey = !isMaskedSecret2(saved.aiProvider.deepseekApiKey) ? String(saved.aiProvider.deepseekApiKey).trim() : process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY !== "MY_DEEPSEEK_API_KEY" ? process.env.DEEPSEEK_API_KEY.trim() : "";
         appConfig.aiProvider = {
           ...appConfig.aiProvider,
           ...saved.aiProvider,
@@ -2828,11 +2858,11 @@ function loadPersistedConfig() {
           url: saved.odoo.url || process.env.ODOO_URL || appConfig.odoo.url,
           db: saved.odoo.db || process.env.ODOO_DB || appConfig.odoo.db,
           uid: saved.odoo.uid ?? (process.env.ODOO_UID ? Number(process.env.ODOO_UID) : appConfig.odoo.uid),
-          apiKey: !isMaskedSecret(saved.odoo.apiKey) ? saved.odoo.apiKey : process.env.ODOO_API_KEY || appConfig.odoo.apiKey
+          apiKey: !isMaskedSecret2(saved.odoo.apiKey) ? saved.odoo.apiKey : process.env.ODOO_API_KEY || appConfig.odoo.apiKey
         };
       }
       if (saved.evolution) {
-        const rawSavedEvoKey = !isMaskedSecret(saved.evolution.apiKey) ? String(saved.evolution.apiKey || "").trim() : "";
+        const rawSavedEvoKey = !isMaskedSecret2(saved.evolution.apiKey) ? String(saved.evolution.apiKey || "").trim() : "";
         const effectiveEvoKey = !rawSavedEvoKey || rawSavedEvoKey === "52700613C062-421C-B800-FBC560B54BB4" ? process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A" : rawSavedEvoKey;
         let effectiveServerUrl = (saved.evolution.serverUrl || "").trim();
         if (!effectiveServerUrl || /\.supabase\.co/i.test(effectiveServerUrl)) {
@@ -2854,7 +2884,7 @@ function loadPersistedConfig() {
           ...appConfig.supabase,
           ...saved.supabase,
           url: saved.supabase.url || process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL,
-          anonKey: !isMaskedSecret(saved.supabase.anonKey) ? saved.supabase.anonKey : process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
+          anonKey: !isMaskedSecret2(saved.supabase.anonKey) ? saved.supabase.anonKey : process.env.SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
         };
       }
       if (Array.isArray(saved.holidayOverrides)) {
@@ -3238,7 +3268,7 @@ async function hydrateAndSyncFullConfigWithSupabase() {
           appConfig.evolution.instance = evo.instance.trim();
           updated = true;
         }
-        if (evo.apiKey && !isMaskedSecret(evo.apiKey) && evo.apiKey.trim() && evo.apiKey.trim() !== appConfig.evolution.apiKey) {
+        if (evo.apiKey && !isMaskedSecret2(evo.apiKey) && evo.apiKey.trim() && evo.apiKey.trim() !== appConfig.evolution.apiKey) {
           appConfig.evolution.apiKey = evo.apiKey.trim();
           updated = true;
         }
@@ -3254,7 +3284,7 @@ async function hydrateAndSyncFullConfigWithSupabase() {
         if (odoo.url && odoo.url.trim()) appConfig.odoo.url = odoo.url.trim();
         if (odoo.db && odoo.db.trim()) appConfig.odoo.db = odoo.db.trim();
         if (odoo.uid) appConfig.odoo.uid = Number(odoo.uid);
-        if (odoo.apiKey && !isMaskedSecret(odoo.apiKey) && odoo.apiKey.trim()) {
+        if (odoo.apiKey && !isMaskedSecret2(odoo.apiKey) && odoo.apiKey.trim()) {
           appConfig.odoo.apiKey = odoo.apiKey.trim();
         }
       }
@@ -3268,21 +3298,34 @@ async function hydrateAndSyncFullConfigWithSupabase() {
           appConfig.aiProvider.model = ai.model;
           updated = true;
         }
-        if (!appConfig.aiProvider.openaiApiKey && ai.openaiApiKey) {
+        if (ai.temperature !== void 0 && appConfig.aiProvider.temperature !== Number(ai.temperature)) {
+          appConfig.aiProvider.temperature = Number(ai.temperature);
+          updated = true;
+        }
+        if (ai.customInstructions !== void 0 && appConfig.aiProvider.customInstructions !== String(ai.customInstructions)) {
+          appConfig.aiProvider.customInstructions = String(ai.customInstructions);
+          updated = true;
+        }
+        if (ai.openaiBaseUrl && appConfig.aiProvider.openaiBaseUrl !== String(ai.openaiBaseUrl).trim()) {
+          appConfig.aiProvider.openaiBaseUrl = String(ai.openaiBaseUrl).trim();
+          updated = true;
+        }
+        if (ai.openaiApiKey && !isMaskedSecret2(ai.openaiApiKey) && appConfig.aiProvider.openaiApiKey !== String(ai.openaiApiKey).trim()) {
           appConfig.aiProvider.openaiApiKey = String(ai.openaiApiKey).trim();
           updated = true;
         }
-        if (!appConfig.aiProvider.geminiApiKey && ai.geminiApiKey) {
+        if (ai.geminiApiKey && !isMaskedSecret2(ai.geminiApiKey) && appConfig.aiProvider.geminiApiKey !== String(ai.geminiApiKey).trim()) {
           appConfig.aiProvider.geminiApiKey = String(ai.geminiApiKey).trim();
           updated = true;
         }
-        if (!appConfig.aiProvider.deepseekApiKey && ai.deepseekApiKey) {
+        if (ai.deepseekApiKey && !isMaskedSecret2(ai.deepseekApiKey) && appConfig.aiProvider.deepseekApiKey !== String(ai.deepseekApiKey).trim()) {
           appConfig.aiProvider.deepseekApiKey = String(ai.deepseekApiKey).trim();
           updated = true;
         }
       }
-      if (remote.global_ai_active !== void 0) {
+      if (remote.global_ai_active !== void 0 && appConfig.globalAiActive !== Boolean(remote.global_ai_active)) {
         appConfig.globalAiActive = Boolean(remote.global_ai_active);
+        updated = true;
       }
       if (updated) {
         savePersistedConfig();
@@ -8175,7 +8218,7 @@ function buildFiveServiceHealthSnapshot() {
     details: lastEvoLog ? lastEvoLog.success ? `Instancia ${appConfig.evolution.instance} conectada` : lastEvoLog.error || `HTTP ${lastEvoLog.statusCode || 500}` : `Instancia ${appConfig.evolution.instance}`
   };
   const lastAiLog = systemApiLogs.find((l) => l.service === "AI Engine");
-  const hasOpenAiKey = Boolean(appConfig.aiProvider?.openaiApiKey && !isMaskedSecret(appConfig.aiProvider.openaiApiKey));
+  const hasOpenAiKey = Boolean(appConfig.aiProvider?.openaiApiKey && !isMaskedSecret2(appConfig.aiProvider.openaiApiKey));
   const aiErrText = (lastAiLog?.error || "").toLowerCase();
   const openaiProbe = {
     service: "OpenAI",
@@ -8508,11 +8551,15 @@ app.post("/api/system/logs/test-ping", requireSessionRole(["super_admin"], false
   }
   res.json({ success: true, results, servicesHealth: buildFiveServiceHealthSnapshot() });
 });
-app.get("/api/config", (_req, res) => {
+app.get("/api/config", async (_req, res) => {
   if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
     appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || "https://evolution-evolution-api.blrfh6.easypanel.host";
     appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || "todolapto";
     appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A";
+  }
+  if ((!appConfig.aiProvider?.openaiApiKey || isMaskedSecret2(appConfig.aiProvider.openaiApiKey)) && appConfig.supabase?.url) {
+    await hydrateAndSyncFullConfigWithSupabase().catch(() => {
+    });
   }
   res.json({
     success: true,
@@ -8617,13 +8664,25 @@ app.post("/api/config", requireSessionRole(["super_admin", "dueno", "empleado"],
   if (aiProvider) {
     const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
     const incomingOpenAiKey = typeof aiProvider.openaiApiKey === "string" ? aiProvider.openaiApiKey.trim() : "";
-    const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+    let resolvedOpenAiKey = !isMaskedSecret2(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
     const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
     const incomingGeminiKey = typeof aiProvider.geminiApiKey === "string" ? aiProvider.geminiApiKey.trim() : "";
-    const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+    let resolvedGeminiKey = !isMaskedSecret2(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
     const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
     const incomingDeepseekKey = typeof aiProvider.deepseekApiKey === "string" ? aiProvider.deepseekApiKey.trim() : "";
-    const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+    let resolvedDeepseekKey = !isMaskedSecret2(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+    if ((!resolvedOpenAiKey || isMaskedSecret2(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+      const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+      if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret2(remote.ai_provider.openaiApiKey)) {
+        resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+      }
+      if ((!resolvedGeminiKey || isMaskedSecret2(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret2(remote.ai_provider.geminiApiKey)) {
+        resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+      }
+      if ((!resolvedDeepseekKey || isMaskedSecret2(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret2(remote.ai_provider.deepseekApiKey)) {
+        resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+      }
+    }
     const targetProvider = aiProvider.provider || appConfig.aiProvider?.provider || "gemini";
     let targetModel = aiProvider.model || appConfig.aiProvider?.model;
     if (!targetModel) {
@@ -8652,7 +8711,7 @@ app.post("/api/config", requireSessionRole(["super_admin", "dueno", "empleado"],
     appConfig.odoo = {
       ...appConfig.odoo,
       ...odoo,
-      apiKey: !isMaskedSecret(incomingOdooKey) ? incomingOdooKey : existingOdooKey
+      apiKey: !isMaskedSecret2(incomingOdooKey) ? incomingOdooKey : existingOdooKey
     };
   }
   if (evolution) {
@@ -8661,7 +8720,7 @@ app.post("/api/config", requireSessionRole(["super_admin", "dueno", "empleado"],
     appConfig.evolution = {
       ...appConfig.evolution,
       ...evolution,
-      apiKey: !isMaskedSecret(incomingEvoKey) ? incomingEvoKey : existingEvoKey
+      apiKey: !isMaskedSecret2(incomingEvoKey) ? incomingEvoKey : existingEvoKey
     };
   }
   if (supabase) {
@@ -8670,7 +8729,7 @@ app.post("/api/config", requireSessionRole(["super_admin", "dueno", "empleado"],
     appConfig.supabase = {
       ...appConfig.supabase || { url: "", anonKey: "" },
       ...supabase,
-      anonKey: !isMaskedSecret(incomingSupaKey) ? incomingSupaKey : existingSupaKey
+      anonKey: !isMaskedSecret2(incomingSupaKey) ? incomingSupaKey : existingSupaKey
     };
     if (appConfig.supabase?.url && appConfig.supabase?.anonKey) {
       getSupabaseClient(appConfig.supabase.url, appConfig.supabase.anonKey);
@@ -8760,13 +8819,25 @@ app.post("/api/ai/save-credentials", async (req, res) => {
   const cleanModel = model && String(model).trim() ? String(model).trim() : targetProvider === "gemini" ? "gemini-3.5-flash-lite" : "gpt-4o-mini";
   const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
   const incomingOpenAiKey = openaiApiKey !== void 0 ? String(openaiApiKey).trim() : "";
-  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  let resolvedOpenAiKey = !isMaskedSecret2(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
   const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
   const incomingGeminiKey = geminiApiKey !== void 0 ? String(geminiApiKey).trim() : "";
-  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  let resolvedGeminiKey = !isMaskedSecret2(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
   const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
   const incomingDeepseekKey = deepseekApiKey !== void 0 ? String(deepseekApiKey).trim() : "";
-  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  let resolvedDeepseekKey = !isMaskedSecret2(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  if ((!resolvedOpenAiKey || isMaskedSecret2(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret2(remote.ai_provider.openaiApiKey)) {
+      resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+    }
+    if ((!resolvedGeminiKey || isMaskedSecret2(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret2(remote.ai_provider.geminiApiKey)) {
+      resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+    }
+    if ((!resolvedDeepseekKey || isMaskedSecret2(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret2(remote.ai_provider.deepseekApiKey)) {
+      resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+    }
+  }
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
     provider: targetProvider,
@@ -8796,7 +8867,7 @@ app.post("/api/ai/save-credentials", async (req, res) => {
 app.post("/api/supabase/test-connection", async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || "").trim();
   const rawAnon = (req.body.anonKey || "").trim();
-  const anonKey = !isMaskedSecret(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || "").trim();
+  const anonKey = !isMaskedSecret2(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || "").trim();
   if (!url || !anonKey) {
     return res.status(400).json({
       success: false,
@@ -8829,7 +8900,7 @@ app.get("/api/supabase/schema-sql", (_req, res) => {
 app.post("/api/supabase/sync-all", async (req, res) => {
   const url = (req.body.url || appConfig.supabase?.url || DEFAULT_SUPABASE_URL).trim();
   const rawAnon = (req.body.anonKey || "").trim();
-  const anonKey = !isMaskedSecret(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
+  const anonKey = !isMaskedSecret2(rawAnon) ? rawAnon : (appConfig.supabase?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
   if (url && anonKey) {
     if (!appConfig.supabase) {
       appConfig.supabase = { url: "", anonKey: "", connected: false, autoSync: true };
@@ -9073,7 +9144,7 @@ app.put("/api/users/:id", requireSessionRole(["super_admin", "dueno"], false), a
   const { nombre, whatsapp, password, role, activo } = req.body;
   if (nombre) targetUser.nombre = String(nombre).trim();
   if (whatsapp) targetUser.whatsapp = String(whatsapp).replace(/[^\d+]/g, "");
-  if (password && String(password).trim() && !isMaskedSecret(password)) {
+  if (password && String(password).trim() && !isMaskedSecret2(password)) {
     targetUser.password = hashUserPassword(String(password).trim());
   }
   if (targetUser.username.toLowerCase() === "nelson") {
@@ -9156,13 +9227,25 @@ app.post("/api/ai/test-provider", async (req, res) => {
   const cleanModel = model && String(model).trim() ? String(model).trim() : targetProvider === "gemini" ? "gemini-3.5-flash-lite" : "gpt-4o-mini";
   const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || "";
   const incomingOpenAiKey = openaiApiKey !== void 0 ? String(openaiApiKey).trim() : "";
-  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  let resolvedOpenAiKey = !isMaskedSecret2(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
   const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || "";
   const incomingGeminiKey = geminiApiKey !== void 0 ? String(geminiApiKey).trim() : "";
-  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  let resolvedGeminiKey = !isMaskedSecret2(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
   const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || "";
   const incomingDeepseekKey = deepseekApiKey !== void 0 ? String(deepseekApiKey).trim() : "";
-  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  let resolvedDeepseekKey = !isMaskedSecret2(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  if ((!resolvedOpenAiKey || isMaskedSecret2(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret2(remote.ai_provider.openaiApiKey)) {
+      resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+    }
+    if ((!resolvedGeminiKey || isMaskedSecret2(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret2(remote.ai_provider.geminiApiKey)) {
+      resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+    }
+    if ((!resolvedDeepseekKey || isMaskedSecret2(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret2(remote.ai_provider.deepseekApiKey)) {
+      resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+    }
+  }
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
     provider: targetProvider,
@@ -12503,7 +12586,7 @@ app.post("/api/evolution/register-webhook", async (req, res) => {
     const bodyApiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
     const candidateServerUrl = (bodyServerUrl || appConfig.evolution.serverUrl || "").replace(/\/$/, "");
     const candidateInstance = bodyInstance || appConfig.evolution.instance || "";
-    const candidateApiKey = bodyApiKey && !isMaskedSecret(bodyApiKey) ? bodyApiKey : appConfig.evolution.apiKey || "";
+    const candidateApiKey = bodyApiKey && !isMaskedSecret2(bodyApiKey) ? bodyApiKey : appConfig.evolution.apiKey || "";
     if (!candidateServerUrl || !candidateInstance || !candidateApiKey) {
       return res.status(400).json({
         success: false,
@@ -12519,7 +12602,7 @@ app.post("/api/evolution/register-webhook", async (req, res) => {
     appConfig.evolution.serverUrl = candidateServerUrl;
     appConfig.evolution.instance = candidateInstance;
     appConfig.evolution.apiKey = candidateApiKey;
-    if (bodyServerUrl || bodyInstance || bodyApiKey && !isMaskedSecret(bodyApiKey)) {
+    if (bodyServerUrl || bodyInstance || bodyApiKey && !isMaskedSecret2(bodyApiKey)) {
       savePersistedConfig();
     }
     const baseUrl = appConfig.evolution.serverUrl.replace(/\/$/, "");
@@ -12912,7 +12995,7 @@ var server_default = app;
 export {
   app,
   server_default as default,
-  isMaskedSecret,
+  isMaskedSecret2 as isMaskedSecret,
   maskSecretValue,
   sanitizeSecretsInText,
   startServer

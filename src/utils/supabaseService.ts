@@ -958,18 +958,78 @@ export async function loadAiConfigFromSupabase(
   return null;
 }
 
+function isMaskedSecret(val?: string): boolean {
+  if (!val) return true;
+  const trimmed = String(val).trim();
+  return !trimmed || trimmed.includes('••••') || trimmed.includes('****');
+}
+
 export async function autoSyncConfigToSupabase(config: AppConfig): Promise<void> {
   const client = getSupabaseClient(config.supabase?.url, config.supabase?.anonKey);
   if (!client) return;
 
   try {
+    let existingRow: any = null;
+    const hasMaskedAi = config.aiProvider?.openaiApiKey && isMaskedSecret(config.aiProvider.openaiApiKey);
+    const hasMaskedEvo = config.evolution?.apiKey && isMaskedSecret(config.evolution.apiKey);
+    const hasMaskedOdoo = config.odoo?.apiKey && isMaskedSecret(config.odoo.apiKey);
+
+    if (hasMaskedAi || hasMaskedEvo || hasMaskedOdoo) {
+      try {
+        const { data } = await client
+          .from('configuracion_sistema')
+          .select('ai_provider, odoo_config, evolution_config')
+          .eq('config_key', 'main')
+          .maybeSingle();
+        existingRow = data;
+      } catch {}
+    }
+
+    const safeAiProvider = config.aiProvider
+      ? {
+          ...config.aiProvider,
+          openaiApiKey:
+            config.aiProvider.openaiApiKey && !isMaskedSecret(config.aiProvider.openaiApiKey)
+              ? config.aiProvider.openaiApiKey
+              : existingRow?.ai_provider?.openaiApiKey || config.aiProvider.openaiApiKey || '',
+          geminiApiKey:
+            config.aiProvider.geminiApiKey && !isMaskedSecret(config.aiProvider.geminiApiKey)
+              ? config.aiProvider.geminiApiKey
+              : existingRow?.ai_provider?.geminiApiKey || config.aiProvider.geminiApiKey || '',
+          deepseekApiKey:
+            config.aiProvider.deepseekApiKey && !isMaskedSecret(config.aiProvider.deepseekApiKey)
+              ? config.aiProvider.deepseekApiKey
+              : existingRow?.ai_provider?.deepseekApiKey || config.aiProvider.deepseekApiKey || '',
+        }
+      : {};
+
+    const safeEvolution = config.evolution
+      ? {
+          ...config.evolution,
+          apiKey:
+            config.evolution.apiKey && !isMaskedSecret(config.evolution.apiKey)
+              ? config.evolution.apiKey
+              : existingRow?.evolution_config?.apiKey || config.evolution.apiKey || '',
+        }
+      : {};
+
+    const safeOdoo = config.odoo
+      ? {
+          ...config.odoo,
+          apiKey:
+            config.odoo.apiKey && !isMaskedSecret(config.odoo.apiKey)
+              ? config.odoo.apiKey
+              : existingRow?.odoo_config?.apiKey || config.odoo.apiKey || '',
+        }
+      : {};
+
     await client.from('configuracion_sistema').upsert(
       {
         config_key: 'main',
         global_ai_active: config.globalAiActive,
-        ai_provider: config.aiProvider || {},
-        odoo_config: config.odoo || {},
-        evolution_config: config.evolution || {},
+        ai_provider: safeAiProvider,
+        odoo_config: safeOdoo,
+        evolution_config: safeEvolution,
         supabase_config: {
           url: config.supabase?.url || '',
           connected: config.supabase?.connected ?? true,

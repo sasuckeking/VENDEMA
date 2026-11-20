@@ -1122,22 +1122,35 @@ async function hydrateAndSyncFullConfigWithSupabase(): Promise<void> {
           appConfig.aiProvider.model = ai.model;
           updated = true;
         }
-        if (!appConfig.aiProvider.openaiApiKey && ai.openaiApiKey) {
+        if (ai.temperature !== undefined && appConfig.aiProvider.temperature !== Number(ai.temperature)) {
+          appConfig.aiProvider.temperature = Number(ai.temperature);
+          updated = true;
+        }
+        if (ai.customInstructions !== undefined && appConfig.aiProvider.customInstructions !== String(ai.customInstructions)) {
+          appConfig.aiProvider.customInstructions = String(ai.customInstructions);
+          updated = true;
+        }
+        if (ai.openaiBaseUrl && appConfig.aiProvider.openaiBaseUrl !== String(ai.openaiBaseUrl).trim()) {
+          appConfig.aiProvider.openaiBaseUrl = String(ai.openaiBaseUrl).trim();
+          updated = true;
+        }
+        if (ai.openaiApiKey && !isMaskedSecret(ai.openaiApiKey) && appConfig.aiProvider.openaiApiKey !== String(ai.openaiApiKey).trim()) {
           appConfig.aiProvider.openaiApiKey = String(ai.openaiApiKey).trim();
           updated = true;
         }
-        if (!appConfig.aiProvider.geminiApiKey && ai.geminiApiKey) {
+        if (ai.geminiApiKey && !isMaskedSecret(ai.geminiApiKey) && appConfig.aiProvider.geminiApiKey !== String(ai.geminiApiKey).trim()) {
           appConfig.aiProvider.geminiApiKey = String(ai.geminiApiKey).trim();
           updated = true;
         }
-        if (!appConfig.aiProvider.deepseekApiKey && ai.deepseekApiKey) {
+        if (ai.deepseekApiKey && !isMaskedSecret(ai.deepseekApiKey) && appConfig.aiProvider.deepseekApiKey !== String(ai.deepseekApiKey).trim()) {
           appConfig.aiProvider.deepseekApiKey = String(ai.deepseekApiKey).trim();
           updated = true;
         }
       }
 
-      if (remote.global_ai_active !== undefined) {
+      if (remote.global_ai_active !== undefined && appConfig.globalAiActive !== Boolean(remote.global_ai_active)) {
         appConfig.globalAiActive = Boolean(remote.global_ai_active);
+        updated = true;
       }
 
       if (updated) {
@@ -8078,12 +8091,17 @@ app.post('/api/system/logs/test-ping', requireSessionRole(['super_admin'], false
 });
 
 // 1. Get Configuration & Status (Fase 1.1: Returns Public Masked Config — ZERO raw secrets exposed)
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', async (_req, res) => {
   // Auto-heal evolution serverUrl if missing or mistakenly pointing to Supabase
   if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
     appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || 'https://evolution-evolution-api.blrfh6.easypanel.host';
     appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || 'todolapto';
     appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A';
+  }
+
+  // Ensure AI Provider credentials and settings are synchronized from Supabase if missing locally
+  if ((!appConfig.aiProvider?.openaiApiKey || isMaskedSecret(appConfig.aiProvider.openaiApiKey)) && appConfig.supabase?.url) {
+    await hydrateAndSyncFullConfigWithSupabase().catch(() => {});
   }
   res.json({
     success: true,
@@ -8196,15 +8214,28 @@ app.post('/api/config', requireSessionRole(['super_admin', 'dueno', 'empleado'],
   if (aiProvider) {
     const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
     const incomingOpenAiKey = typeof aiProvider.openaiApiKey === 'string' ? aiProvider.openaiApiKey.trim() : '';
-    const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+    let resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
 
     const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
     const incomingGeminiKey = typeof aiProvider.geminiApiKey === 'string' ? aiProvider.geminiApiKey.trim() : '';
-    const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+    let resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
 
     const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
     const incomingDeepseekKey = typeof aiProvider.deepseekApiKey === 'string' ? aiProvider.deepseekApiKey.trim() : '';
-    const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+    let resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+
+    if ((!resolvedOpenAiKey || isMaskedSecret(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+      const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+      if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret(remote.ai_provider.openaiApiKey)) {
+        resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+      }
+      if ((!resolvedGeminiKey || isMaskedSecret(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret(remote.ai_provider.geminiApiKey)) {
+        resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+      }
+      if ((!resolvedDeepseekKey || isMaskedSecret(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret(remote.ai_provider.deepseekApiKey)) {
+        resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+      }
+    }
 
     const targetProvider = (aiProvider.provider || appConfig.aiProvider?.provider || 'gemini') as AIProviderType;
     let targetModel = aiProvider.model || appConfig.aiProvider?.model;
@@ -8363,15 +8394,28 @@ app.post('/api/ai/save-credentials', async (req, res) => {
 
   const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
   const incomingOpenAiKey = openaiApiKey !== undefined ? String(openaiApiKey).trim() : '';
-  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  let resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
 
   const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
   const incomingGeminiKey = geminiApiKey !== undefined ? String(geminiApiKey).trim() : '';
-  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  let resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
 
   const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
   const incomingDeepseekKey = deepseekApiKey !== undefined ? String(deepseekApiKey).trim() : '';
-  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  let resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+
+  if ((!resolvedOpenAiKey || isMaskedSecret(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret(remote.ai_provider.openaiApiKey)) {
+      resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+    }
+    if ((!resolvedGeminiKey || isMaskedSecret(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret(remote.ai_provider.geminiApiKey)) {
+      resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+    }
+    if ((!resolvedDeepseekKey || isMaskedSecret(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret(remote.ai_provider.deepseekApiKey)) {
+      resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+    }
+  }
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,
@@ -8858,15 +8902,28 @@ app.post('/api/ai/test-provider', async (req, res) => {
 
   const existingOpenAiKey = appConfig.aiProvider?.openaiApiKey || '';
   const incomingOpenAiKey = openaiApiKey !== undefined ? String(openaiApiKey).trim() : '';
-  const resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
+  let resolvedOpenAiKey = !isMaskedSecret(incomingOpenAiKey) ? incomingOpenAiKey : existingOpenAiKey;
 
   const existingGeminiKey = appConfig.aiProvider?.geminiApiKey || '';
   const incomingGeminiKey = geminiApiKey !== undefined ? String(geminiApiKey).trim() : '';
-  const resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
+  let resolvedGeminiKey = !isMaskedSecret(incomingGeminiKey) ? incomingGeminiKey : existingGeminiKey;
 
   const existingDeepseekKey = appConfig.aiProvider?.deepseekApiKey || '';
   const incomingDeepseekKey = deepseekApiKey !== undefined ? String(deepseekApiKey).trim() : '';
-  const resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+  let resolvedDeepseekKey = !isMaskedSecret(incomingDeepseekKey) ? incomingDeepseekKey : existingDeepseekKey;
+
+  if ((!resolvedOpenAiKey || isMaskedSecret(resolvedOpenAiKey)) && appConfig.supabase?.url) {
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (remote?.ai_provider?.openaiApiKey && !isMaskedSecret(remote.ai_provider.openaiApiKey)) {
+      resolvedOpenAiKey = remote.ai_provider.openaiApiKey;
+    }
+    if ((!resolvedGeminiKey || isMaskedSecret(resolvedGeminiKey)) && remote?.ai_provider?.geminiApiKey && !isMaskedSecret(remote.ai_provider.geminiApiKey)) {
+      resolvedGeminiKey = remote.ai_provider.geminiApiKey;
+    }
+    if ((!resolvedDeepseekKey || isMaskedSecret(resolvedDeepseekKey)) && remote?.ai_provider?.deepseekApiKey && !isMaskedSecret(remote.ai_provider.deepseekApiKey)) {
+      resolvedDeepseekKey = remote.ai_provider.deepseekApiKey;
+    }
+  }
 
   appConfig.aiProvider = {
     ...appConfig.aiProvider,

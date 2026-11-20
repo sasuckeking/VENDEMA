@@ -616,6 +616,12 @@ export default function App() {
           } catch {}
         }
 
+        if (loadedConfig.aiProvider) {
+          try {
+            localStorage.setItem('vendema_ai_provider_config', JSON.stringify(loadedConfig.aiProvider));
+          } catch {}
+        }
+
         setGlobalHolidayOverrides(loadedConfig.holidayOverrides || []);
         setConfig(prev => {
           if (JSON.stringify(prev) === JSON.stringify(loadedConfig)) {
