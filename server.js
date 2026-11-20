@@ -5682,6 +5682,9 @@ function savePersistedConversations() {
   }
 }
 function clearAllChatsOnWhatsAppDisconnect(disconnectedState = "close") {
+  if (disconnectedState === "connecting" || disconnectedState === "open") {
+    return;
+  }
   const hadChats = conversations.length > 0;
   const wasConnected = evolutionLastKnownState === "open" || appConfig.evolution.connected;
   evolutionLastKnownState = disconnectedState;
@@ -5752,8 +5755,24 @@ async function syncEvolutionChats() {
       signal: AbortSignal.timeout(4e3)
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
-    const currentState = stateData?.instance?.state || stateData?.state || "close";
+    let currentState = stateData?.instance?.state || stateData?.state || "close";
     if (currentState !== "open") {
+      const instRes = await fetch(`${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`, {
+        headers: { apikey: appConfig.evolution.apiKey },
+        signal: AbortSignal.timeout(4e3)
+      }).catch(() => null);
+      if (instRes && instRes.ok) {
+        const insts = await instRes.json().catch(() => []);
+        const inst = Array.isArray(insts) ? insts.find((i) => i.name === instance || i.instanceName === instance) || insts[0] : null;
+        if (inst?.connectionStatus === "open") {
+          currentState = "open";
+        }
+      }
+    }
+    if (currentState !== "open") {
+      if (currentState === "connecting") {
+        return conversations;
+      }
       clearAllChatsOnWhatsAppDisconnect(currentState);
       return conversations;
     }
@@ -9422,7 +9441,8 @@ app.get("/api/evolution/qrcode", async (req, res) => {
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     let currentState = stateData?.instance?.state || stateData?.state || "unknown";
-    if (Date.now() - evolutionQrCache.lastMetaFetchAt > 2e4 || !evolutionQrCache.ownerJid) {
+    const shouldFetchMeta = currentState !== "open" || !evolutionQrCache.ownerJid || Date.now() - evolutionQrCache.lastMetaFetchAt > 15e3;
+    if (shouldFetchMeta) {
       evolutionQrCache.lastMetaFetchAt = Date.now();
       const instancesRes = await fetch(
         `${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
@@ -9438,7 +9458,9 @@ app.get("/api/evolution/qrcode", async (req, res) => {
           evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (currentState === "unknown" && instRecord.connectionStatus) {
+          if (instRecord.connectionStatus === "open") {
+            currentState = "open";
+          } else if (currentState === "unknown" && instRecord.connectionStatus) {
             currentState = instRecord.connectionStatus;
           }
         }
@@ -9446,7 +9468,7 @@ app.get("/api/evolution/qrcode", async (req, res) => {
     }
     const forceConnect = req.query.forceConnect === "true";
     const isConnected = currentState === "open";
-    if (isConnected && !forceConnect) {
+    if (isConnected) {
       if (evolutionLastKnownState !== "open") {
         evolutionLastKnownState = "open";
         botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
@@ -9456,6 +9478,10 @@ app.get("/api/evolution/qrcode", async (req, res) => {
       appConfig.evolution.connected = true;
       evolutionQrCache.qrBase64 = null;
       evolutionQrCache.pairingCode = null;
+      if (conversations.length === 0) {
+        syncEvolutionChats().catch(() => {
+        });
+      }
       return res.json({
         success: true,
         instance,
@@ -9468,7 +9494,9 @@ app.get("/api/evolution/qrcode", async (req, res) => {
         pairingCode: null
       });
     }
-    clearAllChatsOnWhatsAppDisconnect(currentState);
+    if (currentState !== "connecting") {
+      clearAllChatsOnWhatsAppDisconnect(currentState);
+    }
     const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
     if (forceConnect || !evolutionQrCache.qrBase64 || qrAgeMs > 4e4) {
       const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
@@ -9631,18 +9659,18 @@ app.get("/api/conversations", async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
-  if (conversations.length === 0 && (evolutionLastKnownState === "open" || evolutionLastKnownState === "unknown")) {
+  if (conversations.length === 0) {
     loadPersistedConversations();
   }
-  if (!appConfig.evolution.connected && evolutionLastKnownState !== "open" && evolutionLastKnownState !== "unknown") {
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== "open" && evolutionLastKnownState !== "unknown" && evolutionLastKnownState !== "connecting") {
     conversations = [];
   } else if (conversations.length === 0) {
-    syncEvolutionChats().catch(() => {
+    await syncEvolutionChats().catch(() => {
     });
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
     lastEvolutionChatsSync = 0;
-    syncEvolutionChats().catch(() => {
+    await syncEvolutionChats().catch(() => {
     });
   } else if (now - lastEvolutionChatsSync > 15e3) {
     syncEvolutionChats().catch(() => {

@@ -4203,6 +4203,10 @@ function savePersistedConversations(): void {
  * preventing stale chats from remaining visible or auto-replying while unlinked.
  */
 function clearAllChatsOnWhatsAppDisconnect(disconnectedState = 'close'): void {
+  // NEVER clear chats when connecting or open — only on explicit disconnect / logout
+  if (disconnectedState === 'connecting' || disconnectedState === 'open') {
+    return;
+  }
   const hadChats = conversations.length > 0;
   const wasConnected = evolutionLastKnownState === 'open' || appConfig.evolution.connected;
 
@@ -4368,9 +4372,28 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       signal: AbortSignal.timeout(4000),
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
-    const currentState = stateData?.instance?.state || stateData?.state || 'close';
+    let currentState = stateData?.instance?.state || stateData?.state || 'close';
+
+    // In Evolution API v2, connectionState can briefly report 'connecting' while instance connectionStatus is already 'open'
+    if (currentState !== 'open') {
+      const instRes = await fetch(`${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`, {
+        headers: { apikey: appConfig.evolution.apiKey },
+        signal: AbortSignal.timeout(4000),
+      }).catch(() => null);
+      if (instRes && instRes.ok) {
+        const insts = await instRes.json().catch(() => []);
+        const inst = Array.isArray(insts) ? (insts.find((i: any) => i.name === instance || i.instanceName === instance) || insts[0]) : null;
+        if (inst?.connectionStatus === 'open') {
+          currentState = 'open';
+        }
+      }
+    }
 
     if (currentState !== 'open') {
+      if (currentState === 'connecting') {
+        // Never wipe chats or disconnect while connecting
+        return conversations;
+      }
       clearAllChatsOnWhatsAppDisconnect(currentState);
       return conversations;
     }
@@ -9123,8 +9146,9 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     let currentState: string = stateData?.instance?.state || stateData?.state || 'unknown';
 
-    // Refresh instance metadata (ownerJid, profileName) using ?instanceName= filter so it returns in <500ms
-    if (Date.now() - evolutionQrCache.lastMetaFetchAt > 20000 || !evolutionQrCache.ownerJid) {
+    // In Evolution API v2, always verify fetchInstances if socket is not explicitly 'open' or metadata is needed
+    const shouldFetchMeta = currentState !== 'open' || !evolutionQrCache.ownerJid || (Date.now() - evolutionQrCache.lastMetaFetchAt > 15000);
+    if (shouldFetchMeta) {
       evolutionQrCache.lastMetaFetchAt = Date.now();
       const instancesRes = await fetch(
         `${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
@@ -9142,7 +9166,9 @@ app.get('/api/evolution/qrcode', async (req, res) => {
           evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (currentState === 'unknown' && instRecord.connectionStatus) {
+          if (instRecord.connectionStatus === 'open') {
+            currentState = 'open';
+          } else if (currentState === 'unknown' && instRecord.connectionStatus) {
             currentState = instRecord.connectionStatus;
           }
         }
@@ -9150,10 +9176,9 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     }
 
     const forceConnect = req.query.forceConnect === 'true';
-    // STRICT: An instance is ONLY connected when state === 'open'!
     const isConnected = currentState === 'open';
 
-    if (isConnected && !forceConnect) {
+    if (isConnected) {
       if (evolutionLastKnownState !== 'open') {
         evolutionLastKnownState = 'open';
         botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
@@ -9163,6 +9188,11 @@ app.get('/api/evolution/qrcode', async (req, res) => {
       appConfig.evolution.connected = true;
       evolutionQrCache.qrBase64 = null;
       evolutionQrCache.pairingCode = null;
+
+      // Make sure chats are seeded if memory is currently empty
+      if (conversations.length === 0) {
+        syncEvolutionChats().catch(() => {});
+      }
 
       return res.json({
         success: true,
@@ -9177,8 +9207,10 @@ app.get('/api/evolution/qrcode', async (req, res) => {
       });
     }
 
-    // 3. Not 'open': clear chats on disconnect & request QR if forceConnect=true OR if no cached QR exists yet (or cached QR is >40s old)
-    clearAllChatsOnWhatsAppDisconnect(currentState);
+    // 3. Not 'open': only clear chats on real disconnect (never if 'connecting')
+    if (currentState !== 'connecting') {
+      clearAllChatsOnWhatsAppDisconnect(currentState);
+    }
     const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
     if (forceConnect || !evolutionQrCache.qrBase64 || qrAgeMs > 40000) {
       const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
@@ -9361,17 +9393,17 @@ app.get('/api/conversations', async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === 'true';
   const now = Date.now();
-  if (conversations.length === 0 && (evolutionLastKnownState === 'open' || evolutionLastKnownState === 'unknown')) {
+  if (conversations.length === 0) {
     loadPersistedConversations();
   }
-  if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown' && evolutionLastKnownState !== 'connecting') {
     conversations = [];
   } else if (conversations.length === 0) {
-    syncEvolutionChats().catch(() => {});
+    await syncEvolutionChats().catch(() => {});
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
     lastEvolutionChatsSync = 0;
-    syncEvolutionChats().catch(() => {});
+    await syncEvolutionChats().catch(() => {});
   } else if (now - lastEvolutionChatsSync > 15000) {
     syncEvolutionChats().catch(() => {});
   }
