@@ -5858,9 +5858,11 @@ async function syncEvolutionChats() {
     if (!Array.isArray(rawRecords) || rawRecords.length === 0) {
       return conversations;
     }
-    const sortedRecords = [...rawRecords].sort(
-      (a, b) => Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0)
-    );
+    const sortedRecords = [...rawRecords].sort((a, b) => {
+      const diff = Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0);
+      if (diff !== 0) return diff;
+      return (a?.key?.fromMe ? 1 : 0) - (b?.key?.fromMe ? 1 : 0);
+    });
     let hasChanges = false;
     for (const rec of sortedRecords) {
       const key = rec?.key;
@@ -5926,7 +5928,11 @@ async function syncEvolutionChats() {
         if (!alreadyExists) {
           hydrateQuotedMessageById(parsedMsg, conv.messages, conv.customerName || pushName);
           conv.messages.push(parsedMsg);
-          conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          conv.messages.sort((a, b) => {
+            const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            if (diff !== 0) return diff;
+            return (a.sender === "customer" ? 0 : 1) - (b.sender === "customer" ? 0 : 1);
+          });
           if (!key.fromMe) {
             conv.unreadCount = (conv.unreadCount || 0) + 1;
           }
@@ -5934,13 +5940,14 @@ async function syncEvolutionChats() {
           broadcastEvent("new_message", { sessionId: conv.sessionId, message: parsedMsg });
           hasChanges = true;
         }
-        if (new Date(parsedMsg.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()) {
-          if (conv.lastTimestamp !== parsedMsg.timestamp || conv.lastMessagePreview !== parsedMsg.content) {
+        const latestInConv = conv.messages[conv.messages.length - 1];
+        if (latestInConv) {
+          if (conv.lastTimestamp !== latestInConv.timestamp || conv.lastMessagePreview !== latestInConv.content) {
             hasChanges = true;
           }
-          conv.lastTimestamp = parsedMsg.timestamp;
-          conv.lastMessagePreview = parsedMsg.content;
-          conv.lastMessageType = parsedMsg.type;
+          conv.lastTimestamp = latestInConv.timestamp;
+          conv.lastMessagePreview = latestInConv.content;
+          conv.lastMessageType = latestInConv.type;
         }
       }
     }
@@ -5961,7 +5968,8 @@ async function syncEvolutionChats() {
         }
       }
     }
-    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
+    const isSecondaryLocalDevWithoutWebhook = process.platform === "win32" && !lastWebhookReceivedAt;
+    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer() && !isSecondaryLocalDevWithoutWebhook) {
       const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = /* @__PURE__ */ new Set();
       for (const conv of conversations.slice(0, 50)) {
@@ -5977,6 +5985,9 @@ async function syncEvolutionChats() {
         if (lastMsg.sender !== "customer") continue;
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
+        if (ageMs < 15e3) {
+          continue;
+        }
         if (msgTimeMs < botStartupCutoffMs - 3e3 || ageMs > 10 * 60 * 1e3) {
           const contactKeys2 = getConversationContactKeys(conv);
           markMessageIdProcessed(msgId, contactKeys2);
@@ -5992,10 +6003,15 @@ async function syncEvolutionChats() {
         }
         const skipCheck = shouldSkipBotReply(conv, lastMsg, "live_evolution_poll");
         if (skipCheck.skip) continue;
+        const evoCheck = await hasEvolutionAlreadyAnsweredSince(conv, lastMsg);
+        if (evoCheck.answered) {
+          markMessageIdProcessed(msgId, contactKeys);
+          continue;
+        }
         for (const k of contactKeys) {
           handledContactsThisCycle.add(k);
         }
-        console.log(`\u{1F916} [Auto-Reply Polling Trigger]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        console.log(`\u{1F916} [Auto-Reply Polling Fallback]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
         const { isDuplicate } = enqueueInboundMessageJob({
           messageId: msgId || lastMsg.id,
           conversationId: conv.sessionId,
@@ -6127,7 +6143,11 @@ function mergeWithLocalMessages(sessionId, evoList, existingList = [], customerP
       }
     }
   }
-  combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  combined.sort((a, b) => {
+    const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    if (diff !== 0) return diff;
+    return (a.sender === "customer" ? 0 : 1) - (b.sender === "customer" ? 0 : 1);
+  });
   const deduped = [];
   const seenConfirmedKeys = /* @__PURE__ */ new Set();
   for (const m of combined) {
@@ -6260,7 +6280,11 @@ async function loadEvolutionMessagesForChat(sessionId) {
       const m = parseSingleEvolutionMessage(rec, conv?.customerName || fallbackName);
       if (m) parsedMessages.push(m);
     }
-    parsedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    parsedMessages.sort((a, b) => {
+      const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      if (diff !== 0) return diff;
+      return (a.sender === "customer" ? 0 : 1) - (b.sender === "customer" ? 0 : 1);
+    });
     const unique = [];
     const seen = /* @__PURE__ */ new Set();
     const msgById = /* @__PURE__ */ new Map();
@@ -6331,33 +6355,6 @@ async function loadEvolutionMessagesForChat(sessionId) {
         conv.lastTimestamp = latest.timestamp;
         conv.lastMessagePreview = latest.content || conv.lastMessagePreview;
         conv.lastMessageType = latest.type;
-      }
-      if (!isFirstEvolutionSync && appConfig.globalAiActive && conv.aiEnabled && !isWhatsAppGroup(conv.sessionId) && !isWhatsAppGroup(conv.customerPhone) && latest && latest.sender === "customer") {
-        const cleanPhone2 = (conv.customerPhone || "").replace(/\D/g, "");
-        const isInternalTeam = cleanPhone2 === appConfig.evolution.teamPhone || cleanPhone2 === appConfig.evolution.adminPhone || conv.customerName.toLowerCase().includes("soporte todo lapto");
-        const msgTimeMs = new Date(latest.timestamp).getTime();
-        const ageMs = getEffectiveCurrentDate().getTime() - msgTimeMs;
-        const msgId = normalizeMsgIdKey(latest.evolutionMessageId || latest.id);
-        const contactKeys = getConversationContactKeys(conv);
-        if (!isInternalTeam && msgTimeMs >= botStartupCutoffMs - 2e3 && ageMs <= 10 * 60 * 1e3 && !isMessageIdAlreadyProcessed(msgId, contactKeys) && !contactKeys.some((k) => isBotLockActive(k))) {
-          const skipCheck = shouldSkipBotReply(conv, latest, "live_evolution_poll");
-          if (!skipCheck.skip) {
-            console.log(`\u{1F916} [Active Chat Fast Trigger]: Encolando respuesta a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
-            const { isDuplicate } = enqueueInboundMessageJob({
-              messageId: msgId || latest.id,
-              conversationId: conv.sessionId,
-              customer: conv.customerName,
-              customerPhone: conv.customerPhone,
-              instance: appConfig.evolution?.instance || "todolapto",
-              contentType: latest.type
-            });
-            if (!isDuplicate) {
-              processPersistentQueueTick().catch(
-                (err) => console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err?.message || err)
-              );
-            }
-          }
-        }
       }
     }
     return mergedMessages;
@@ -6916,6 +6913,153 @@ function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
     }
   }
   return { skip: false };
+}
+async function hasEvolutionAlreadyAnsweredSince(conv, customerMsg) {
+  const customerTimeMs = new Date(customerMsg.timestamp).getTime();
+  const customerEvoId = customerMsg.evolutionMessageId || customerMsg.id.replace(/^evo-/, "");
+  if (conv.messages && conv.messages.length > 0) {
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const m = conv.messages[i];
+      if (m.sender !== "customer") {
+        const mTime = new Date(m.timestamp).getTime();
+        if (mTime >= customerTimeMs - 3e3) {
+          return { answered: true, latestOutgoing: m };
+        }
+      }
+    }
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  const now = Date.now();
+  for (const k of contactKeys) {
+    const prevReply = lastBotReplyByContactKey.get(k);
+    if (prevReply && now - prevReply.timestamp < 6e4) {
+      if (prevReply.customerMsgId === customerEvoId || prevReply.customerMsgId === customerMsg.id) {
+        return { answered: true };
+      }
+    }
+  }
+  if (!appConfig.evolution.serverUrl || !appConfig.evolution.apiKey) {
+    return { answered: false };
+  }
+  try {
+    const url = `${appConfig.evolution.serverUrl.replace(/\/$/, "")}/chat/findMessages/${appConfig.evolution.instance}`;
+    const jids = /* @__PURE__ */ new Set([conv.sessionId]);
+    const related = relatedJidsBySession.get(conv.sessionId);
+    if (related) {
+      for (const r of related) jids.add(r);
+    }
+    const cleanPhone = (conv.customerPhone || "").replace(/\D/g, "");
+    if (cleanPhone.length >= 10 && cleanPhone.length <= 13) {
+      const std = cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone;
+      jids.add(`${std}@s.whatsapp.net`);
+      for (const [lidKey, mappedPhone] of lidToPhoneMap.entries()) {
+        if (mappedPhone === std || mappedPhone === cleanPhone) {
+          jids.add(lidKey.includes("@") ? lidKey : `${lidKey}@lid`);
+        }
+      }
+    }
+    const responses = await Promise.all(
+      Array.from(jids).slice(0, 4).map(
+        (jid) => fetch(url, {
+          method: "POST",
+          headers: {
+            apikey: appConfig.evolution.apiKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            where: {
+              key: {
+                remoteJid: jid
+              }
+            },
+            limit: 15
+          }),
+          signal: AbortSignal.timeout(5e3)
+        }).then((r) => r.ok ? r.json() : null).catch(() => null)
+      )
+    );
+    const records = [];
+    for (const data of responses) {
+      if (!data) continue;
+      const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
+      for (const rec of recs) {
+        if (doesRecordBelongToConversation(rec, jids, cleanPhone)) {
+          records.push(rec);
+        }
+      }
+    }
+    if (records.length === 0) return { answered: false };
+    const parsed = [];
+    for (const rec of records) {
+      const m = parseSingleEvolutionMessage(rec, conv.customerName || "Cliente");
+      if (m) parsed.push(m);
+    }
+    if (parsed.length === 0) return { answered: false };
+    const unique = [];
+    const seenIds = /* @__PURE__ */ new Set();
+    for (const m of parsed) {
+      const k = m.evolutionMessageId || m.id;
+      if (!seenIds.has(k)) {
+        seenIds.add(k);
+        unique.push(m);
+      }
+    }
+    unique.sort((a, b) => {
+      const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      if (diff !== 0) return diff;
+      return (a.sender === "customer" ? 0 : 1) - (b.sender === "customer" ? 0 : 1);
+    });
+    let addedAny = false;
+    for (const m of unique) {
+      if (!conv.messages.some(
+        (existing) => m.evolutionMessageId && existing.evolutionMessageId === m.evolutionMessageId || existing.id === m.id
+      )) {
+        conv.messages.push(m);
+        addedAny = true;
+      }
+    }
+    if (addedAny) {
+      conv.messages = mergeWithLocalMessages(conv.sessionId, unique, conv.messages, conv.customerPhone);
+      const newest = conv.messages[conv.messages.length - 1];
+      if (newest) {
+        conv.lastTimestamp = newest.timestamp;
+        conv.lastMessagePreview = newest.content;
+        conv.lastMessageType = newest.type;
+      }
+      broadcastEvent("conversations_update", { count: conversations.length });
+    }
+    const customerTimeMs2 = new Date(customerMsg.timestamp).getTime();
+    const customerEvoId2 = customerMsg.evolutionMessageId || customerMsg.id.replace(/^evo-/, "");
+    const customerIdx = unique.findIndex(
+      (m) => m.evolutionMessageId === customerEvoId2 || m.id === customerMsg.id
+    );
+    if (customerIdx >= 0) {
+      const outgoingAfter = unique.slice(customerIdx + 1).find((m) => m.sender !== "customer");
+      if (outgoingAfter) {
+        return { answered: true, latestOutgoing: outgoingAfter };
+      }
+    }
+    const outgoingRecent = unique.filter(
+      (m) => m.sender !== "customer" && m.evolutionMessageId !== customerEvoId2 && new Date(m.timestamp).getTime() >= customerTimeMs2 - 1500
+    ).pop();
+    if (outgoingRecent) {
+      return { answered: true, latestOutgoing: outgoingRecent };
+    }
+    return { answered: false };
+  } catch {
+    const contactKeys2 = getConversationContactKeys(conv);
+    const now2 = Date.now();
+    for (const k of contactKeys2) {
+      const cleanK = k.replace(/@.*$/, "").replace(/\D/g, "") || k;
+      for (const [key, ts] of recentOutboundDispatches.entries()) {
+        if (key.startsWith(`${cleanK}::`) && now2 - ts < 6e4) {
+          return { answered: true };
+        }
+      }
+    }
+    return { answered: false };
+  }
+  return { answered: false };
 }
 var recentOutboundDispatches = /* @__PURE__ */ new Map();
 var lastBotSendTimeByPhone = /* @__PURE__ */ new Map();
@@ -11901,6 +12045,33 @@ ${p.website_url ? `\u{1F517} https://todolapto.com.do${p.website_url}
       details: `Respuesta validada y sanitizada (${toolsExecuted.length} herramientas ejecutadas)`
     });
     renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
+    if (triggerSource !== "manual_crm_trigger") {
+      const elapsedSinceStart = Date.now() - startTime;
+      if (elapsedSinceStart < 1100) {
+        await sleepMs(1100 - elapsedSinceStart);
+      }
+      const evoPreCheck = await hasEvolutionAlreadyAnsweredSince(conv, targetCustomerMsg);
+      if (evoPreCheck.answered) {
+        if (initialMsgId) {
+          markMessageIdProcessed(initialMsgId, contactKeys, {
+            correlationId: effCorrelationId,
+            conversationId: conv.sessionId,
+            responseSent: true
+          });
+        }
+        console.log(`\u{1F6E1}\uFE0F [Pre-Send Deduplication Guard]: Mensaje de ${conv.customerName} ya fue respondido en Evolution API. Evitando duplicado.`);
+        return {
+          success: true,
+          skipped: true,
+          reply: aiReply,
+          providerUsed,
+          modelUsed,
+          toolsExecuted: [],
+          sentToWhatsApp: false,
+          correlationId: effCorrelationId
+        };
+      }
+    }
     recordDiagnosticStage({
       correlationId: effCorrelationId,
       stage: "WHATSAPP_SEND_STARTED",

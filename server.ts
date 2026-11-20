@@ -4411,9 +4411,12 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
     }
 
     // Process records from oldest to newest so conversation order and lastMessage are chronological
-    const sortedRecords = [...rawRecords].sort(
-      (a, b) => Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0)
-    );
+    // When a customer message and fast bot reply share the exact same Unix second, customer (fromMe:false) must sort first
+    const sortedRecords = [...rawRecords].sort((a, b) => {
+      const diff = Number(a?.messageTimestamp || 0) - Number(b?.messageTimestamp || 0);
+      if (diff !== 0) return diff;
+      return (a?.key?.fromMe ? 1 : 0) - (b?.key?.fromMe ? 1 : 0);
+    });
 
     let hasChanges = false;
 
@@ -4522,7 +4525,11 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         if (!alreadyExists) {
           hydrateQuotedMessageById(parsedMsg, conv.messages, conv.customerName || pushName);
           conv.messages.push(parsedMsg);
-          conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          conv.messages.sort((a, b) => {
+            const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            if (diff !== 0) return diff;
+            return (a.sender === 'customer' ? 0 : 1) - (b.sender === 'customer' ? 0 : 1);
+          });
           if (!key.fromMe) {
             conv.unreadCount = (conv.unreadCount || 0) + 1;
           }
@@ -4531,13 +4538,14 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
           hasChanges = true;
         }
 
-        if (new Date(parsedMsg.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()) {
-          if (conv.lastTimestamp !== parsedMsg.timestamp || conv.lastMessagePreview !== parsedMsg.content) {
+        const latestInConv = conv.messages[conv.messages.length - 1];
+        if (latestInConv) {
+          if (conv.lastTimestamp !== latestInConv.timestamp || conv.lastMessagePreview !== latestInConv.content) {
             hasChanges = true;
           }
-          conv.lastTimestamp = parsedMsg.timestamp;
-          conv.lastMessagePreview = parsedMsg.content;
-          conv.lastMessageType = parsedMsg.type;
+          conv.lastTimestamp = latestInConv.timestamp;
+          conv.lastMessagePreview = latestInConv.content;
+          conv.lastMessageType = latestInConv.type;
         }
       }
     }
@@ -4562,8 +4570,11 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       }
     }
 
-    // Auto-reply to recent unanswered customer messages with strict contact identity deduplication
-    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
+    // Auto-reply fallback polling:
+    // ONLY run on the active webhook server (never on secondary local dev PCs racing with vendema.site),
+    // and ONLY after a 15-second grace window so the real-time Webhook always answers first without race conditions!
+    const isSecondaryLocalDevWithoutWebhook = process.platform === 'win32' && !lastWebhookReceivedAt;
+    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer() && !isSecondaryLocalDevWithoutWebhook) {
       const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = new Set<string>();
 
@@ -4590,6 +4601,11 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
 
+        // Wait at least 15s before polling fallback triggers so the real-time webhook has full priority
+        if (ageMs < 15000) {
+          continue;
+        }
+
         // Only reply to NEW messages that arrived after system startup/reset cutoff (and within the last 10 minutes)
         if (msgTimeMs < botStartupCutoffMs - 3000 || ageMs > 10 * 60 * 1000) {
           const contactKeys = getConversationContactKeys(conv);
@@ -4615,12 +4631,19 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
         const skipCheck = shouldSkipBotReply(conv, lastMsg, 'live_evolution_poll');
         if (skipCheck.skip) continue;
 
+        // Verify live against Evolution API that no webhook or other instance already answered this message
+        const evoCheck = await hasEvolutionAlreadyAnsweredSince(conv, lastMsg);
+        if (evoCheck.answered) {
+          markMessageIdProcessed(msgId, contactKeys);
+          continue;
+        }
+
         // Mark contact as handled in this cycle ONLY (acquireBotLock inside triggerSalesBotReplyForConversation owns inFlightBotKeys)
         for (const k of contactKeys) {
           handledContactsThisCycle.add(k);
         }
 
-        console.log(`🤖 [Auto-Reply Polling Trigger]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
+        console.log(`🤖 [Auto-Reply Polling Fallback]: Encolando mensaje de ${conv.customerName} ("${lastMsg.content.slice(0, 30)}")`);
         const { isDuplicate } = enqueueInboundMessageJob({
           messageId: msgId || lastMsg.id,
           conversationId: conv.sessionId,
@@ -4809,7 +4832,11 @@ function mergeWithLocalMessages(
     }
   }
 
-  combined.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  combined.sort((a, b) => {
+    const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    if (diff !== 0) return diff;
+    return (a.sender === 'customer' ? 0 : 1) - (b.sender === 'customer' ? 0 : 1);
+  });
 
   // Discard any lingering optimistic local msg- records that match a confirmed WhatsApp message
   const deduped: ChatMessage[] = [];
@@ -4978,8 +5005,12 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
       if (m) parsedMessages.push(m);
     }
 
-    // Sort oldest to newest
-    parsedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    // Sort oldest to newest (tie-breaking customer before assistant on identical 1s timestamps)
+    parsedMessages.sort((a, b) => {
+      const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      if (diff !== 0) return diff;
+      return (a.sender === 'customer' ? 0 : 1) - (b.sender === 'customer' ? 0 : 1);
+    });
 
     // Deduplicate by evolutionMessageId
     const unique: ChatMessage[] = [];
@@ -5062,53 +5093,6 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
         conv.lastTimestamp = latest.timestamp;
         conv.lastMessagePreview = latest.content || conv.lastMessagePreview;
         conv.lastMessageType = latest.type;
-      }
-
-      // Immediately trigger auto-reply if active chat refresh discovered a brand-new unanswered customer message after startup cutoff!
-      if (
-        !isFirstEvolutionSync &&
-        appConfig.globalAiActive &&
-        conv.aiEnabled &&
-        !isWhatsAppGroup(conv.sessionId) &&
-        !isWhatsAppGroup(conv.customerPhone) &&
-        latest &&
-        latest.sender === 'customer'
-      ) {
-        const cleanPhone = (conv.customerPhone || '').replace(/\D/g, '');
-        const isInternalTeam =
-          cleanPhone === appConfig.evolution.teamPhone ||
-          cleanPhone === appConfig.evolution.adminPhone ||
-          conv.customerName.toLowerCase().includes('soporte todo lapto');
-        const msgTimeMs = new Date(latest.timestamp).getTime();
-        const ageMs = getEffectiveCurrentDate().getTime() - msgTimeMs;
-        const msgId = normalizeMsgIdKey(latest.evolutionMessageId || latest.id);
-        const contactKeys = getConversationContactKeys(conv);
-
-        if (
-          !isInternalTeam &&
-          msgTimeMs >= botStartupCutoffMs - 2000 &&
-          ageMs <= 10 * 60 * 1000 &&
-          !isMessageIdAlreadyProcessed(msgId, contactKeys) &&
-          !contactKeys.some(k => isBotLockActive(k))
-        ) {
-          const skipCheck = shouldSkipBotReply(conv, latest, 'live_evolution_poll');
-          if (!skipCheck.skip) {
-            console.log(`🤖 [Active Chat Fast Trigger]: Encolando respuesta a ${conv.customerName} ("${latest.content.slice(0, 35)}")`);
-            const { isDuplicate } = enqueueInboundMessageJob({
-              messageId: msgId || latest.id,
-              conversationId: conv.sessionId,
-              customer: conv.customerName,
-              customerPhone: conv.customerPhone,
-              instance: appConfig.evolution?.instance || 'todolapto',
-              contentType: latest.type,
-            });
-            if (!isDuplicate) {
-              processPersistentQueueTick().catch(err =>
-                console.log(`[Active Chat Trigger Info for ${conv.customerName}]:`, err?.message || err)
-              );
-            }
-          }
-        }
       }
     }
 
@@ -5927,7 +5911,11 @@ async function hasEvolutionAlreadyAnsweredSince(
         unique.push(m);
       }
     }
-    unique.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    unique.sort((a, b) => {
+      const diff = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      if (diff !== 0) return diff;
+      return (a.sender === 'customer' ? 0 : 1) - (b.sender === 'customer' ? 0 : 1);
+    });
 
     // Sync any newly discovered real WhatsApp messages into conv.messages so the CRM displays an exact 1:1 mirror
     let addedAny = false;
@@ -12083,6 +12071,36 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
 
     renewCrossProcessBotLock(contactKeys, effOwnerId, BOT_LOCK_TTL_MS);
 
+    // Pre-send live deduplication check against Evolution API so multiple servers never send duplicate replies
+    if (triggerSource !== 'manual_crm_trigger') {
+      const elapsedSinceStart = Date.now() - startTime;
+      // Ensure outgoing message timestamp in Evolution API (1-second precision) is strictly >= incoming message timestamp + 1s
+      if (elapsedSinceStart < 1100) {
+        await sleepMs(1100 - elapsedSinceStart);
+      }
+      const evoPreCheck = await hasEvolutionAlreadyAnsweredSince(conv, targetCustomerMsg);
+      if (evoPreCheck.answered) {
+        if (initialMsgId) {
+          markMessageIdProcessed(initialMsgId, contactKeys, {
+            correlationId: effCorrelationId,
+            conversationId: conv.sessionId,
+            responseSent: true,
+          });
+        }
+        console.log(`🛡️ [Pre-Send Deduplication Guard]: Mensaje de ${conv.customerName} ya fue respondido en Evolution API. Evitando duplicado.`);
+        return {
+          success: true,
+          skipped: true,
+          reply: aiReply,
+          providerUsed,
+          modelUsed,
+          toolsExecuted: [],
+          sentToWhatsApp: false,
+          correlationId: effCorrelationId,
+        };
+      }
+    }
+
     recordDiagnosticStage({
       correlationId: effCorrelationId,
       stage: 'WHATSAPP_SEND_STARTED',
@@ -12094,7 +12112,6 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       details: `Enviando respuesta a WhatsApp (${conv.customerPhone || conv.sessionId})`,
     });
 
-    // Fast immediate delivery (150ms) so Evolution API records the outgoing reply immediately and prevents any secondary cloud preview container from sending a duplicate
     const targetDelayMs = 150;
     const sendRes = await sendEvolutionMessageToConversation(
       conv,
