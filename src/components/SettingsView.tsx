@@ -327,21 +327,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
           const msg = JSON.parse(event.data);
           if (msg.type === 'evolution_status' && msg.payload) {
             if (msg.payload.connected) {
-              setQrStatus(prev => ({
-                ...prev,
-                loading: false,
-                connected: true,
-                state: 'open',
-                qrBase64: null,
-                pairingCode: null,
-                message: '¡WhatsApp vinculado y activo en tiempo real!',
-              }));
-              fetchQrAndState(false, true);
+              setQrStatus(prev => {
+                if (!prev.connected) {
+                  setTimeout(() => fetchQrAndState(false, true), 300);
+                }
+                return {
+                  ...prev,
+                  loading: false,
+                  connected: true,
+                  state: 'open',
+                  qrBase64: null,
+                  pairingCode: null,
+                  message: undefined,
+                };
+              });
             } else {
               setQrStatus(prev => ({
                 ...prev,
                 connected: false,
                 state: msg.payload.state || 'connecting',
+                message: undefined,
               }));
             }
           } else if (msg.type === 'evolution_qr' && msg.payload?.qrBase64) {
@@ -484,7 +489,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
     setQrStatus(prev => ({ ...prev, loading: true }));
     try {
       await fetch('/api/evolution/restart', { method: 'POST' });
-      await fetchQrAndState(true);
+      await fetchQrAndState(false);
     } catch (err: any) {
       setQrStatus(prev => ({ ...prev, loading: false, message: err.message }));
     }

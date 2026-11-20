@@ -4202,39 +4202,37 @@ function savePersistedConversations(): void {
  * Clears all live & persisted WhatsApp chats when the instance disconnects,
  * preventing stale chats from remaining visible or auto-replying while unlinked.
  */
-function clearAllChatsOnWhatsAppDisconnect(disconnectedState = 'close'): void {
-  // NEVER clear chats when connecting or open — only on explicit disconnect / logout
-  if (disconnectedState === 'connecting' || disconnectedState === 'open') {
+function clearAllChatsOnWhatsAppDisconnect(disconnectedState = 'close', forceWipeChats = false): void {
+  if (disconnectedState === 'open') {
     return;
   }
-  const hadChats = conversations.length > 0;
   const wasConnected = evolutionLastKnownState === 'open' || appConfig.evolution.connected;
 
   evolutionLastKnownState = disconnectedState;
   appConfig.evolution.connected = false;
-  evolutionQrCache.ownerJid = null;
-  evolutionQrCache.profileName = null;
-  evolutionQrCache.profilePicUrl = null;
 
-  conversations = [];
-  relatedJidsBySession.clear();
-  lastChatMessagesFetchBySession.clear();
-  inFlightBotKeys.clear();
-  if (persistentJobQueue.length > 0) {
-    persistentJobQueue = persistentJobQueue.filter(
-      j => j.status === 'COMPLETED' || j.status === 'DEAD_LETTER'
-    );
-    savePersistentJobQueue();
-  }
-
-  try {
-    writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, '[]');
-  } catch {}
-
-  if (hadChats || wasConnected) {
-    console.log(`🔌 [WhatsApp Disconnected (${disconnectedState})]: Todos los chats fueron limpiados del sistema.`);
+  if (forceWipeChats) {
+    evolutionQrCache.ownerJid = null;
+    evolutionQrCache.profileName = null;
+    evolutionQrCache.profilePicUrl = null;
+    conversations = [];
+    relatedJidsBySession.clear();
+    lastChatMessagesFetchBySession.clear();
+    inFlightBotKeys.clear();
+    if (persistentJobQueue.length > 0) {
+      persistentJobQueue = persistentJobQueue.filter(
+        j => j.status === 'COMPLETED' || j.status === 'DEAD_LETTER'
+      );
+      savePersistentJobQueue();
+    }
+    try {
+      writeFileAtomicSync(CONVERSATIONS_CACHE_FILE, '[]');
+    } catch {}
+    console.log(`🔌 [WhatsApp Logout (${disconnectedState})]: Sesión desvinculada manualmente.`);
     broadcastEvent('evolution_status', { connected: false, state: disconnectedState });
     broadcastEvent('conversations_update', { count: 0, cleared: true });
+  } else if (wasConnected) {
+    broadcastEvent('evolution_status', { connected: false, state: disconnectedState });
   }
 }
 
@@ -4365,36 +4363,19 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
     const baseUrl = (appConfig.evolution.serverUrl || '').replace(/\/$/, '');
     const instance = appConfig.evolution.instance;
 
-    // 1. Lightweight connectionState check (< 4s). Never run DB queries on Evolution API if socket is not 'open'
-    // so we never block Baileys WebSocket during QR pairing or reconnection!
+    // 1. Lightweight connectionState check (< 4s). Only consider socket truly open when connectionState reports 'open'
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
       headers: { apikey: appConfig.evolution.apiKey },
       signal: AbortSignal.timeout(4000),
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
-    let currentState = stateData?.instance?.state || stateData?.state || 'close';
-
-    // In Evolution API v2, connectionState can briefly report 'connecting' while instance connectionStatus is already 'open'
-    if (currentState !== 'open') {
-      const instRes = await fetch(`${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`, {
-        headers: { apikey: appConfig.evolution.apiKey },
-        signal: AbortSignal.timeout(4000),
-      }).catch(() => null);
-      if (instRes && instRes.ok) {
-        const insts = await instRes.json().catch(() => []);
-        const inst = Array.isArray(insts) ? (insts.find((i: any) => i.name === instance || i.instanceName === instance) || insts[0]) : null;
-        if (inst?.connectionStatus === 'open') {
-          currentState = 'open';
-        }
-      }
-    }
+    const currentState = stateData?.instance?.state || stateData?.state || 'close';
 
     if (currentState !== 'open') {
-      if (currentState === 'connecting') {
-        // Never wipe chats or disconnect while connecting
-        return conversations;
+      if (conversations.length === 0) {
+        await quickSeedConversationsFromRecentMessages().catch(() => {});
       }
-      clearAllChatsOnWhatsAppDisconnect(currentState);
+      clearAllChatsOnWhatsAppDisconnect(currentState, false);
       return conversations;
     }
 
@@ -4403,8 +4384,6 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       appConfig.evolution.connected = true;
       evolutionQrCache.qrBase64 = null;
       evolutionQrCache.pairingCode = null;
-      botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
-      isFirstEvolutionSync = true;
       broadcastEvent('evolution_status', { connected: true, state: 'open' });
     }
 
@@ -5729,10 +5708,10 @@ function shouldSkipBotReply(
     return { skip: true, reason: `Mensaje ID "${incomingId}" ya registrado como procesado.` };
   }
 
-  // 2a-cutoff. Only auto-reply to new messages that arrived after system startup/reset (per user configuration)
-  if (triggerSource !== 'manual_crm_trigger' && lastCustomerMsg.timestamp) {
+  // 2a-cutoff. Only auto-reply to new messages that arrived after system startup/reset (live webhooks within 10m are always allowed)
+  if (triggerSource !== 'manual_crm_trigger' && triggerSource !== 'evolution_webhook' && lastCustomerMsg.timestamp) {
     const msgTimeMs = new Date(lastCustomerMsg.timestamp).getTime();
-    if (msgTimeMs > 0 && msgTimeMs < botStartupCutoffMs - 3000) {
+    if (msgTimeMs > 0 && msgTimeMs < botStartupCutoffMs - 60000) {
       if (incomingId) {
         markMessageIdProcessed(incomingId, keys);
       }
@@ -6033,55 +6012,23 @@ async function ensureEvolutionInstanceConnected(): Promise<boolean> {
   const headers = { apikey: appConfig.evolution.apiKey };
 
   try {
-    // 1. Check current connection state
-    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
-      headers,
-      signal: AbortSignal.timeout(4000),
-    }).catch(() => null);
+    // Poll connectionState up to 4 times (waiting 1s between checks) to allow Baileys natural auto-reconnect.
+    // CRITICAL: NEVER call /instance/connect/:instance here because in Evolution API v2.3.7 calling connect
+    // on an existing session spawns a duplicate makeWASocket closure that fights with the active socket!
+    for (let i = 0; i < 4; i++) {
+      if (i > 0) await sleepMs(1000);
+      const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+        headers,
+        signal: AbortSignal.timeout(3500),
+      }).catch(() => null);
 
-    if (stateRes?.ok) {
-      const data = await stateRes.json().catch(() => null);
-      const state = data?.instance?.state || data?.state;
-      if (state === 'open') {
-        appConfig.evolution.connected = true;
-        return true;
-      }
-      // If currently connecting, wait briefly
-      if (state === 'connecting') {
-        for (let i = 0; i < 3; i++) {
-          await sleepMs(1000);
-          const chk = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
-            headers,
-            signal: AbortSignal.timeout(3000),
-          }).catch(() => null);
-          if (chk?.ok) {
-            const d = await chk.json().catch(() => null);
-            if ((d?.instance?.state || d?.state) === 'open') {
-              appConfig.evolution.connected = true;
-              return true;
-            }
-          }
+      if (stateRes?.ok) {
+        const data = await stateRes.json().catch(() => null);
+        const state = data?.instance?.state || data?.state;
+        if (state === 'open') {
+          appConfig.evolution.connected = true;
+          return true;
         }
-      }
-    }
-
-    // 2. Trigger connect (non-destructive)
-    await fetch(`${baseUrl}/instance/connect/${instance}`, {
-      headers,
-      signal: AbortSignal.timeout(4000),
-    }).catch(() => null);
-
-    await sleepMs(1200);
-    const verifyRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
-      headers,
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => null);
-    if (verifyRes?.ok) {
-      const vData = await verifyRes.json().catch(() => null);
-      const vState = vData?.instance?.state || vData?.state;
-      if (vState === 'open') {
-        appConfig.evolution.connected = true;
-        return true;
       }
     }
   } catch {
@@ -9127,6 +9074,8 @@ app.post('/api/evolution/test-connection', async (req, res) => {
   }
 });
 
+let lastEvolutionConnectCallAt = 0;
+
 // Get Evolution API Connection State & QR Code for Scanning inside the CRM
 app.get('/api/evolution/qrcode', async (req, res) => {
   if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
@@ -9137,7 +9086,7 @@ app.get('/api/evolution/qrcode', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
-    // 1. Check connectionState (< 5s timeout)
+    // 1. Check live connectionState (< 5s timeout)
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(5000),
@@ -9146,8 +9095,8 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     let currentState: string = stateData?.instance?.state || stateData?.state || 'unknown';
 
-    // In Evolution API v2, always verify fetchInstances if socket is not explicitly 'open' or metadata is needed
-    const shouldFetchMeta = currentState !== 'open' || !evolutionQrCache.ownerJid || (Date.now() - evolutionQrCache.lastMetaFetchAt > 15000);
+    // Fetch instance metadata (ownerJid, profileName) without falsely overriding 'close'/'connecting' socket state
+    const shouldFetchMeta = !evolutionQrCache.ownerJid || (Date.now() - evolutionQrCache.lastMetaFetchAt > 15000);
     if (shouldFetchMeta) {
       evolutionQrCache.lastMetaFetchAt = Date.now();
       const instancesRes = await fetch(
@@ -9166,9 +9115,7 @@ app.get('/api/evolution/qrcode', async (req, res) => {
           evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (instRecord.connectionStatus === 'open') {
-            currentState = 'open';
-          } else if (currentState === 'unknown' && instRecord.connectionStatus) {
+          if (currentState === 'unknown' && instRecord.connectionStatus) {
             currentState = instRecord.connectionStatus;
           }
         }
@@ -9181,8 +9128,6 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     if (isConnected) {
       if (evolutionLastKnownState !== 'open') {
         evolutionLastKnownState = 'open';
-        botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
-        isFirstEvolutionSync = true;
         broadcastEvent('evolution_status', { connected: true, state: 'open' });
       }
       appConfig.evolution.connected = true;
@@ -9207,12 +9152,18 @@ app.get('/api/evolution/qrcode', async (req, res) => {
       });
     }
 
-    // 3. Not 'open': only clear chats on real disconnect (never if 'connecting')
-    if (currentState !== 'connecting') {
-      clearAllChatsOnWhatsAppDisconnect(currentState);
-    }
+    // 3. Not 'open': update status without wiping existing conversations
+    clearAllChatsOnWhatsAppDisconnect(currentState, false);
+
+    // Rate-limit /instance/connect/:instance calls so we NEVER spawn duplicate Baileys sockets in Evolution API v2.3.7!
     const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
-    if (forceConnect || !evolutionQrCache.qrBase64 || qrAgeMs > 40000) {
+    const sinceLastConnectCallMs = Date.now() - lastEvolutionConnectCallAt;
+    const shouldRequestNewQr =
+      (forceConnect && sinceLastConnectCallMs > 8000) ||
+      ((!evolutionQrCache.qrBase64 || qrAgeMs > 45000) && sinceLastConnectCallMs > 25000);
+
+    if (shouldRequestNewQr) {
+      lastEvolutionConnectCallAt = Date.now();
       const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
         headers: { apikey: apiKey },
         signal: AbortSignal.timeout(7000),
@@ -9224,8 +9175,6 @@ app.get('/api/evolution/qrcode', async (req, res) => {
           evolutionLastKnownState = 'open';
           appConfig.evolution.connected = true;
           evolutionQrCache.qrBase64 = null;
-          botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 10000;
-          isFirstEvolutionSync = true;
           return res.json({
             success: true,
             instance,
@@ -9275,27 +9224,63 @@ app.post('/api/evolution/logout', async (req, res) => {
     evolutionQrCache.qrBase64 = null;
     evolutionQrCache.pairingCode = null;
     evolutionQrCache.generatedAt = 0;
-    clearAllChatsOnWhatsAppDisconnect('close');
+    clearAllChatsOnWhatsAppDisconnect('close', false);
 
-    await fetch(`${baseUrl}/instance/logout/${instance}`, {
+    const logoutRes = await fetch(`${baseUrl}/instance/logout/${instance}`, {
       method: 'DELETE',
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(6000),
     }).catch(() => null);
 
-    // Wait briefly for Baileys socket teardown then request a fresh QR code
-    await new Promise(r => setTimeout(r, 1500));
-    const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
-      headers: { apikey: apiKey },
-      signal: AbortSignal.timeout(7000),
-    }).catch(() => null);
-    const connectData = connectRes && connectRes.ok ? await connectRes.json().catch(() => ({})) : {};
-    const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
-    const newPairing = connectData?.pairingCode || null;
-    if (newQr) {
-      evolutionQrCache.qrBase64 = newQr;
-      evolutionQrCache.pairingCode = newPairing;
-      evolutionQrCache.generatedAt = Date.now();
+    // In Evolution API v2.3.7, if the instance is stuck in a zombie socket loop, logout returns 400/500.
+    // Delete and recreate the instance cleanly so old zombie makeWASocket closures are destroyed.
+    if (!logoutRes || !logoutRes.ok) {
+      await fetch(`${baseUrl}/instance/delete/${instance}`, {
+        method: 'DELETE',
+        headers: { apikey: apiKey },
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+      await new Promise(r => setTimeout(r, 2000));
+      const createRes = await fetch(`${baseUrl}/instance/create`, {
+        method: 'POST',
+        headers: { apikey: apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instanceName: instance,
+          token: apiKey,
+          integration: 'WHATSAPP-BAILEYS',
+          qrcode: true,
+        }),
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => null);
+      if (createRes && createRes.ok) {
+        const createData = await createRes.json().catch(() => ({}));
+        const createdQr = createData?.qrcode?.base64 || createData?.base64 || null;
+        const createdPairing = createData?.qrcode?.pairingCode || createData?.pairingCode || null;
+        if (createdQr) {
+          evolutionQrCache.qrBase64 = createdQr;
+          evolutionQrCache.pairingCode = createdPairing;
+          evolutionQrCache.generatedAt = Date.now();
+          lastEvolutionConnectCallAt = Date.now();
+        }
+      }
+      ensureEvolutionWebhookRegistered().catch(() => {});
+    }
+
+    if (!evolutionQrCache.qrBase64) {
+      await new Promise(r => setTimeout(r, 1500));
+      lastEvolutionConnectCallAt = Date.now();
+      const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
+        headers: { apikey: apiKey },
+        signal: AbortSignal.timeout(7000),
+      }).catch(() => null);
+      const connectData = connectRes && connectRes.ok ? await connectRes.json().catch(() => ({})) : {};
+      const newQr = connectData?.base64 || connectData?.qrcode?.base64 || null;
+      const newPairing = connectData?.pairingCode || null;
+      if (newQr) {
+        evolutionQrCache.qrBase64 = newQr;
+        evolutionQrCache.pairingCode = newPairing;
+        evolutionQrCache.generatedAt = Date.now();
+      }
     }
 
     res.json({
@@ -9304,7 +9289,7 @@ app.post('/api/evolution/logout', async (req, res) => {
       connected: false,
       qrBase64: evolutionQrCache.qrBase64,
       pairingCode: evolutionQrCache.pairingCode,
-      message: 'Sesión desvinculada. Escanea el nuevo código QR con WhatsApp.',
+      message: 'Sesión reiniciada limpiamente. Escanea el nuevo código QR con WhatsApp.',
     });
   } catch (err: any) {
     res.status(500).json({
@@ -9319,10 +9304,27 @@ app.post('/api/evolution/restart', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
+    // Check if already open — in Evolution API v2.3.7 calling restart on an open socket spawns a duplicate socket!
+    const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
+    const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
+    if ((stateData?.instance?.state || stateData?.state) === 'open') {
+      return res.json({
+        success: true,
+        state: 'open',
+        connected: true,
+        qrBase64: null,
+        pairingCode: null,
+        message: `La instancia "${instance}" ya está conectada y activa.`,
+      });
+    }
+
     evolutionQrCache.qrBase64 = null;
     evolutionQrCache.generatedAt = 0;
-    const r = await fetch(`${baseUrl}/instance/restart/${instance}`, {
-      method: 'POST',
+    lastEvolutionConnectCallAt = Date.now();
+    const r = await fetch(`${baseUrl}/instance/connect/${instance}`, {
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(10000),
     });
@@ -9346,8 +9348,8 @@ app.post('/api/evolution/restart', async (req, res) => {
       qrBase64: evolutionQrCache.qrBase64,
       pairingCode: evolutionQrCache.pairingCode,
       message: r.ok
-        ? `Instancia "${instance}" reiniciada correctamente.${newQr ? ' Código QR actualizado.' : ''}`
-        : `Evolution API devolvió estado ${r.status} al reiniciar.`,
+        ? `Instancia "${instance}" reconectada.${newQr ? ' Código QR actualizado.' : ''}`
+        : `Evolution API devolvió estado ${r.status} al reconectar.`,
     });
   } catch (err: any) {
     res.status(500).json({
@@ -9396,9 +9398,7 @@ app.get('/api/conversations', async (req, res) => {
   if (conversations.length === 0) {
     loadPersistedConversations();
   }
-  if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown' && evolutionLastKnownState !== 'connecting') {
-    conversations = [];
-  } else if (conversations.length === 0) {
+  if (conversations.length === 0) {
     await syncEvolutionChats().catch(() => {});
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
@@ -9427,9 +9427,6 @@ app.get('/api/conversations/:sessionId/messages', async (req, res) => {
     const sessionId = decodeURIComponent(rawSessionId).trim();
     if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
       return res.json({ success: true, sessionId: '', messages: [] });
-    }
-    if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
-      return res.json({ success: true, sessionId, messages: [] });
     }
     const conv = findConversationByAnyId(sessionId);
     if (conv) conv.unreadCount = 0;
@@ -9483,9 +9480,6 @@ app.get('/api/messages', async (req, res) => {
     const sessionId = (req.query.sessionId as string || '').trim();
     if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
       return res.json({ success: true, sessionId: '', messages: [] });
-    }
-    if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open' && evolutionLastKnownState !== 'unknown') {
-      return res.json({ success: true, sessionId, messages: [] });
     }
     const messages = await loadEvolutionMessagesForChat(sessionId);
     const conv = findConversationByAnyId(sessionId);
@@ -12760,15 +12754,15 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
       ''
     ).toString().toLowerCase();
     if (newState === 'open' || newState === 'connected') {
-      evolutionLastKnownState = 'open';
-      appConfig.evolution.connected = true;
-      evolutionQrCache.qrBase64 = null;
-      evolutionQrCache.pairingCode = null;
-      botStartupCutoffMs = getEffectiveCurrentDate().getTime();
-      isFirstEvolutionSync = true;
-      broadcastEvent('evolution_status', { connected: true, state: 'open' });
-    } else if (newState === 'close' || newState === 'connecting' || newState === 'closed' || newState === 'logged_out') {
-      clearAllChatsOnWhatsAppDisconnect(newState);
+      if (evolutionLastKnownState !== 'open') {
+        evolutionLastKnownState = 'open';
+        appConfig.evolution.connected = true;
+        evolutionQrCache.qrBase64 = null;
+        evolutionQrCache.pairingCode = null;
+        broadcastEvent('evolution_status', { connected: true, state: 'open' });
+      }
+    } else if (newState === 'close' || newState === 'closed' || newState === 'logged_out') {
+      clearAllChatsOnWhatsAppDisconnect('close', false);
     }
     return;
   }
@@ -12814,10 +12808,11 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
       continue;
     }
 
-    // Ignore historical messages (> 3 minutes old) pushed during WhatsApp QR device linking sync
+    // Ignore historical messages (> 15 minutes old) pushed during WhatsApp QR device linking sync
     const rawMsgTs = Number(messageData?.messageTimestamp || 0);
-    const msgTimeMs = rawMsgTs > 0 ? (rawMsgTs < 1e12 ? rawMsgTs * 1000 : rawMsgTs) : Date.now();
-    if (Date.now() - msgTimeMs > 3 * 60 * 1000) {
+    const effectiveNowMs = getEffectiveCurrentDate().getTime();
+    const msgTimeMs = rawMsgTs > 0 ? (rawMsgTs < 1e12 ? rawMsgTs * 1000 : rawMsgTs) : effectiveNowMs;
+    if (effectiveNowMs - msgTimeMs > 15 * 60 * 1000) {
       markMessageIdProcessed(messageId, [key.remoteJid || '']);
       continue;
     }
