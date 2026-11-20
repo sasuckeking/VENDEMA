@@ -13148,30 +13148,10 @@ async function ensureEvolutionWebhookRegistered(preferredUrl?: string): Promise<
 
     const configuredWebhook = (
       preferredUrl ||
+      process.env.EVOLUTION_WEBHOOK_URL ||
       (appConfig.evolution as any).webhookUrl ||
-      ''
+      'https://vendema.site/api/webhook/evolution'
     ).trim();
-    if (!configuredWebhook) {
-      if (isEnabled) {
-        console.log(`🛡️ [Webhook Guard]: Desactivando webhook fantasma en Evolution API para evitar duplicados.`);
-        await fetch(`${baseUrl}/webhook/set/${instance}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: appConfig.evolution.apiKey,
-          },
-          body: JSON.stringify({
-            webhook: {
-              enabled: false,
-              url: 'https://disabled-webhook.local',
-              events: [],
-            },
-          }),
-          signal: AbortSignal.timeout(6000),
-        }).catch(() => {});
-      }
-      return;
-    }
 
     const targetUrl = configuredWebhook;
     if (isEnabled && registeredUrl === targetUrl && hasAllEvents) {
