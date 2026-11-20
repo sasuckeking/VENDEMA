@@ -59,6 +59,7 @@ import {
   loadHolidaysFromSupabase,
   syncHolidaysToSupabase,
   loadAiConfigFromSupabase,
+  loadFullSystemConfigFromSupabase,
   autoSyncConfigToSupabase,
   autoSyncOrderToSupabase,
   autoSyncMessageToSupabase,
@@ -610,11 +611,18 @@ function loadPersistedConfig() {
           !rawSavedEvoKey || rawSavedEvoKey === '52700613C062-421C-B800-FBC560B54BB4'
             ? process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A'
             : rawSavedEvoKey;
+
+        let effectiveServerUrl = (saved.evolution.serverUrl || '').trim();
+        if (!effectiveServerUrl || /\.supabase\.co/i.test(effectiveServerUrl)) {
+          effectiveServerUrl = process.env.EVOLUTION_SERVER_URL || 'https://evolution-evolution-api.blrfh6.easypanel.host';
+        }
+        const effectiveInstance = (saved.evolution.instance || '').trim() || process.env.EVOLUTION_INSTANCE || 'todolapto';
+
         appConfig.evolution = {
           ...appConfig.evolution,
           ...saved.evolution,
-          serverUrl: saved.evolution.serverUrl || process.env.EVOLUTION_SERVER_URL || appConfig.evolution.serverUrl,
-          instance: saved.evolution.instance || process.env.EVOLUTION_INSTANCE || appConfig.evolution.instance,
+          serverUrl: effectiveServerUrl,
+          instance: effectiveInstance,
           apiKey: effectiveEvoKey,
           teamPhone: saved.evolution.teamPhone || process.env.EVOLUTION_TEAM_PHONE || appConfig.evolution.teamPhone,
           adminPhone: saved.evolution.adminPhone || process.env.EVOLUTION_ADMIN_PHONE || appConfig.evolution.adminPhone,
@@ -1062,34 +1070,88 @@ async function hydrateAndSyncHolidaysWithSupabase(): Promise<void> {
   }
 }
 
-async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
+async function hydrateAndSyncFullConfigWithSupabase(): Promise<void> {
   try {
-    const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
-    if (remoteAi && typeof remoteAi === 'object' && appConfig.aiProvider) {
-      let updated = false;
-      if (remoteAi.provider && appConfig.aiProvider.provider !== remoteAi.provider) {
-        appConfig.aiProvider.provider = remoteAi.provider;
-        updated = true;
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    let updated = false;
+
+    if (remote) {
+      // 1. Evolution API config sync from Supabase
+      if (remote.evolution_config && typeof remote.evolution_config === 'object') {
+        const evo = remote.evolution_config;
+        const validServerUrl = (evo.serverUrl || '').trim();
+        if (validServerUrl && !/\.supabase\.co/i.test(validServerUrl) && validServerUrl !== appConfig.evolution.serverUrl) {
+          appConfig.evolution.serverUrl = validServerUrl;
+          updated = true;
+        }
+        if (evo.instance && evo.instance.trim() && evo.instance.trim() !== appConfig.evolution.instance) {
+          appConfig.evolution.instance = evo.instance.trim();
+          updated = true;
+        }
+        if (evo.apiKey && !isMaskedSecret(evo.apiKey) && evo.apiKey.trim() && evo.apiKey.trim() !== appConfig.evolution.apiKey) {
+          appConfig.evolution.apiKey = evo.apiKey.trim();
+          updated = true;
+        }
+        if (evo.teamPhone && evo.teamPhone.trim()) {
+          appConfig.evolution.teamPhone = evo.teamPhone.trim();
+        }
+        if (evo.adminPhone && evo.adminPhone.trim()) {
+          appConfig.evolution.adminPhone = evo.adminPhone.trim();
+        }
       }
-      if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
-        appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
-        updated = true;
+
+      // 2. Odoo ERP config sync from Supabase
+      if (remote.odoo_config && typeof remote.odoo_config === 'object') {
+        const odoo = remote.odoo_config;
+        if (odoo.url && odoo.url.trim()) appConfig.odoo.url = odoo.url.trim();
+        if (odoo.db && odoo.db.trim()) appConfig.odoo.db = odoo.db.trim();
+        if (odoo.uid) appConfig.odoo.uid = Number(odoo.uid);
+        if (odoo.apiKey && !isMaskedSecret(odoo.apiKey) && odoo.apiKey.trim()) {
+          appConfig.odoo.apiKey = odoo.apiKey.trim();
+        }
       }
-      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
-        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
-        updated = true;
+
+      // 3. AI Provider sync from Supabase
+      if (remote.ai_provider && typeof remote.ai_provider === 'object' && appConfig.aiProvider) {
+        const ai = remote.ai_provider;
+        if (ai.provider && appConfig.aiProvider.provider !== ai.provider) {
+          appConfig.aiProvider.provider = ai.provider;
+          updated = true;
+        }
+        if (ai.model && appConfig.aiProvider.model !== ai.model) {
+          appConfig.aiProvider.model = ai.model;
+          updated = true;
+        }
+        if (!appConfig.aiProvider.openaiApiKey && ai.openaiApiKey) {
+          appConfig.aiProvider.openaiApiKey = String(ai.openaiApiKey).trim();
+          updated = true;
+        }
+        if (!appConfig.aiProvider.geminiApiKey && ai.geminiApiKey) {
+          appConfig.aiProvider.geminiApiKey = String(ai.geminiApiKey).trim();
+          updated = true;
+        }
+        if (!appConfig.aiProvider.deepseekApiKey && ai.deepseekApiKey) {
+          appConfig.aiProvider.deepseekApiKey = String(ai.deepseekApiKey).trim();
+          updated = true;
+        }
       }
-      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
-        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
-        updated = true;
+
+      if (remote.global_ai_active !== undefined) {
+        appConfig.globalAiActive = Boolean(remote.global_ai_active);
       }
+
       if (updated) {
         savePersistedConfig();
+        console.log('🔄 [Supabase Config Sync]: Configuración centralizada de Evolution API, Odoo y AI sincronizada desde Supabase.');
       }
     }
   } catch (err: any) {
-    console.warn('[Supabase AI Config Sync Info]:', err.message);
+    console.warn('[Supabase Full Config Sync Info]:', err.message);
   }
+}
+
+async function hydrateAndSyncAiConfigWithSupabase(): Promise<void> {
+  return hydrateAndSyncFullConfigWithSupabase();
 }
 
 function sanitizeUser(u: UserAccount): Omit<UserAccount, 'password'> {
@@ -8017,6 +8079,12 @@ app.post('/api/system/logs/test-ping', requireSessionRole(['super_admin'], false
 
 // 1. Get Configuration & Status (Fase 1.1: Returns Public Masked Config — ZERO raw secrets exposed)
 app.get('/api/config', (_req, res) => {
+  // Auto-heal evolution serverUrl if missing or mistakenly pointing to Supabase
+  if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
+    appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || 'https://evolution-evolution-api.blrfh6.easypanel.host';
+    appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || 'todolapto';
+    appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A';
+  }
   res.json({
     success: true,
     config: getPublicMaskedConfig(appConfig),
@@ -8981,6 +9049,11 @@ app.post('/api/evolution/test-connection', async (req, res) => {
 
 // Get Evolution API Connection State & QR Code for Scanning inside the CRM
 app.get('/api/evolution/qrcode', async (req, res) => {
+  if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
+    appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || 'https://evolution-evolution-api.blrfh6.easypanel.host';
+    appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || 'todolapto';
+    appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || '9C4281C5F9A2-4C50-BAD6-20329BDC634A';
+  }
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {

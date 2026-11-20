@@ -138,7 +138,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
 
   useEffect(() => {
     if (config.evolution) {
-      if (config.evolution.serverUrl) setEvolutionUrl(config.evolution.serverUrl);
+      const rawUrl = (config.evolution.serverUrl || '').trim();
+      const sanitizedUrl = (!rawUrl || /supabase\.co/i.test(rawUrl))
+        ? 'https://evolution-evolution-api.blrfh6.easypanel.host'
+        : rawUrl;
+      setEvolutionUrl(sanitizedUrl);
       if (config.evolution.instance) setEvolutionInstance(config.evolution.instance);
       if (config.evolution.apiKey) setEvolutionApiKey(config.evolution.apiKey);
       if (config.evolution.teamPhone) setTeamPhone(config.evolution.teamPhone);
@@ -167,7 +171,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ config, onUpdateConf
   const [odooApiKey, setOdooApiKey] = useState(config.odoo.apiKey);
 
   // Evolution API state
-  const [evolutionUrl, setEvolutionUrl] = useState(config.evolution.serverUrl);
+  const [evolutionUrl, setEvolutionUrl] = useState(() => {
+    const raw = (config.evolution?.serverUrl || '').trim();
+    if (!raw || /supabase\.co/i.test(raw)) {
+      return 'https://evolution-evolution-api.blrfh6.easypanel.host';
+    }
+    return raw;
+  });
   const [evolutionInstance, setEvolutionInstance] = useState(config.evolution.instance);
   const [evolutionApiKey, setEvolutionApiKey] = useState(config.evolution.apiKey);
   const [teamPhone, setTeamPhone] = useState(config.evolution.teamPhone);

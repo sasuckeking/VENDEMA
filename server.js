@@ -2053,26 +2053,19 @@ async function syncHolidaysToSupabase(holidayOverrides, url, anonKey) {
     error: tableError
   };
 }
-async function loadAiConfigFromSupabase(url, anonKey) {
+async function loadFullSystemConfigFromSupabase(url, anonKey) {
   const client = getSupabaseClient(url, anonKey);
   if (!client) return null;
   try {
-    const { data, error } = await client.from("configuracion_sistema").select("ai_provider").eq("config_key", "main").maybeSingle();
-    if (!error && data?.ai_provider && typeof data.ai_provider === "object") {
-      const ai = data.ai_provider;
-      if (ai && (ai.openaiApiKey || ai.deepseekApiKey || ai.geminiApiKey || ai.provider)) {
-        return ai;
-      }
-    }
-  } catch {
-  }
-  try {
-    const { data, error } = await client.from("cerebro_ia_aprendizajes").select("winning_pitch").eq("insight_id", INTERNAL_AI_CONFIG_BACKUP_ID).maybeSingle();
-    if (!error && data?.winning_pitch) {
-      const parsed = JSON.parse(data.winning_pitch);
-      if (parsed && typeof parsed === "object") {
-        return parsed;
-      }
+    const { data, error } = await client.from("configuracion_sistema").select("global_ai_active, ai_provider, odoo_config, evolution_config, supabase_config").eq("config_key", "main").maybeSingle();
+    if (!error && data) {
+      return {
+        global_ai_active: data.global_ai_active,
+        ai_provider: data.ai_provider,
+        odoo_config: data.odoo_config,
+        evolution_config: data.evolution_config,
+        supabase_config: data.supabase_config
+      };
     }
   } catch {
   }
@@ -2841,11 +2834,16 @@ function loadPersistedConfig() {
       if (saved.evolution) {
         const rawSavedEvoKey = !isMaskedSecret(saved.evolution.apiKey) ? String(saved.evolution.apiKey || "").trim() : "";
         const effectiveEvoKey = !rawSavedEvoKey || rawSavedEvoKey === "52700613C062-421C-B800-FBC560B54BB4" ? process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A" : rawSavedEvoKey;
+        let effectiveServerUrl = (saved.evolution.serverUrl || "").trim();
+        if (!effectiveServerUrl || /\.supabase\.co/i.test(effectiveServerUrl)) {
+          effectiveServerUrl = process.env.EVOLUTION_SERVER_URL || "https://evolution-evolution-api.blrfh6.easypanel.host";
+        }
+        const effectiveInstance = (saved.evolution.instance || "").trim() || process.env.EVOLUTION_INSTANCE || "todolapto";
         appConfig.evolution = {
           ...appConfig.evolution,
           ...saved.evolution,
-          serverUrl: saved.evolution.serverUrl || process.env.EVOLUTION_SERVER_URL || appConfig.evolution.serverUrl,
-          instance: saved.evolution.instance || process.env.EVOLUTION_INSTANCE || appConfig.evolution.instance,
+          serverUrl: effectiveServerUrl,
+          instance: effectiveInstance,
           apiKey: effectiveEvoKey,
           teamPhone: saved.evolution.teamPhone || process.env.EVOLUTION_TEAM_PHONE || appConfig.evolution.teamPhone,
           adminPhone: saved.evolution.adminPhone || process.env.EVOLUTION_ADMIN_PHONE || appConfig.evolution.adminPhone
@@ -3224,34 +3222,79 @@ async function hydrateAndSyncHolidaysWithSupabase() {
     console.warn("[Supabase Holidays Sync Info]:", err.message);
   }
 }
-async function hydrateAndSyncAiConfigWithSupabase() {
+async function hydrateAndSyncFullConfigWithSupabase() {
   try {
-    const remoteAi = await loadAiConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
-    if (remoteAi && typeof remoteAi === "object" && appConfig.aiProvider) {
-      let updated = false;
-      if (remoteAi.provider && appConfig.aiProvider.provider !== remoteAi.provider) {
-        appConfig.aiProvider.provider = remoteAi.provider;
-        updated = true;
+    const remote = await loadFullSystemConfigFromSupabase(appConfig.supabase?.url, appConfig.supabase?.anonKey);
+    let updated = false;
+    if (remote) {
+      if (remote.evolution_config && typeof remote.evolution_config === "object") {
+        const evo = remote.evolution_config;
+        const validServerUrl = (evo.serverUrl || "").trim();
+        if (validServerUrl && !/\.supabase\.co/i.test(validServerUrl) && validServerUrl !== appConfig.evolution.serverUrl) {
+          appConfig.evolution.serverUrl = validServerUrl;
+          updated = true;
+        }
+        if (evo.instance && evo.instance.trim() && evo.instance.trim() !== appConfig.evolution.instance) {
+          appConfig.evolution.instance = evo.instance.trim();
+          updated = true;
+        }
+        if (evo.apiKey && !isMaskedSecret(evo.apiKey) && evo.apiKey.trim() && evo.apiKey.trim() !== appConfig.evolution.apiKey) {
+          appConfig.evolution.apiKey = evo.apiKey.trim();
+          updated = true;
+        }
+        if (evo.teamPhone && evo.teamPhone.trim()) {
+          appConfig.evolution.teamPhone = evo.teamPhone.trim();
+        }
+        if (evo.adminPhone && evo.adminPhone.trim()) {
+          appConfig.evolution.adminPhone = evo.adminPhone.trim();
+        }
       }
-      if (!appConfig.aiProvider.openaiApiKey && remoteAi.openaiApiKey) {
-        appConfig.aiProvider.openaiApiKey = String(remoteAi.openaiApiKey).trim();
-        updated = true;
+      if (remote.odoo_config && typeof remote.odoo_config === "object") {
+        const odoo = remote.odoo_config;
+        if (odoo.url && odoo.url.trim()) appConfig.odoo.url = odoo.url.trim();
+        if (odoo.db && odoo.db.trim()) appConfig.odoo.db = odoo.db.trim();
+        if (odoo.uid) appConfig.odoo.uid = Number(odoo.uid);
+        if (odoo.apiKey && !isMaskedSecret(odoo.apiKey) && odoo.apiKey.trim()) {
+          appConfig.odoo.apiKey = odoo.apiKey.trim();
+        }
       }
-      if (!appConfig.aiProvider.geminiApiKey && remoteAi.geminiApiKey) {
-        appConfig.aiProvider.geminiApiKey = String(remoteAi.geminiApiKey).trim();
-        updated = true;
+      if (remote.ai_provider && typeof remote.ai_provider === "object" && appConfig.aiProvider) {
+        const ai = remote.ai_provider;
+        if (ai.provider && appConfig.aiProvider.provider !== ai.provider) {
+          appConfig.aiProvider.provider = ai.provider;
+          updated = true;
+        }
+        if (ai.model && appConfig.aiProvider.model !== ai.model) {
+          appConfig.aiProvider.model = ai.model;
+          updated = true;
+        }
+        if (!appConfig.aiProvider.openaiApiKey && ai.openaiApiKey) {
+          appConfig.aiProvider.openaiApiKey = String(ai.openaiApiKey).trim();
+          updated = true;
+        }
+        if (!appConfig.aiProvider.geminiApiKey && ai.geminiApiKey) {
+          appConfig.aiProvider.geminiApiKey = String(ai.geminiApiKey).trim();
+          updated = true;
+        }
+        if (!appConfig.aiProvider.deepseekApiKey && ai.deepseekApiKey) {
+          appConfig.aiProvider.deepseekApiKey = String(ai.deepseekApiKey).trim();
+          updated = true;
+        }
       }
-      if (!appConfig.aiProvider.deepseekApiKey && remoteAi.deepseekApiKey) {
-        appConfig.aiProvider.deepseekApiKey = String(remoteAi.deepseekApiKey).trim();
-        updated = true;
+      if (remote.global_ai_active !== void 0) {
+        appConfig.globalAiActive = Boolean(remote.global_ai_active);
       }
       if (updated) {
         savePersistedConfig();
+        console.log("\u{1F504} [Supabase Config Sync]: Configuraci\xF3n centralizada de Evolution API, Odoo y AI sincronizada desde Supabase.");
       }
     }
   } catch (err) {
-    console.warn("[Supabase AI Config Sync Info]:", err.message);
+    console.warn("[Supabase Full Config Sync Info]:", err.message);
   }
+}
+async function hydrateAndSyncAiConfigWithSupabase() {
+  return hydrateAndSyncFullConfigWithSupabase();
 }
 function sanitizeUser(u) {
   const { password, ...rest } = u;
@@ -8466,6 +8509,11 @@ app.post("/api/system/logs/test-ping", requireSessionRole(["super_admin"], false
   res.json({ success: true, results, servicesHealth: buildFiveServiceHealthSnapshot() });
 });
 app.get("/api/config", (_req, res) => {
+  if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
+    appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || "https://evolution-evolution-api.blrfh6.easypanel.host";
+    appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || "todolapto";
+    appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A";
+  }
   res.json({
     success: true,
     config: getPublicMaskedConfig(appConfig),
@@ -9277,6 +9325,11 @@ app.post("/api/evolution/test-connection", async (req, res) => {
   }
 });
 app.get("/api/evolution/qrcode", async (req, res) => {
+  if (!appConfig.evolution.serverUrl || /\.supabase\.co/i.test(appConfig.evolution.serverUrl)) {
+    appConfig.evolution.serverUrl = process.env.EVOLUTION_SERVER_URL || "https://evolution-evolution-api.blrfh6.easypanel.host";
+    appConfig.evolution.instance = appConfig.evolution.instance || process.env.EVOLUTION_INSTANCE || "todolapto";
+    appConfig.evolution.apiKey = appConfig.evolution.apiKey || process.env.EVOLUTION_API_KEY || "9C4281C5F9A2-4C50-BAD6-20329BDC634A";
+  }
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {

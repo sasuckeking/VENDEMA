@@ -564,6 +564,13 @@ export default function App() {
       if (configData && configData.success && configData.config && (!isPoll || !configRecentlySaved)) {
         let loadedConfig = configData.config;
 
+        if (loadedConfig.evolution) {
+          const evoServer = (loadedConfig.evolution.serverUrl || '').trim();
+          if (!evoServer || /supabase\.co/i.test(evoServer)) {
+            loadedConfig.evolution.serverUrl = 'https://evolution-evolution-api.blrfh6.easypanel.host';
+          }
+        }
+
         // Hydrate localStorage AI credentials only once on initial mount if server is missing keys that browser has
         if (!hasHydratedLocalConfigRef.current) {
           hasHydratedLocalConfigRef.current = true;

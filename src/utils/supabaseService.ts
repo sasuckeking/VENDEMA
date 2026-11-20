@@ -876,6 +876,42 @@ export async function syncHolidaysToSupabase(
   };
 }
 
+export interface RemoteSystemConfigSnapshot {
+  global_ai_active?: boolean;
+  ai_provider?: Partial<AppConfig['aiProvider']>;
+  odoo_config?: Partial<AppConfig['odoo']>;
+  evolution_config?: Partial<AppConfig['evolution']>;
+  supabase_config?: any;
+}
+
+export async function loadFullSystemConfigFromSupabase(
+  url?: string,
+  anonKey?: string
+): Promise<RemoteSystemConfigSnapshot | null> {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('configuracion_sistema')
+      .select('global_ai_active, ai_provider, odoo_config, evolution_config, supabase_config')
+      .eq('config_key', 'main')
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        global_ai_active: data.global_ai_active,
+        ai_provider: data.ai_provider,
+        odoo_config: data.odoo_config,
+        evolution_config: data.evolution_config,
+        supabase_config: data.supabase_config,
+      };
+    }
+  } catch {}
+
+  return null;
+}
+
 export async function loadAiConfigFromSupabase(
   url?: string,
   anonKey?: string
