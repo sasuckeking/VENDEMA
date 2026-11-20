@@ -7982,33 +7982,9 @@ app.post('/api/system/logs/test-ping', requireSessionRole(['super_admin'], false
     let parsedEvo: any = {};
     try { parsedEvo = JSON.parse(evoText); } catch {}
 
-    let isEvoOk = evoRes.ok && (parsedEvo?.instance?.state === 'open' || parsedEvo?.state === 'open');
-    let effectiveState = parsedEvo?.instance?.state || parsedEvo?.state || 'unknown';
-    let effectiveDetails = evoText.slice(0, 300);
-
-    // Evolution API v2: connectionState can briefly report 'connecting' while instance connectionStatus is 'open'
-    if (evoRes.ok && !isEvoOk) {
-      const instUrl = `${appConfig.evolution.serverUrl.replace(/\/$/, '')}/instance/fetchInstances?instanceName=${encodeURIComponent(appConfig.evolution.instance)}`;
-      const instRes = await fetch(instUrl, {
-        headers: { apikey: appConfig.evolution.apiKey },
-        signal: AbortSignal.timeout(4500),
-      }).catch(() => null);
-      if (instRes?.ok) {
-        const instList = await instRes.json().catch(() => []);
-        const instRec = Array.isArray(instList)
-          ? instList.find((i: any) => i.name === appConfig.evolution.instance) || instList[0]
-          : null;
-        if (instRec?.connectionStatus === 'open') {
-          isEvoOk = true;
-          effectiveState = 'open';
-          effectiveDetails = JSON.stringify({
-            instance: { instanceName: appConfig.evolution.instance, state: 'open' },
-            connectionStatus: 'open',
-            ownerJid: instRec.ownerJid,
-          });
-        }
-      }
-    }
+    const isEvoOk = evoRes.ok && (parsedEvo?.instance?.state === 'open' || parsedEvo?.state === 'open');
+    const effectiveState = parsedEvo?.instance?.state || parsedEvo?.state || 'unknown';
+    const effectiveDetails = evoText.slice(0, 300);
 
     recordSystemApiLog({
       service: 'Evolution API',
@@ -9139,9 +9115,7 @@ app.get('/api/evolution/qrcode', async (req, res) => {
           evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (instRecord.connectionStatus === 'open') {
-            currentState = 'open';
-          } else if (currentState === 'unknown' && instRecord.connectionStatus) {
+          if (currentState === 'unknown' && instRecord.connectionStatus) {
             currentState = instRecord.connectionStatus;
           }
         }
