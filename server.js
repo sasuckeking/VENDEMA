@@ -5681,8 +5681,14 @@ function savePersistedConversations() {
     console.warn("[Conversations Cache Save Warning]:", err?.message || err);
   }
 }
+var consecutiveEvoDisconnects = 0;
 function clearAllChatsOnWhatsAppDisconnect(disconnectedState = "close", forceWipeChats = false) {
   if (disconnectedState === "open") {
+    consecutiveEvoDisconnects = 0;
+    return;
+  }
+  consecutiveEvoDisconnects++;
+  if (!forceWipeChats && (disconnectedState === "connecting" || consecutiveEvoDisconnects < 4)) {
     return;
   }
   const wasConnected = evolutionLastKnownState === "open" || appConfig.evolution.connected;
@@ -5832,6 +5838,7 @@ async function syncEvolutionChats() {
       clearAllChatsOnWhatsAppDisconnect(currentState, false);
       return conversations;
     }
+    consecutiveEvoDisconnects = 0;
     if (evolutionLastKnownState !== "open") {
       evolutionLastKnownState = "open";
       appConfig.evolution.connected = true;
@@ -9636,6 +9643,7 @@ app.get("/api/evolution/qrcode", async (req, res) => {
     const forceConnect = req.query.forceConnect === "true";
     const isConnected = currentState === "open";
     if (isConnected) {
+      consecutiveEvoDisconnects = 0;
       if (evolutionLastKnownState !== "open") {
         evolutionLastKnownState = "open";
         broadcastEvent("evolution_status", { connected: true, state: "open" });
@@ -12635,6 +12643,7 @@ var handleEvolutionWebhook = async (req, res) => {
   if (rawEvent === "connection.update") {
     const newState = (body?.data?.state || body?.data?.connection || body?.data?.status || body?.state || body?.connection || "").toString().toLowerCase();
     if (newState === "open" || newState === "connected") {
+      consecutiveEvoDisconnects = 0;
       if (evolutionLastKnownState !== "open") {
         evolutionLastKnownState = "open";
         appConfig.evolution.connected = true;

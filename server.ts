@@ -4202,8 +4202,16 @@ function savePersistedConversations(): void {
  * Clears all live & persisted WhatsApp chats when the instance disconnects,
  * preventing stale chats from remaining visible or auto-replying while unlinked.
  */
+let consecutiveEvoDisconnects = 0;
+
 function clearAllChatsOnWhatsAppDisconnect(disconnectedState = 'close', forceWipeChats = false): void {
   if (disconnectedState === 'open') {
+    consecutiveEvoDisconnects = 0;
+    return;
+  }
+  consecutiveEvoDisconnects++;
+  // Ignore transient 1-3s Baileys socket flickers ('connecting' or single 'close') unless forced by manual logout
+  if (!forceWipeChats && (disconnectedState === 'connecting' || consecutiveEvoDisconnects < 4)) {
     return;
   }
   const wasConnected = evolutionLastKnownState === 'open' || appConfig.evolution.connected;
@@ -4379,6 +4387,7 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       return conversations;
     }
 
+    consecutiveEvoDisconnects = 0;
     if (evolutionLastKnownState !== 'open') {
       evolutionLastKnownState = 'open';
       appConfig.evolution.connected = true;
@@ -9114,7 +9123,8 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     const isConnected = currentState === 'open';
 
     if (isConnected) {
-      if (evolutionLastKnownState !== 'open') {
+      consecutiveEvoDisconnects = 0;
+    if (evolutionLastKnownState !== 'open') {
         evolutionLastKnownState = 'open';
         broadcastEvent('evolution_status', { connected: true, state: 'open' });
       }
@@ -12771,7 +12781,8 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
       ''
     ).toString().toLowerCase();
     if (newState === 'open' || newState === 'connected') {
-      if (evolutionLastKnownState !== 'open') {
+      consecutiveEvoDisconnects = 0;
+    if (evolutionLastKnownState !== 'open') {
         evolutionLastKnownState = 'open';
         appConfig.evolution.connected = true;
         evolutionQrCache.qrBase64 = null;

@@ -634,13 +634,12 @@ export default function App() {
         setProducts(productsData.products);
       }
       if (convData?.success && convData.conversations) {
-        mergeConversations(convData.conversations);
-        if (convData.conversations.length === 0) {
-          selectedSessionRef.current = null;
-          setSelectedSessionId(null);
-        } else if (!selectedSessionRef.current) {
-          const firstId = convData.conversations[0].sessionId;
-          setSelectedSessionId(firstId);
+        if (convData.conversations.length > 0) {
+          mergeConversations(convData.conversations);
+          if (!selectedSessionRef.current) {
+            const firstId = convData.conversations[0].sessionId;
+            setSelectedSessionId(firstId);
+          }
         }
       }
       if (custData?.success && custData.customers) {
@@ -714,30 +713,22 @@ export default function App() {
         } else if (payload.type === 'evolution_status' && payload.payload) {
           const isConnected = Boolean(payload.payload.connected);
           setConfig(prev => ({ ...prev, evolution: { ...prev.evolution, connected: isConnected } }));
-          if (!isConnected) {
-            setConversations([]);
-            selectedSessionRef.current = null;
-            setSelectedSessionId(null);
-          }
         } else if (payload.type === 'conversations_update') {
           const isCleared = Boolean(payload.payload?.cleared);
           if (isCleared) {
             setConversations([]);
             selectedSessionRef.current = null;
             setSelectedSessionId(null);
+            return;
           }
           fetch('/api/conversations')
             .then(r => r.json())
             .then(d => {
-              if (d.success && d.conversations) {
+              if (d.success && Array.isArray(d.conversations) && d.conversations.length > 0) {
                 mergeConversations(d.conversations);
-                if (d.conversations.length === 0) {
-                  selectedSessionRef.current = null;
-                  setSelectedSessionId(null);
-                }
               }
             });
-          if (selectedSessionRef.current && !isCleared) {
+          if (selectedSessionRef.current) {
             handleRefreshMessages(selectedSessionRef.current, true);
           }
         } else if (payload.type === 'config_updated' && payload.payload) {
