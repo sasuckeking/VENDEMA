@@ -77,7 +77,7 @@ Cuando el cliente env\xEDe un mensaje sencillo de saludo o cortes\xEDa sin pedir
      Responde DIRECTAMENTE al estado del horario:
      *"\xA1Claro que s\xED! Estamos abiertos hoy en nuestra tienda f\xEDsica de la **Av. Charles de Gaulle No. 133** hasta las 6:00 PM. Puedes pasar a visitarnos o con gusto te coordinamos el env\xEDo directo a tu direcci\xF3n. \u{1F6D2}"*
    - **Ubicaci\xF3n / "\xBFD\xF3nde est\xE1n ubicados?":**
-     *"Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la parada del telef\xE9rico). \xBFTienes pensado pasar por la tienda hoy o prefieres coordinar env\xEDo a domicilio? \u{1F4CD}"*
+     *"Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total). \u{1F5FA}\uFE0F GPS: https://g.co/kgs/4hVfzGv \xBFTienes pensado pasar por la tienda hoy o prefieres coordinar env\xEDo a domicilio? \u{1F4CD}"*
    - **Env\xEDos / Delivery:**
      *"S\xED, realizamos env\xEDos a todo el pa\xEDs. En Santo Domingo contamos con servicio a domicilio con pago contra entrega para tu total seguridad. \xBFEn qu\xE9 sector o provincia te encuentras? \u{1F69A}"*
    - **Garant\xEDa:**
@@ -125,7 +125,7 @@ Cuando un cliente cite un mensaje anterior en WhatsApp o responda haciendo refer
 1. **SI CITA UNA PREGUNTA OPERATIVA ANTERIOR O DUDA GENERAL (ej: *"\xBFEst\xE1n laborando?"*, *"Est\xE1n laborando?"*, *"\xBFAbren hoy?"*, *"\xBFCu\xE1l es el horario?"*, *"\xBFD\xF3nde est\xE1n ubicados?"*, *"\xBFHacen env\xEDos?"*, *"\xBFTienen garant\xEDa?"*):**
    - El bot DEBE responder directa e inmediatamente a la pregunta citada, reconoci\xE9ndola de forma c\xE1lida y profesional:
      * Si pregunta si estamos laborando o si estamos abiertos: Confirma el estado en tiempo real (si la tienda f\xEDsica de la **Av. Charles de Gaulle No. 133** est\xE1 abierta de 8:30 AM a 6:00 PM o si est\xE1 fuera de horario/feriado con la pr\xF3xima apertura), e invita a visitarnos o coordinar el despacho.
-     * Si pregunta por ubicaci\xF3n: Indica la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total).
+     * Si pregunta por ubicaci\xF3n: Indica la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total) junto con el enlace \u{1F5FA}\uFE0F GPS: https://g.co/kgs/4hVfzGv.
      * Si pregunta por env\xEDos o garant\xEDas: Responde con la pol\xEDtica exacta de Todo Lapto.
    - \u274C **EST\xC1 TERMINANTEMENTE PROHIBIDO** ignorar la cita para enviar listas de laptops, precios o accesorios de audio cuando el cliente cita una pregunta operativa.
 
@@ -704,7 +704,7 @@ Si el cliente env\xEDa un video, documento, sticker o ubicaci\xF3n, responde que
 \u{1F4CD} Av. Charles de Gaulle No.133, Santo Domingo Este (frente a la Sirena / cerca de la Bomba Total)
 \u{1F4F1} WhatsApp: 809-422-8738
 \u{1F310} https://todolapto.com.do
-\u{1F5FA}\uFE0F GPS: https://g.co/kgs/4hVfzG
+\u{1F5FA}\uFE0F GPS: https://g.co/kgs/4hVfzGv
 \u23F0 Horario de Atenci\xF3n y Despacho: Lunes a S\xE1bado de 8:30 AM a 6:00 PM
 \u{1F6AB} Domingos y Feriados Nacionales de RD: Tienda y Despacho Cerrados
 \u{1F69A} Env\xEDos a todo el pa\xEDs | Contra entrega SOLO en Santo Domingo
@@ -4074,6 +4074,7 @@ var products = [];
 var aiEnabledBySession = /* @__PURE__ */ new Map();
 var transcriptionsByMsgId = /* @__PURE__ */ new Map();
 var aiAnalysisByMsgId = /* @__PURE__ */ new Map();
+var videoThumbnailsByMsgId = /* @__PURE__ */ new Map();
 var mediaCache = /* @__PURE__ */ new Map();
 var TRANSCRIPTIONS_CACHE_FILE = path.join(__dirname, ".vendema-transcriptions.json");
 function loadPersistedTranscriptions() {
@@ -5276,10 +5277,27 @@ function parseSingleEvolutionMessage(record, customerNameFallback) {
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.videoMessage || msgTypeRaw === "videoMessage") {
     type = "video";
-    content = msgObj.videoMessage?.caption || "[El cliente envi\xF3 un VIDEO. El bot no puede verlo.]";
+    content = msgObj.videoMessage?.caption || "[El cliente envi\xF3 un VIDEO]";
     mediaDuration = msgObj.videoMessage?.seconds || 0;
     mediaMimeType = msgObj.videoMessage?.mimetype || "video/mp4";
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}?video=true`;
+    const rawThumb = msgObj.videoMessage?.jpegThumbnail;
+    if (rawThumb) {
+      let thumbB64 = "";
+      if (typeof rawThumb === "string") {
+        thumbB64 = rawThumb;
+      } else if (Buffer.isBuffer(rawThumb)) {
+        thumbB64 = rawThumb.toString("base64");
+      } else if (Array.isArray(rawThumb?.data)) {
+        thumbB64 = Buffer.from(rawThumb.data).toString("base64");
+      } else if (typeof rawThumb === "object") {
+        const vals = Object.values(rawThumb).filter((v) => typeof v === "number");
+        if (vals.length > 50) thumbB64 = Buffer.from(vals).toString("base64");
+      }
+      if (thumbB64 && msgId) {
+        videoThumbnailsByMsgId.set(msgId, thumbB64);
+      }
+    }
   } else if (msgObj.documentMessage || msgTypeRaw === "documentMessage") {
     type = "document";
     fileName = msgObj.documentMessage?.fileName || msgObj.documentMessage?.title || "Documento";
@@ -10781,10 +10799,14 @@ function resolveDirectStoreQuestion(rawText, conv, quotedText) {
     }
   }
   const isLocationQuery = candidates.some(
-    (c) => /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(c) || /^(ubicacion|direccion)\??$/i.test(c)
+    (c) => /\b(donde estan|donde estan ubicados|cual es la ubicacion|envieme la ubicacion|enviame la ubicacion|mandame la ubicacion|mandeme la ubicacion|pasame la ubicacion|paseme la ubicacion|dame la ubicacion|deme la ubicacion|su ubicacion|tu ubicacion|la ubicacion|donde queda|donde queda la tienda|cual es la direccion|envieme la direccion|mandame la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda|google maps|ubicacion gps|link de ubicacion|enlace de ubicacion)\b/i.test(c) || /^(ubicacion|direccion|gps|mapa|location)\??$/i.test(c)
   );
   if (isLocationQuery) {
-    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total). \xBFTienes pensado pasar por la tienda hoy o prefieres que coordinemos el env\xEDo a domicilio? \u{1F4CD}`;
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total).
+
+\u{1F5FA}\uFE0F GPS: https://g.co/kgs/4hVfzGv
+
+\xBFTienes pensado pasar por la tienda hoy o prefieres que coordinemos el env\xEDo a domicilio? \u{1F4CD}`;
   }
   const isShippingQuery = candidates.some(
     (c) => /\b(hacen envios|tienen envio|tienen delivery|hacen delivery|envian al interior|como es el envio|costo de envio|pago contra entrega)\b/i.test(c) || /^(envio|envios|delivery)\??$/i.test(c)
@@ -11284,7 +11306,9 @@ function buildMasterSalesSystemInstruction(conv, latestQuery = "") {
   if (isSimpleConversationalMessage(latestQuery, hasQuote)) {
     return buildFastConversationalSystemInstruction(conv);
   }
-  const rawTemplate = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+  const customMasterPrompt = (appConfig.aiProvider?.systemPrompt || "").trim();
+  const rawTemplate = customMasterPrompt.length > 200 ? customMasterPrompt : OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+  const extraCustomInstructions = (appConfig.aiProvider?.customInstructions || "").trim();
   const cleanPhone = (conv?.customerPhone || "").replace(/\D/g, "");
   const detectedPhone = cleanPhone.length >= 10 && cleanPhone.length <= 13 ? cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone : "NO DISPONIBLE";
   const quotedContext = [
@@ -11337,7 +11361,10 @@ Si el cliente expresa intenci\xF3n de comprar, apartar, cotizar o hacer un pedid
   const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const statusPromptBlock = formatActiveWhatsAppStatusesPrompt();
-  const filledInstruction = rdTimePromptBlock + "\n\n" + statusPromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + crmCustomerContext;
+  const filledInstruction = rdTimePromptBlock + "\n\n" + statusPromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + (extraCustomInstructions ? `
+
+# INSTRUCCIONES PERSONALIZADAS ADICIONALES DEL ADMINISTRADOR:
+${extraCustomInstructions}` : "") + crmCustomerContext;
   return filledInstruction;
 }
 function buildChatHistoryTurns(conv) {
@@ -11764,20 +11791,49 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource, correlat
         });
       }
     }
+    if (targetCustomerMsg.type === "video" && !targetCustomerMsg.aiAnalysis) {
+      try {
+        const msgKey = targetCustomerMsg.evolutionMessageId || targetCustomerMsg.id;
+        const cleanKey = msgKey.replace(/^evo-/, "");
+        const thumbB64 = videoThumbnailsByMsgId.get(cleanKey) || videoThumbnailsByMsgId.get(msgKey);
+        if (thumbB64) {
+          console.log(`\u{1F3AC} [Video Thumbnail Vision]: Analizando portada de video/TikTok con GPT-4o Vision (msgId: ${cleanKey})...`);
+          const visionResult = await analyzeCustomerImageWithVision(thumbB64, "image/jpeg");
+          if (visionResult?.interpretedText) {
+            targetCustomerMsg.aiAnalysis = visionResult.interpretedText;
+            aiAnalysisByMsgId.set(cleanKey, visionResult.interpretedText);
+            if (visionResult.suggestedQuery) {
+              detectedImageQuery = visionResult.suggestedQuery;
+            }
+            broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+            console.log(`\u2705 [Video Vision Analizado]: ${visionResult.interpretedText}`);
+          }
+        }
+      } catch (e) {
+        console.log("[Video Thumbnail Vision Info]:", e?.message || e);
+      }
+    }
     if (targetCustomerMsg.quotedMessage) {
       const qId = targetCustomerMsg.quotedMessage.id;
+      const cleanQId = qId ? qId.replace(/^evo-/, "") : "";
       const isQuotedIdInChatHistory = qId ? conv.messages.some(
-        (m) => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.id === `evo-${qId}`)
+        (m) => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.evolutionMessageId === cleanQId || m.id === `evo-${cleanQId}`)
       ) : true;
+      if (cleanQId && !targetCustomerMsg.quotedMessage.aiAnalysis) {
+        const prevAnalysis = aiAnalysisByMsgId.get(cleanQId) || aiAnalysisByMsgId.get(qId || "") || conv.messages.find((m) => m.evolutionMessageId === cleanQId || m.id === `evo-${cleanQId}`)?.aiAnalysis;
+        if (prevAnalysis) {
+          targetCustomerMsg.quotedMessage.aiAnalysis = prevAnalysis;
+        }
+      }
       if (!targetCustomerMsg.quotedMessage.isStatusReply && !isQuotedIdInChatHistory && (targetCustomerMsg.quotedMessage.type === "image" || targetCustomerMsg.quotedMessage.type === "video")) {
         targetCustomerMsg.quotedMessage.isStatusReply = true;
         targetCustomerMsg.quotedMessage.author = "Estado de WhatsApp de Todo Lapto (Story)";
       }
       if (!targetCustomerMsg.quotedMessage.aiAnalysis && (targetCustomerMsg.quotedMessage.mediaBase64 || targetCustomerMsg.quotedMessage.isStatusReply || targetCustomerMsg.quotedMessage.type === "image" || targetCustomerMsg.quotedMessage.type === "video")) {
         try {
-          let qBase64 = targetCustomerMsg.quotedMessage.mediaBase64;
+          let qBase64 = targetCustomerMsg.quotedMessage.mediaBase64 || (cleanQId ? videoThumbnailsByMsgId.get(cleanQId) : void 0);
           let qMime = targetCustomerMsg.quotedMessage.mediaMimeType || "image/jpeg";
-          if (!qBase64 && qId) {
+          if (!qBase64 && qId && targetCustomerMsg.quotedMessage.type !== "video") {
             const fetchedQuoted = await fetchMediaBase64FromEvolution(
               qId,
               false,
@@ -11789,11 +11845,11 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource, correlat
             }
           }
           if (qBase64) {
-            console.log(`\u{1F4F1} [Status/Quoted Vision]: Analizando imagen del Estado de WhatsApp con GPT-4o Vision...`);
-            const statusVisionPrompt = `Analiza esta imagen de un Estado de WhatsApp (Story) o publicaci\xF3n de Todo Lapto sobre la cual el cliente est\xE1 preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
+            console.log(`\u{1F4F1} [Status/Quoted Vision]: Analizando imagen/portada citada con GPT-4o Vision...`);
+            const statusVisionPrompt = `Analiza esta imagen (o portada de video/TikTok/Estado de WhatsApp) sobre la cual el cliente est\xE1 preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
 Extrae con m\xE1xima precisi\xF3n:
-1. Qu\xE9 producto, laptop, marca y modelo exacto (ej. Dell Latitude, Lenovo ThinkPad, HP ProBook, impresora, monitor, etc.) aparece en el estado.
-2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoci\xF3n escrita dentro de la imagen o flyer del estado.
+1. Qu\xE9 producto, laptop, marca, color o promoci\xF3n (ej. "PAQUETE DE OFFICE", Dell Latitude, Lenovo ThinkPad, HP ProBook, etc.) aparece en la imagen.
+2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoci\xF3n escrita dentro de la imagen o video.
 3. Si es una foto real sin texto, describe la marca, l\xEDnea, color y caracter\xEDsticas visibles del equipo.`;
             const qAnalysis = await analyzeImageWithOpenAI(qBase64, qMime, statusVisionPrompt);
             if (qAnalysis) {
@@ -11819,6 +11875,10 @@ Extrae con m\xE1xima precisi\xF3n:
       const caption = targetCustomerMsg.content && targetCustomerMsg.content !== "\u{1F4F7} Foto" ? targetCustomerMsg.content : "";
       baseCustomerText = targetCustomerMsg.aiAnalysis ? caption ? `${caption}
 ${targetCustomerMsg.aiAnalysis}` : targetCustomerMsg.aiAnalysis : caption || "El cliente envi\xF3 una imagen adjunta";
+    } else if (targetCustomerMsg.type === "video") {
+      const caption = targetCustomerMsg.content && !targetCustomerMsg.content.includes("[El cliente envi\xF3 un VIDEO") ? targetCustomerMsg.content : "";
+      baseCustomerText = targetCustomerMsg.aiAnalysis ? caption ? `${caption}
+[Video/TikTok analizado visualmente]: ${targetCustomerMsg.aiAnalysis}` : `[Video/TikTok analizado visualmente]: ${targetCustomerMsg.aiAnalysis}` : caption || "El cliente envi\xF3 un video de producto o TikTok sin texto adicional";
     } else {
       baseCustomerText = targetCustomerMsg.content || "Hola, me gustar\xEDa recibir informaci\xF3n.";
     }
@@ -11955,8 +12015,15 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     const directQuotedReply = hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
     const genericFamily = detectGenericProductFamily(baseCustomerText);
     const catalogBlockMatch = systemInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) || (genericFamily ? getRelevantProductsHighlight(baseCustomerText, targetCustomerMsg.quotedMessage?.text || "", "").match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) : null);
-    const isGenericCategoryInquiry = !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && (Boolean(genericFamily) || /\b(lapto|laptops|laptop|computadora|computadoras|pc|portatil|portatiles|impresora|impresoras|mouse|raton|ratones|teclado|teclados|monitor|monitores|pantalla|pantallas|bocina|bocinas|audifono|audifonos|tablet|tablets|cargador|cargadores|disco|discos|ssd|ram|mochila|mochilas|router|repetidor|tienen|cuales|catalogo|lista)\b/i.test(
-      baseCustomerText
+    const normalizedForIntent = (baseCustomerText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const isRepairOrPickupQuery = /\b(reparacion|reparar|arreglar|taller|lista para|listo para|ir a retirar|retirarla|retirarlo|recoger|recogerla|mi pc|mi laptop|mi equipo|que me dicen de|ya esta lista|ya esta listo)\b/i.test(
+      normalizedForIntent
+    );
+    const isUseCaseRecommendationQuery = /\b(oficina|diseno|arquitectura|ingenier|programacion|gaming|juego|juegos|universidad|estudio|estudiantes|trabajo|contabilidad|algunos de los modelos|me funcionen|para mi|recomend|cual me recomiendas|cual es mejor|presupuesto|economica|barata|baratas)\b/i.test(
+      normalizedForIntent
+    );
+    const isGenericCategoryInquiry = !storeAnswer && !hasQuote && !isStatusReply && !isRepairOrPickupQuery && !isUseCaseRecommendationQuery && !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && targetCustomerMsg.type !== "audio" && targetCustomerMsg.type !== "image" && targetCustomerMsg.type !== "video" && (Boolean(genericFamily) || /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
+      normalizedForIntent
     ));
     if (directSelectionOrDiscount) {
       aiReply = directSelectionOrDiscount.reply;
@@ -11974,15 +12041,12 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       aiReply = directQuotedReply;
       providerUsed = "openai";
       modelUsed = "quoted-context-engine";
-    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
-      const fullCatalog = catalogBlockMatch[1].trim();
-      aiReply = storeAnswer ? `${storeAnswer}
-
-${fullCatalog}` : fullCatalog;
-      providerUsed = "openai";
-      modelUsed = "full-catalog-engine";
     } else if (storeAnswer) {
       aiReply = storeAnswer;
+    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
+      aiReply = catalogBlockMatch[1].trim();
+      providerUsed = "openai";
+      modelUsed = "full-catalog-engine";
     } else if (isSimpleMsg) {
       aiReply = buildInstantConversationalReply(conv, baseCustomerText);
     } else {
@@ -11997,7 +12061,7 @@ ${fullCatalog}` : fullCatalog;
       if (isGenericCategoryInquiry && catalogBlockMatch && isCatalogSectionPresent && candidateReply.length < 500 && catalogBlockMatch[1].length > 800) {
         candidateReply = catalogBlockMatch[1].trim();
       }
-      if (!isGenericCategoryInquiry && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 5)) {
+      if (!isGenericCategoryInquiry && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)) {
         const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
         if (fallbackQuote) {
           candidateReply = fallbackQuote;
@@ -12022,7 +12086,7 @@ ${p.website_url ? `\u{1F517} https://todolapto.com.do${p.website_url}
 ` : ""}
 \xBFDeseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el env\xEDo a domicilio? \u{1F69A}`;
           } else {
-            candidateReply = `\xA1Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! \u{1F60A} Estoy atento a tu mensaje. Conf\xEDrmame por favor cu\xE1l de los modelos te llam\xF3 la atenci\xF3n o c\xF3mo deseas que te ayudemos (retiro en tienda en la *Av. Charles de Gaulle No. 133* o env\xEDo a domicilio). \u{1F4BB}\u2728`;
+            candidateReply = `\xA1Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! \u{1F60A} Cu\xE9ntame qu\xE9 equipo o servicio necesitas para ayudarte de inmediato.`;
           }
         }
       }

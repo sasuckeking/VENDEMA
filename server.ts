@@ -2103,6 +2103,7 @@ let products: ProductItem[] = [];
 const aiEnabledBySession = new Map<string, boolean>();
 const transcriptionsByMsgId = new Map<string, string>();
 const aiAnalysisByMsgId = new Map<string, string>();
+const videoThumbnailsByMsgId = new Map<string, string>();
 const mediaCache = new Map<string, { buffer: Buffer; mimetype: string }>();
 const TRANSCRIPTIONS_CACHE_FILE = path.join(__dirname, '.vendema-transcriptions.json');
 
@@ -3540,10 +3541,27 @@ function parseSingleEvolutionMessage(record: any, customerNameFallback: string):
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}`;
   } else if (msgObj.videoMessage || msgTypeRaw === 'videoMessage') {
     type = 'video';
-    content = msgObj.videoMessage?.caption || '[El cliente envió un VIDEO. El bot no puede verlo.]';
+    content = msgObj.videoMessage?.caption || '[El cliente envió un VIDEO]';
     mediaDuration = msgObj.videoMessage?.seconds || 0;
     mediaMimeType = msgObj.videoMessage?.mimetype || 'video/mp4';
     mediaUrl = `/api/evolution/media/${encodeURIComponent(msgId)}?video=true`;
+    const rawThumb = msgObj.videoMessage?.jpegThumbnail;
+    if (rawThumb) {
+      let thumbB64 = '';
+      if (typeof rawThumb === 'string') {
+        thumbB64 = rawThumb;
+      } else if (Buffer.isBuffer(rawThumb)) {
+        thumbB64 = rawThumb.toString('base64');
+      } else if (Array.isArray(rawThumb?.data)) {
+        thumbB64 = Buffer.from(rawThumb.data).toString('base64');
+      } else if (typeof rawThumb === 'object') {
+        const vals = Object.values(rawThumb).filter(v => typeof v === 'number') as number[];
+        if (vals.length > 50) thumbB64 = Buffer.from(vals).toString('base64');
+      }
+      if (thumbB64 && msgId) {
+        videoThumbnailsByMsgId.set(msgId, thumbB64);
+      }
+    }
   } else if (msgObj.documentMessage || msgTypeRaw === 'documentMessage') {
     type = 'document';
     fileName = msgObj.documentMessage?.fileName || msgObj.documentMessage?.title || 'Documento';
@@ -10471,14 +10489,14 @@ function resolveDirectStoreQuestion(rawText: string, conv?: Conversation, quoted
     }
   }
 
-  // 2. Ubicación / ¿Dónde están ubicados? / Dirección
+  // 2. Ubicación / ¿Dónde están ubicados? / Dirección / GPS
   const isLocationQuery = candidates.some(c =>
-    /\b(donde estan|donde estan ubicados|cual es la ubicacion|donde queda|donde queda la tienda|cual es la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda)\b/i.test(c) ||
-    /^(ubicacion|direccion)\??$/i.test(c)
+    /\b(donde estan|donde estan ubicados|cual es la ubicacion|envieme la ubicacion|enviame la ubicacion|mandame la ubicacion|mandeme la ubicacion|pasame la ubicacion|paseme la ubicacion|dame la ubicacion|deme la ubicacion|su ubicacion|tu ubicacion|la ubicacion|donde queda|donde queda la tienda|cual es la direccion|envieme la direccion|mandame la direccion|donde estan ustedes|tienen tienda fisica|donde puedo ir|puedo pasar por la tienda|google maps|ubicacion gps|link de ubicacion|enlace de ubicacion)\b/i.test(c) ||
+    /^(ubicacion|direccion|gps|mapa|location)\??$/i.test(c)
   );
 
   if (isLocationQuery) {
-    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total). ¿Tienes pensado pasar por la tienda hoy o prefieres que coordinemos el envío a domicilio? 📍`;
+    return `Estamos ubicados en la **Av. Charles de Gaulle No. 133, Santo Domingo Este** (frente a la Sirena / cerca de la Bomba Total).\n\n🗺️ GPS: https://g.co/kgs/4hVfzGv\n\n¿Tienes pensado pasar por la tienda hoy o prefieres que coordinemos el envío a domicilio? 📍`;
   }
 
   // 3. Envíos / Delivery / Envíos al interior
@@ -11111,8 +11129,10 @@ function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''
     return buildFastConversationalSystemInstruction(conv);
   }
 
-  // Always use the latest OFFICIAL_TODO_LAPTO_MASTER_PROMPT so updated catalog rules are never overridden by stale cached prompts
-  const rawTemplate = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+  // Use the user's configured Master Prompt from Cerebro IA if present, otherwise fallback to OFFICIAL_TODO_LAPTO_MASTER_PROMPT
+  const customMasterPrompt = (appConfig.aiProvider?.systemPrompt || '').trim();
+  const rawTemplate = customMasterPrompt.length > 200 ? customMasterPrompt : OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+  const extraCustomInstructions = (appConfig.aiProvider?.customInstructions || '').trim();
   const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
   // Only treat 10-13 digit numbers as valid phone numbers (14+ digits are WhatsApp @lid IDs)
   const detectedPhone =
@@ -11215,6 +11235,7 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
       .replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary)
       .replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr)
       .replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) +
+    (extraCustomInstructions ? `\n\n# INSTRUCCIONES PERSONALIZADAS ADICIONALES DEL ADMINISTRADOR:\n${extraCustomInstructions}` : '') +
     crmCustomerContext;
 
   return filledInstruction;
@@ -11732,14 +11753,49 @@ async function triggerSalesBotReplyForConversation(
       }
     }
 
+    // 4a-video. Auto-analyze video cover thumbnail (e.g. TikTok videos, Reels, product clips) with OpenAI Vision!
+    if (targetCustomerMsg.type === 'video' && !targetCustomerMsg.aiAnalysis) {
+      try {
+        const msgKey = targetCustomerMsg.evolutionMessageId || targetCustomerMsg.id;
+        const cleanKey = msgKey.replace(/^evo-/, '');
+        const thumbB64 = videoThumbnailsByMsgId.get(cleanKey) || videoThumbnailsByMsgId.get(msgKey);
+        if (thumbB64) {
+          console.log(`🎬 [Video Thumbnail Vision]: Analizando portada de video/TikTok con GPT-4o Vision (msgId: ${cleanKey})...`);
+          const visionResult = await analyzeCustomerImageWithVision(thumbB64, 'image/jpeg');
+          if (visionResult?.interpretedText) {
+            targetCustomerMsg.aiAnalysis = visionResult.interpretedText;
+            aiAnalysisByMsgId.set(cleanKey, visionResult.interpretedText);
+            if (visionResult.suggestedQuery) {
+              detectedImageQuery = visionResult.suggestedQuery;
+            }
+            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+            console.log(`✅ [Video Vision Analizado]: ${visionResult.interpretedText}`);
+          }
+        }
+      } catch (e: any) {
+        console.log('[Video Thumbnail Vision Info]:', e?.message || e);
+      }
+    }
+
     // 4b. Auto-analyze Quoted Status / Quoted Media with OpenAI Vision!
     if (targetCustomerMsg.quotedMessage) {
       const qId = targetCustomerMsg.quotedMessage.id;
+      const cleanQId = qId ? qId.replace(/^evo-/, '') : '';
       const isQuotedIdInChatHistory = qId
         ? conv.messages.some(
-            m => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.id === `evo-${qId}`)
+            m => m.id !== targetCustomerMsg.id && (m.evolutionMessageId === qId || m.evolutionMessageId === cleanQId || m.id === `evo-${cleanQId}`)
           )
         : true;
+
+      if (cleanQId && !targetCustomerMsg.quotedMessage.aiAnalysis) {
+        const prevAnalysis =
+          aiAnalysisByMsgId.get(cleanQId) ||
+          aiAnalysisByMsgId.get(qId || '') ||
+          conv.messages.find(m => m.evolutionMessageId === cleanQId || m.id === `evo-${cleanQId}`)?.aiAnalysis;
+        if (prevAnalysis) {
+          targetCustomerMsg.quotedMessage.aiAnalysis = prevAnalysis;
+        }
+      }
 
       if (
         !targetCustomerMsg.quotedMessage.isStatusReply &&
@@ -11758,9 +11814,11 @@ async function triggerSalesBotReplyForConversation(
           targetCustomerMsg.quotedMessage.type === 'video')
       ) {
         try {
-          let qBase64 = targetCustomerMsg.quotedMessage.mediaBase64;
+          let qBase64 =
+            targetCustomerMsg.quotedMessage.mediaBase64 ||
+            (cleanQId ? videoThumbnailsByMsgId.get(cleanQId) : undefined);
           let qMime = targetCustomerMsg.quotedMessage.mediaMimeType || 'image/jpeg';
-          if (!qBase64 && qId) {
+          if (!qBase64 && qId && targetCustomerMsg.quotedMessage.type !== 'video') {
             const fetchedQuoted = await fetchMediaBase64FromEvolution(
               qId,
               false,
@@ -11772,11 +11830,11 @@ async function triggerSalesBotReplyForConversation(
             }
           }
           if (qBase64) {
-            console.log(`📱 [Status/Quoted Vision]: Analizando imagen del Estado de WhatsApp con GPT-4o Vision...`);
-            const statusVisionPrompt = `Analiza esta imagen de un Estado de WhatsApp (Story) o publicación de Todo Lapto sobre la cual el cliente está preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
+            console.log(`📱 [Status/Quoted Vision]: Analizando imagen/portada citada con GPT-4o Vision...`);
+            const statusVisionPrompt = `Analiza esta imagen (o portada de video/TikTok/Estado de WhatsApp) sobre la cual el cliente está preguntando: "${targetCustomerMsg.transcription || targetCustomerMsg.content}".
 Extrae con máxima precisión:
-1. Qué producto, laptop, marca y modelo exacto (ej. Dell Latitude, Lenovo ThinkPad, HP ProBook, impresora, monitor, etc.) aparece en el estado.
-2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoción escrita dentro de la imagen o flyer del estado.
+1. Qué producto, laptop, marca, color o promoción (ej. "PAQUETE DE OFFICE", Dell Latitude, Lenovo ThinkPad, HP ProBook, etc.) aparece en la imagen.
+2. Cualquier texto, precio en RD$, procesador (Core i3/i5/i7, Celeron, Ryzen), memoria RAM, disco SSD o promoción escrita dentro de la imagen o video.
 3. Si es una foto real sin texto, describe la marca, línea, color y características visibles del equipo.`;
             const qAnalysis = await analyzeImageWithOpenAI(qBase64, qMime, statusVisionPrompt);
             if (qAnalysis) {
@@ -11809,6 +11867,16 @@ Extrae con máxima precisión:
       baseCustomerText = targetCustomerMsg.aiAnalysis
         ? (caption ? `${caption}\n${targetCustomerMsg.aiAnalysis}` : targetCustomerMsg.aiAnalysis)
         : (caption || 'El cliente envió una imagen adjunta');
+    } else if (targetCustomerMsg.type === 'video') {
+      const caption =
+        targetCustomerMsg.content && !targetCustomerMsg.content.includes('[El cliente envió un VIDEO')
+          ? targetCustomerMsg.content
+          : '';
+      baseCustomerText = targetCustomerMsg.aiAnalysis
+        ? caption
+          ? `${caption}\n[Video/TikTok analizado visualmente]: ${targetCustomerMsg.aiAnalysis}`
+          : `[Video/TikTok analizado visualmente]: ${targetCustomerMsg.aiAnalysis}`
+        : caption || 'El cliente envió un video de producto o TikTok sin texto adicional';
     } else {
       baseCustomerText = targetCustomerMsg.content || 'Hola, me gustaría recibir información.';
     }
@@ -11966,15 +12034,35 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       systemInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) ||
       (genericFamily ? getRelevantProductsHighlight(baseCustomerText, targetCustomerMsg.quotedMessage?.text || '', '').match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) : null);
 
+    const normalizedForIntent = (baseCustomerText || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    const isRepairOrPickupQuery = /\b(reparacion|reparar|arreglar|taller|lista para|listo para|ir a retirar|retirarla|retirarlo|recoger|recogerla|mi pc|mi laptop|mi equipo|que me dicen de|ya esta lista|ya esta listo)\b/i.test(
+      normalizedForIntent
+    );
+    const isUseCaseRecommendationQuery = /\b(oficina|diseno|arquitectura|ingenier|programacion|gaming|juego|juegos|universidad|estudio|estudiantes|trabajo|contabilidad|algunos de los modelos|me funcionen|para mi|recomend|cual me recomiendas|cual es mejor|presupuesto|economica|barata|baratas)\b/i.test(
+      normalizedForIntent
+    );
+
     const isGenericCategoryInquiry =
+      !storeAnswer &&
+      !hasQuote &&
+      !isStatusReply &&
+      !isRepairOrPickupQuery &&
+      !isUseCaseRecommendationQuery &&
       !directSelectionOrDiscount &&
       !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) &&
       !isDiscountInquiry(baseCustomerText) &&
       !isPositionalOrNumberSelection(baseCustomerText) &&
       !hasSpecificModelCodeInText(baseCustomerText) &&
+      targetCustomerMsg.type !== 'audio' &&
+      targetCustomerMsg.type !== 'image' &&
+      targetCustomerMsg.type !== 'video' &&
       (Boolean(genericFamily) ||
-        /\b(lapto|laptops|laptop|computadora|computadoras|pc|portatil|portatiles|impresora|impresoras|mouse|raton|ratones|teclado|teclados|monitor|monitores|pantalla|pantallas|bocina|bocinas|audifono|audifonos|tablet|tablets|cargador|cargadores|disco|discos|ssd|ram|mochila|mochilas|router|repetidor|tienen|cuales|catalogo|lista)\b/i.test(
-          baseCustomerText
+        /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
+          normalizedForIntent
         ));
 
     if (directSelectionOrDiscount) {
@@ -11994,18 +12082,17 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       aiReply = directQuotedReply;
       providerUsed = 'openai';
       modelUsed = 'quoted-context-engine';
-    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
-      // Deterministic delivery of the 100% complete stock catalog without LLM truncation or latency
-      const fullCatalog = catalogBlockMatch[1].trim();
-      aiReply = storeAnswer ? `${storeAnswer}\n\n${fullCatalog}` : fullCatalog;
-      providerUsed = 'openai';
-      modelUsed = 'full-catalog-engine';
     } else if (storeAnswer) {
       aiReply = storeAnswer;
+    } else if (catalogBlockMatch && isGenericCategoryInquiry) {
+      // Deterministic delivery of the 100% complete stock catalog ONLY when explicitly asking for the full catalog
+      aiReply = catalogBlockMatch[1].trim();
+      providerUsed = 'openai';
+      modelUsed = 'full-catalog-engine';
     } else if (isSimpleMsg) {
       aiReply = buildInstantConversationalReply(conv, baseCustomerText);
     } else {
-      // Strict OpenAI execution for technical sales questions, consultative selling, and specific filtered queries
+      // Strict OpenAI execution for technical sales questions, consultative selling, repair/pickup checks, videos, and tailored recommendations
       const aiResult = await generateTextWithConfiguredAI({
         prompt: promptToSend,
         systemInstruction,
@@ -12021,11 +12108,11 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         candidateReply = catalogBlockMatch[1].trim();
       }
 
-      // Safety Guard 2 (Anti-Catalog-Dump Guard): If the customer is quoting a message, sending "." / "?", or NOT asking for a general catalog, NEVER allow OpenAI to dump the 36-laptop catalog
+      // Safety Guard 2 (Anti-Catalog-Dump Guard): Only block genuine full-catalog dumps (>= 15 items) when the customer did NOT ask for a catalog
       if (
         !isGenericCategoryInquiry &&
         (/Cat[aá]logo completo de laptops/i.test(candidateReply) ||
-          (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 5)
+          (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)
       ) {
         const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
         if (fallbackQuote) {
@@ -12045,7 +12132,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
                 : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
             candidateReply = `¡Claro que sí${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! Te confirmo los detalles de la *${p.name}*${posBadge}:\n\n💻 *${p.name}*\n💰 *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_\n📦 *Disponibilidad:* ${p.virtual_available} unidad(es) en stock real\n🏷️ *Condición:* ${condBadge}\n⚙️ *Especificaciones:* ${p.specsSummary || p.description_sale || 'Excelente estado y rendimiento garantizado'}\n${p.website_url ? `🔗 https://todolapto.com.do${p.website_url}\n` : ''}\n¿Deseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el envío a domicilio? 🚚`;
           } else {
-            candidateReply = `¡Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! 😊 Estoy atento a tu mensaje. Confírmame por favor cuál de los modelos te llamó la atención o cómo deseas que te ayudemos (retiro en tienda en la *Av. Charles de Gaulle No. 133* o envío a domicilio). 💻✨`;
+            candidateReply = `¡Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! 😊 Cuéntame qué equipo o servicio necesitas para ayudarte de inmediato.`;
           }
         }
       }
