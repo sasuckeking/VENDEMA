@@ -11516,7 +11516,7 @@ async function triggerSalesBotReplyForConversation(
       !initialLastMsg?.quotedMessage &&
       isSimpleConversationalMessage(initialText, initialHasQuote);
 
-    const typingPresenceMs = 400;
+    const typingPresenceMs = 4500;
     sendEvolutionTypingPresence(conv, typingPresenceMs).catch(() => {});
 
     // 1. Ensure Odoo inventory is loaded (only block if not a simple greeting)
@@ -12125,7 +12125,19 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       details: `Enviando respuesta a WhatsApp (${conv.customerPhone || conv.sessionId})`,
     });
 
-    const targetDelayMs = 150;
+    // Simulate natural human typing duration so the "escribiendo..." animation is clearly visible on WhatsApp
+    const desiredTotalMs =
+      triggerSource === 'manual_crm_trigger'
+        ? 1200
+        : Math.min(5000, Math.max(3000, 2200 + Math.round(aiReply.length * 4)));
+    const elapsedBeforeSend = Date.now() - startTime;
+    if (elapsedBeforeSend < desiredTotalMs) {
+      const remainingTypingMs = desiredTotalMs - elapsedBeforeSend;
+      sendEvolutionTypingPresence(conv, remainingTypingMs + 1000).catch(() => {});
+      await sleepMs(remainingTypingMs);
+    }
+
+    const targetDelayMs = triggerSource === 'manual_crm_trigger' ? 600 : 1200;
     const sendRes = await sendEvolutionMessageToConversation(
       conv,
       aiReply,

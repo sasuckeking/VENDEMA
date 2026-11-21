@@ -11579,7 +11579,7 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource, correlat
     const initialText = initialLastMsg?.transcription || initialLastMsg?.content || conv.lastMessagePreview || "";
     const initialHasQuote = Boolean(initialLastMsg?.quotedMessage?.text?.trim());
     const isInitialSimpleGreeting = initialLastMsg?.type === "text" && !initialLastMsg?.quotedMessage && isSimpleConversationalMessage(initialText, initialHasQuote);
-    const typingPresenceMs = 400;
+    const typingPresenceMs = 4500;
     sendEvolutionTypingPresence(conv, typingPresenceMs).catch(() => {
     });
     if (!isInitialSimpleGreeting) {
@@ -12092,7 +12092,15 @@ ${p.website_url ? `\u{1F517} https://todolapto.com.do${p.website_url}
       messageId: initialMsgId,
       details: `Enviando respuesta a WhatsApp (${conv.customerPhone || conv.sessionId})`
     });
-    const targetDelayMs = 150;
+    const desiredTotalMs = triggerSource === "manual_crm_trigger" ? 1200 : Math.min(5e3, Math.max(3e3, 2200 + Math.round(aiReply.length * 4)));
+    const elapsedBeforeSend = Date.now() - startTime;
+    if (elapsedBeforeSend < desiredTotalMs) {
+      const remainingTypingMs = desiredTotalMs - elapsedBeforeSend;
+      sendEvolutionTypingPresence(conv, remainingTypingMs + 1e3).catch(() => {
+      });
+      await sleepMs(remainingTypingMs);
+    }
+    const targetDelayMs = triggerSource === "manual_crm_trigger" ? 600 : 1200;
     const sendRes = await sendEvolutionMessageToConversation(
       conv,
       aiReply,
