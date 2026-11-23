@@ -2441,6 +2441,56 @@ async function autoSyncCustomerToSupabase(customer) {
     console.warn("[Supabase autoSyncCustomer error]:", e.message);
   }
 }
+async function syncChatAiEnabledToSupabase(telefono, lidJid, nombre, aiEnabled, url, anonKey) {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return;
+  const cleanPhone = (telefono || "").replace(/\D/g, "");
+  const safePhone = cleanPhone || (lidJid ? lidJid.replace(/@.*$/, "").replace(/\D/g, "") : "");
+  if (!safePhone) return;
+  try {
+    await client.from("contactos_whatsapp").upsert(
+      {
+        telefono: safePhone,
+        lid_jid: lidJid && lidJid.includes("@lid") ? lidJid : null,
+        nombre: nombre || `Cliente +${safePhone}`,
+        ai_enabled: aiEnabled,
+        last_interaction: (/* @__PURE__ */ new Date()).toISOString()
+      },
+      { onConflict: "telefono" }
+    );
+  } catch {
+  }
+}
+async function loadPausedAiContactsFromSupabase(url, anonKey) {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return [];
+  try {
+    const { data, error } = await client.from("contactos_whatsapp").select("telefono, lid_jid").eq("ai_enabled", false);
+    if (error || !Array.isArray(data)) return [];
+    const keys = [];
+    for (const row of data) {
+      if (row.telefono) keys.push(String(row.telefono).replace(/\D/g, ""));
+      if (row.lid_jid) keys.push(String(row.lid_jid));
+    }
+    return keys.filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+async function isChatAiPausedInSupabase(keys, url, anonKey) {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client || keys.length === 0) return false;
+  try {
+    const cleanDigits = Array.from(
+      new Set(keys.map((k) => k.replace(/@.*$/, "").replace(/\D/g, "")).filter((d) => d.length >= 8))
+    );
+    if (cleanDigits.length === 0) return false;
+    const { data, error } = await client.from("contactos_whatsapp").select("ai_enabled").in("telefono", cleanDigits).eq("ai_enabled", false).limit(1);
+    return !error && Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 // server.ts
 dotenv.config();
@@ -10024,6 +10074,15 @@ app.post("/api/conversations/:sessionId/toggle-ai", (req, res) => {
   const lead = customers.find((c) => c.phone === conv.customerPhone || c.lidJid === conv.sessionId);
   if (lead) lead.aiEnabled = conv.aiEnabled;
   savePersistedConversations();
+  syncChatAiEnabledToSupabase(
+    conv.customerPhone,
+    conv.sessionId,
+    conv.customerName,
+    conv.aiEnabled,
+    appConfig.supabase?.url,
+    appConfig.supabase?.anonKey
+  ).catch(() => {
+  });
   if (!conv.aiEnabled) {
     const keys = getConversationContactKeys(conv);
     persistentJobQueue = persistentJobQueue.filter((j) => {
@@ -11587,6 +11646,22 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource, correlat
   if (initialSkip.skip) {
     return { success: false, skipped: true, error: initialSkip.reason, correlationId: effCorrelationId };
   }
+  if (triggerSource !== "manual_crm_trigger" && appConfig.supabase?.url) {
+    const preContactKeys = getConversationContactKeys(conv);
+    const pausedRemotely = await isChatAiPausedInSupabase(preContactKeys, appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (pausedRemotely) {
+      conv.aiEnabled = false;
+      for (const k of preContactKeys) aiEnabledBySession.set(k, false);
+      savePersistedConversations();
+      console.log(`\u{1F6E1}\uFE0F [Human Takeover Guard]: IA pausada en Supabase para ${conv.customerName} (${conv.customerPhone}). Respuesta autom\xE1tica bloqueada.`);
+      return {
+        success: false,
+        skipped: true,
+        error: "IA pausada manualmente en este chat (sincronizado desde Supabase)",
+        correlationId: effCorrelationId
+      };
+    }
+  }
   if (!acquireBotLock(conv, triggerSource, effOwnerId)) {
     return {
       success: false,
@@ -12038,7 +12113,7 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     const isUseCaseRecommendationQuery = /\b(oficina|diseno|arquitectura|ingenier|programacion|gaming|juego|juegos|universidad|estudio|estudiantes|trabajo|contabilidad|algunos de los modelos|me funcionen|para mi|recomend|cual me recomiendas|cual es mejor|presupuesto|economica|barata|baratas)\b/i.test(
       normalizedForIntent
     );
-    const isGenericCategoryInquiry = !storeAnswer && !hasQuote && !isStatusReply && !isRepairOrPickupQuery && !isUseCaseRecommendationQuery && !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && targetCustomerMsg.type !== "audio" && targetCustomerMsg.type !== "image" && targetCustomerMsg.type !== "video" && (Boolean(genericFamily) || /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
+    const isGenericCategoryInquiry = !storeAnswer && !hasQuote && !isStatusReply && !isRepairOrPickupQuery && !isUseCaseRecommendationQuery && !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && (targetCustomerMsg.type !== "audio" || Boolean(targetCustomerMsg.transcription)) && targetCustomerMsg.type !== "image" && targetCustomerMsg.type !== "video" && (Boolean(genericFamily) || /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cual computadora tienes|cuales computadoras tienes|que computadora tienes|que computadoras tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
       normalizedForIntent
     ));
     if (directSelectionOrDiscount) {
@@ -12077,7 +12152,7 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       if (isGenericCategoryInquiry && catalogBlockMatch && isCatalogSectionPresent && candidateReply.length < 500 && catalogBlockMatch[1].length > 800) {
         candidateReply = catalogBlockMatch[1].trim();
       }
-      if (!isGenericCategoryInquiry && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)) {
+      if (!isGenericCategoryInquiry && (hasQuote || isStatusReply || isRepairOrPickupQuery || baseCustomerText.trim().length < 12) && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)) {
         const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
         if (fallbackQuote) {
           candidateReply = fallbackQuote;
@@ -13255,7 +13330,27 @@ async function startServer() {
       botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
       syncEvolutionChats().then(() => ensureEvolutionWebhookRegistered()).catch((e) => console.log("Initial Evolution sync info:", e?.message || e));
       syncOdooInventory().then(() => syncOdooCustomers()).catch((e) => console.log("Initial Odoo sync info:", e?.message || e));
-      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).catch((e) => console.log("Initial Supabase sync info:", e?.message || e));
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(async () => {
+        const pausedKeys = await loadPausedAiContactsFromSupabase(
+          appConfig.supabase?.url,
+          appConfig.supabase?.anonKey
+        );
+        if (pausedKeys.length > 0) {
+          for (const key of pausedKeys) {
+            aiEnabledBySession.set(key, false);
+          }
+          let updated = false;
+          for (const conv of conversations) {
+            const phoneDigits = String(conv.phone || "").replace(/\D/g, "");
+            if (pausedKeys.includes(conv.sessionId) || phoneDigits && pausedKeys.includes(phoneDigits)) {
+              conv.aiEnabled = false;
+              updated = true;
+            }
+          }
+          if (updated) savePersistedConversations();
+          console.log(`[Supabase AI Sync] ${pausedKeys.length} clave(s) con IA pausada cargadas al iniciar.`);
+        }
+      }).catch((e) => console.log("Initial Supabase sync info:", e?.message || e));
       processPersistentQueueTick().catch(() => {
       });
     }, 600);

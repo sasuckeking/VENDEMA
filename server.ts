@@ -63,7 +63,10 @@ import {
   autoSyncConfigToSupabase,
   autoSyncOrderToSupabase,
   autoSyncMessageToSupabase,
-  autoSyncCustomerToSupabase
+  autoSyncCustomerToSupabase,
+  syncChatAiEnabledToSupabase,
+  loadPausedAiContactsFromSupabase,
+  isChatAiPausedInSupabase
 } from './src/utils/supabaseService.ts';
 
 dotenv.config();
@@ -9556,6 +9559,14 @@ app.post('/api/conversations/:sessionId/toggle-ai', (req, res) => {
   if (lead) lead.aiEnabled = conv.aiEnabled;
 
   savePersistedConversations();
+  syncChatAiEnabledToSupabase(
+    conv.customerPhone,
+    conv.sessionId,
+    conv.customerName,
+    conv.aiEnabled,
+    appConfig.supabase?.url,
+    appConfig.supabase?.anonKey
+  ).catch(() => {});
 
   // If pausing AI, purge any PENDING or RETRY jobs for this chat from the queue and release any lock
   if (!conv.aiEnabled) {
@@ -11507,6 +11518,24 @@ async function triggerSalesBotReplyForConversation(
     return { success: false, skipped: true, error: initialSkip.reason, correlationId: effCorrelationId };
   }
 
+  // Cross-server Human Takeover Guard: verify in Supabase if another PC/server paused AI for this contact
+  if (triggerSource !== 'manual_crm_trigger' && appConfig.supabase?.url) {
+    const preContactKeys = getConversationContactKeys(conv);
+    const pausedRemotely = await isChatAiPausedInSupabase(preContactKeys, appConfig.supabase.url, appConfig.supabase.anonKey);
+    if (pausedRemotely) {
+      conv.aiEnabled = false;
+      for (const k of preContactKeys) aiEnabledBySession.set(k, false);
+      savePersistedConversations();
+      console.log(`🛡️ [Human Takeover Guard]: IA pausada en Supabase para ${conv.customerName} (${conv.customerPhone}). Respuesta automática bloqueada.`);
+      return {
+        success: false,
+        skipped: true,
+        error: 'IA pausada manualmente en este chat (sincronizado desde Supabase)',
+        correlationId: effCorrelationId,
+      };
+    }
+  }
+
   if (!acquireBotLock(conv, triggerSource, effOwnerId)) {
     return {
       success: false,
@@ -12069,11 +12098,11 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       !isDiscountInquiry(baseCustomerText) &&
       !isPositionalOrNumberSelection(baseCustomerText) &&
       !hasSpecificModelCodeInText(baseCustomerText) &&
-      targetCustomerMsg.type !== 'audio' &&
+      (targetCustomerMsg.type !== 'audio' || Boolean(targetCustomerMsg.transcription)) &&
       targetCustomerMsg.type !== 'image' &&
       targetCustomerMsg.type !== 'video' &&
       (Boolean(genericFamily) ||
-        /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
+        /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cual computadora tienes|cuales computadoras tienes|que computadora tienes|que computadoras tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
           normalizedForIntent
         ));
 
@@ -12120,9 +12149,10 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         candidateReply = catalogBlockMatch[1].trim();
       }
 
-      // Safety Guard 2 (Anti-Catalog-Dump Guard): Only block genuine full-catalog dumps (>= 15 items) when the customer did NOT ask for a catalog
+      // Safety Guard 2 (Anti-Catalog-Dump Guard): Only block genuine full-catalog dumps (>= 15 items) when the customer did NOT ask for a catalog or products
       if (
         !isGenericCategoryInquiry &&
+        (hasQuote || isStatusReply || isRepairOrPickupQuery || baseCustomerText.trim().length < 12) &&
         (/Cat[aá]logo completo de laptops/i.test(candidateReply) ||
           (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)
       ) {
@@ -13558,6 +13588,30 @@ async function startServer() {
         .then(() => hydrateAndSyncAiConfigWithSupabase())
         .then(() => hydrateAndSyncHolidaysWithSupabase())
         .then(() => autoSyncConfigToSupabase(appConfig))
+        .then(async () => {
+          const pausedKeys = await loadPausedAiContactsFromSupabase(
+            appConfig.supabase?.url,
+            appConfig.supabase?.anonKey
+          );
+          if (pausedKeys.length > 0) {
+            for (const key of pausedKeys) {
+              aiEnabledBySession.set(key, false);
+            }
+            let updated = false;
+            for (const conv of conversations) {
+              const phoneDigits = String(conv.phone || '').replace(/\D/g, '');
+              if (
+                pausedKeys.includes(conv.sessionId) ||
+                (phoneDigits && pausedKeys.includes(phoneDigits))
+              ) {
+                conv.aiEnabled = false;
+                updated = true;
+              }
+            }
+            if (updated) savePersistedConversations();
+            console.log(`[Supabase AI Sync] ${pausedKeys.length} clave(s) con IA pausada cargadas al iniciar.`);
+          }
+        })
         .catch(e => console.log('Initial Supabase sync info:', e?.message || e));
 
       processPersistentQueueTick().catch(() => {});

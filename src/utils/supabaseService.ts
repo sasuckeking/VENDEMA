@@ -1435,3 +1435,77 @@ export async function autoSyncCustomerToSupabase(customer: CustomerLead): Promis
     console.warn('[Supabase autoSyncCustomer error]:', e.message);
   }
 }
+
+export async function syncChatAiEnabledToSupabase(
+  telefono: string,
+  lidJid: string | null,
+  nombre: string,
+  aiEnabled: boolean,
+  url?: string,
+  anonKey?: string
+): Promise<void> {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return;
+  const cleanPhone = (telefono || '').replace(/\D/g, '');
+  const safePhone = cleanPhone || (lidJid ? lidJid.replace(/@.*$/, '').replace(/\D/g, '') : '');
+  if (!safePhone) return;
+  try {
+    await client.from('contactos_whatsapp').upsert(
+      {
+        telefono: safePhone,
+        lid_jid: lidJid && lidJid.includes('@lid') ? lidJid : null,
+        nombre: nombre || `Cliente +${safePhone}`,
+        ai_enabled: aiEnabled,
+        last_interaction: new Date().toISOString(),
+      },
+      { onConflict: 'telefono' }
+    );
+  } catch {}
+}
+
+export async function loadPausedAiContactsFromSupabase(
+  url?: string,
+  anonKey?: string
+): Promise<string[]> {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client) return [];
+  try {
+    const { data, error } = await client
+      .from('contactos_whatsapp')
+      .select('telefono, lid_jid')
+      .eq('ai_enabled', false);
+    if (error || !Array.isArray(data)) return [];
+    const keys: string[] = [];
+    for (const row of data) {
+      if (row.telefono) keys.push(String(row.telefono).replace(/\D/g, ''));
+      if (row.lid_jid) keys.push(String(row.lid_jid));
+    }
+    return keys.filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function isChatAiPausedInSupabase(
+  keys: string[],
+  url?: string,
+  anonKey?: string
+): Promise<boolean> {
+  const client = getSupabaseClient(url, anonKey);
+  if (!client || keys.length === 0) return false;
+  try {
+    const cleanDigits = Array.from(
+      new Set(keys.map(k => k.replace(/@.*$/, '').replace(/\D/g, '')).filter(d => d.length >= 8))
+    );
+    if (cleanDigits.length === 0) return false;
+    const { data, error } = await client
+      .from('contactos_whatsapp')
+      .select('ai_enabled')
+      .in('telefono', cleanDigits)
+      .eq('ai_enabled', false)
+      .limit(1);
+    return !error && Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
