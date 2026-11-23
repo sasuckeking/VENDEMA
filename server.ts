@@ -1896,6 +1896,10 @@ async function transcribeAudioWithOpenAI(base64Audio: string, mimeType = 'audio/
   formData.append('file', blob, `voice_note.${ext}`);
   formData.append('model', 'whisper-1');
   formData.append('language', 'es');
+  formData.append(
+    'prompt',
+    'Todo Lapto, laptop, PC, computadora, Dell, Lenovo ThinkPad, HP, Asus, Acer, Chromebook, MacBook, impresora, Epson, Canon, SSD, RAM, Intel Core i3 i5 i7, Ryzen, Santo Domingo, Charles de Gaulle, precio, garantía, envío, transferencia.'
+  );
 
   const t0 = Date.now();
   const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -11218,6 +11222,9 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
   const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const statusPromptBlock = formatActiveWhatsAppStatusesPrompt();
 
+  const hasInventoryPlaceholder = /\{\{\s*(\$json\.inventario_completo|INVENTARIO_COMPLETO)\s*\}\}/.test(rawTemplate);
+  const hasLearnedPlaceholder = /\{\{\s*APRENDIZAJE_CEREBRO_IA\s*\}\}/.test(rawTemplate);
+
   const filledInstruction =
     rdTimePromptBlock +
     '\n\n' +
@@ -11235,6 +11242,8 @@ Si el cliente expresa intención de comprar, apartar, cotizar o hacer un pedido:
       .replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary)
       .replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr)
       .replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) +
+    (!hasInventoryPlaceholder ? `\n\n# INVENTARIO REAL DE ODOO EN TIEMPO REAL:\n${inventoryContext}` : '') +
+    (!hasLearnedPlaceholder && learnedContext ? `\n\n# APRENDIZAJES Y TÁCTICAS DE CHATS ANTERIORES (CEREBRO IA):\n${learnedContext}` : '') +
     (extraCustomInstructions ? `\n\n# INSTRUCCIONES PERSONALIZADAS ADICIONALES DEL ADMINISTRADOR:\n${extraCustomInstructions}` : '') +
     crmCustomerContext;
 
@@ -11621,40 +11630,43 @@ async function triggerSalesBotReplyForConversation(
           messageId: targetCustomerMsg.evolutionMessageId,
           success: false,
           severity: 'HIGH',
-          details: 'No se pudo descargar el archivo de audio desde Evolution API',
+          details: 'No se pudo descargar el archivo de audio desde Evolution API (continuando con respuesta amable)',
         });
-        throw new Error('No se pudo descargar la nota de voz desde Evolution API para transcribirla');
-      }
-
-      recordDiagnosticStage({
-        correlationId: effCorrelationId,
-        stage: 'MEDIA_DOWNLOADED',
-        service: 'Evolution API',
-        module: 'media',
-        customer: conv.customerName,
-        conversationId: conv.sessionId,
-        messageId: targetCustomerMsg.evolutionMessageId,
-        details: `Audio descargado (${media.mimetype})`,
-      });
-
-      const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
-      if (trText) {
-        targetCustomerMsg.transcription = trText;
-        targetCustomerMsg.content = `🎤 "${trText}"`;
-        saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
-        conv.lastMessagePreview = `🎤 "${trText}"`;
-        broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+      } else {
         recordDiagnosticStage({
           correlationId: effCorrelationId,
-          stage: 'MEDIA_TRANSCRIBED',
-          service: 'AI Engine',
-          module: 'whisper',
+          stage: 'MEDIA_DOWNLOADED',
+          service: 'Evolution API',
+          module: 'media',
           customer: conv.customerName,
           conversationId: conv.sessionId,
           messageId: targetCustomerMsg.evolutionMessageId,
-          details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`,
+          details: `Audio descargado (${media.mimetype})`,
         });
-        console.log(`✅ [Audio Whisper Transcrito]: "${trText}"`);
+
+        try {
+          const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
+          if (trText) {
+            targetCustomerMsg.transcription = trText;
+            targetCustomerMsg.content = `🎤 "${trText}"`;
+            saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
+            conv.lastMessagePreview = `🎤 "${trText}"`;
+            broadcastEvent('message_updated', { sessionId: conv.sessionId, message: targetCustomerMsg });
+            recordDiagnosticStage({
+              correlationId: effCorrelationId,
+              stage: 'MEDIA_TRANSCRIBED',
+              service: 'AI Engine',
+              module: 'whisper',
+              customer: conv.customerName,
+              conversationId: conv.sessionId,
+              messageId: targetCustomerMsg.evolutionMessageId,
+              details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`,
+            });
+            console.log(`✅ [Audio Whisper Transcrito]: "${trText}"`);
+          }
+        } catch (whisperErr: any) {
+          console.log('⚠️ [Whisper Audio Notice]:', whisperErr?.message || whisperErr);
+        }
       }
     }
 

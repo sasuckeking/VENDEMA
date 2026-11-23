@@ -3892,6 +3892,10 @@ async function transcribeAudioWithOpenAI(base64Audio, mimeType = "audio/ogg") {
   formData.append("file", blob, `voice_note.${ext}`);
   formData.append("model", "whisper-1");
   formData.append("language", "es");
+  formData.append(
+    "prompt",
+    "Todo Lapto, laptop, PC, computadora, Dell, Lenovo ThinkPad, HP, Asus, Acer, Chromebook, MacBook, impresora, Epson, Canon, SSD, RAM, Intel Core i3 i5 i7, Ryzen, Santo Domingo, Charles de Gaulle, precio, garant\xEDa, env\xEDo, transferencia."
+  );
   const t0 = Date.now();
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -11361,7 +11365,15 @@ Si el cliente expresa intenci\xF3n de comprar, apartar, cotizar o hacer un pedid
   const rdTimeContext = getDominicanTimeContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const rdTimePromptBlock = buildDominicanTimePromptContext(getEffectiveCurrentDate(), appConfig.holidayOverrides || []);
   const statusPromptBlock = formatActiveWhatsAppStatusesPrompt();
-  const filledInstruction = rdTimePromptBlock + "\n\n" + statusPromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + (extraCustomInstructions ? `
+  const hasInventoryPlaceholder = /\{\{\s*(\$json\.inventario_completo|INVENTARIO_COMPLETO)\s*\}\}/.test(rawTemplate);
+  const hasLearnedPlaceholder = /\{\{\s*APRENDIZAJE_CEREBRO_IA\s*\}\}/.test(rawTemplate);
+  const filledInstruction = rdTimePromptBlock + "\n\n" + statusPromptBlock + "\n\n" + rawTemplate.replace(/\{\{\s*\$json\.telefono_cliente[^}]*\}\}/g, detectedPhone).replace(/\{\{TELEFONO_CLIENTE\}\}/g, detectedPhone).replace(/\{\{\s*\$json\.inventario_completo\s*\}\}/g, inventoryContext).replace(/\{\{INVENTARIO_COMPLETO\}\}/g, inventoryContext).replace(/\{\{APRENDIZAJE_CEREBRO_IA\}\}/g, learnedContext).replace(/\{\{ESTADOS_WHATSAPP_ACTIVOS\}\}/g, statusPromptBlock).replace(/\{\{HORA_RD\}\}/g, rdTimeContext.time12).replace(/\{\{FECHA_RD\}\}/g, rdTimeContext.fullDateStr).replace(/\{\{ESTADO_NEGOCIO\}\}/g, rdTimeContext.statusSummary).replace(/\{\{PROXIMA_APERTURA\}\}/g, rdTimeContext.nextOpeningStr).replace(/\{\{CONTEXTO_HORARIO_RD\}\}/g, rdTimePromptBlock) + (!hasInventoryPlaceholder ? `
+
+# INVENTARIO REAL DE ODOO EN TIEMPO REAL:
+${inventoryContext}` : "") + (!hasLearnedPlaceholder && learnedContext ? `
+
+# APRENDIZAJES Y T\xC1CTICAS DE CHATS ANTERIORES (CEREBRO IA):
+${learnedContext}` : "") + (extraCustomInstructions ? `
 
 # INSTRUCCIONES PERSONALIZADAS ADICIONALES DEL ADMINISTRADOR:
 ${extraCustomInstructions}` : "") + crmCustomerContext;
@@ -11673,38 +11685,42 @@ async function triggerSalesBotReplyForConversation(conv, triggerSource, correlat
           messageId: targetCustomerMsg.evolutionMessageId,
           success: false,
           severity: "HIGH",
-          details: "No se pudo descargar el archivo de audio desde Evolution API"
+          details: "No se pudo descargar el archivo de audio desde Evolution API (continuando con respuesta amable)"
         });
-        throw new Error("No se pudo descargar la nota de voz desde Evolution API para transcribirla");
-      }
-      recordDiagnosticStage({
-        correlationId: effCorrelationId,
-        stage: "MEDIA_DOWNLOADED",
-        service: "Evolution API",
-        module: "media",
-        customer: conv.customerName,
-        conversationId: conv.sessionId,
-        messageId: targetCustomerMsg.evolutionMessageId,
-        details: `Audio descargado (${media.mimetype})`
-      });
-      const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
-      if (trText) {
-        targetCustomerMsg.transcription = trText;
-        targetCustomerMsg.content = `\u{1F3A4} "${trText}"`;
-        saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
-        conv.lastMessagePreview = `\u{1F3A4} "${trText}"`;
-        broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+      } else {
         recordDiagnosticStage({
           correlationId: effCorrelationId,
-          stage: "MEDIA_TRANSCRIBED",
-          service: "AI Engine",
-          module: "whisper",
+          stage: "MEDIA_DOWNLOADED",
+          service: "Evolution API",
+          module: "media",
           customer: conv.customerName,
           conversationId: conv.sessionId,
           messageId: targetCustomerMsg.evolutionMessageId,
-          details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`
+          details: `Audio descargado (${media.mimetype})`
         });
-        console.log(`\u2705 [Audio Whisper Transcrito]: "${trText}"`);
+        try {
+          const trText = await transcribeAudioWithOpenAI(media.base64, media.mimetype);
+          if (trText) {
+            targetCustomerMsg.transcription = trText;
+            targetCustomerMsg.content = `\u{1F3A4} "${trText}"`;
+            saveTranscriptionForId(targetCustomerMsg.evolutionMessageId, trText);
+            conv.lastMessagePreview = `\u{1F3A4} "${trText}"`;
+            broadcastEvent("message_updated", { sessionId: conv.sessionId, message: targetCustomerMsg });
+            recordDiagnosticStage({
+              correlationId: effCorrelationId,
+              stage: "MEDIA_TRANSCRIBED",
+              service: "AI Engine",
+              module: "whisper",
+              customer: conv.customerName,
+              conversationId: conv.sessionId,
+              messageId: targetCustomerMsg.evolutionMessageId,
+              details: `Nota de voz transcrita: "${trText.slice(0, 120)}"`
+            });
+            console.log(`\u2705 [Audio Whisper Transcrito]: "${trText}"`);
+          }
+        } catch (whisperErr) {
+          console.log("\u26A0\uFE0F [Whisper Audio Notice]:", whisperErr?.message || whisperErr);
+        }
       }
     }
     if (targetCustomerMsg.quotedMessage && targetCustomerMsg.quotedMessage.id && (!targetCustomerMsg.quotedMessage.text || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz citada" || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz de WhatsApp" || targetCustomerMsg.quotedMessage.text === "\u{1F3A4} Nota de voz anterior")) {
