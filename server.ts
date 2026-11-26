@@ -4379,14 +4379,14 @@ async function quickSeedConversationsFromRecentMessages(): Promise<void> {
   } catch {}
 }
 
-async function syncEvolutionChats(): Promise<Conversation[]> {
+async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
   if (isEvoSyncRunning) return conversations;
   const now = Date.now();
   if (conversations.length === 0) {
     loadPersistedConversations();
   }
-  // Throttle delta message check to every 5 seconds
-  if (now - lastEvolutionChatsSync < 5000 && conversations.length > 0) {
+  // Throttle delta message check to every 5 seconds unless forceWide is requested
+  if (!forceWide && now - lastEvolutionChatsSync < 5000 && conversations.length > 0) {
     return conversations;
   }
   isEvoSyncRunning = true;
@@ -4421,8 +4421,9 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
       broadcastEvent('evolution_status', { connected: true, state: 'open' });
     }
 
-    // 2. Fetch recent messages: seed wider (200) when recovering from empty state (e.g. after reconnect), otherwise lightweight delta (15)
-    const fetchOffset = conversations.length === 0 ? 200 : 15;
+    // 2. Fetch recent messages: seed wider (300) when forceWide or few chats loaded, otherwise lightweight delta (15)
+    const isWideSync = forceWide || conversations.length < 25;
+    const fetchOffset = isWideSync ? 300 : 15;
     const msgUrl = `${baseUrl}/chat/findMessages/${instance}`;
     const msgRes = await fetch(msgUrl, {
       method: 'POST',
@@ -4581,6 +4582,89 @@ async function syncEvolutionChats(): Promise<Conversation[]> {
           conv.lastMessagePreview = latestInConv.content;
           conv.lastMessageType = latestInConv.type;
         }
+      }
+    }
+
+    if (isWideSync) {
+      try {
+        const chatsRes = await fetch(`${baseUrl}/chat/findChats/${instance}`, {
+          method: 'POST',
+          headers: {
+            apikey: appConfig.evolution.apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (chatsRes.ok) {
+          const chatsData = await chatsRes.json().catch(() => []);
+          const rawChats: any[] = Array.isArray(chatsData) ? chatsData : chatsData?.chats || [];
+          const sortedChats = [...rawChats]
+            .filter(ch => ch?.remoteJid && !isWhatsAppGroup(ch.remoteJid) && ch.remoteJid !== 'status@broadcast')
+            .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+            .slice(0, 100);
+
+          for (const ch of sortedChats) {
+            const remoteJid: string = ch.remoteJid;
+            const mappedPhone = lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, '')) || '';
+            const rawDigits = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
+            const cleanPhone = mappedPhone || (remoteJid.endsWith('@s.whatsapp.net') ? rawDigits : rawDigits);
+            const canonicalSessionId =
+              cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 && !remoteJid.endsWith('@lid')
+                ? `${cleanPhone}@s.whatsapp.net`
+                : mappedPhone
+                ? `${mappedPhone}@s.whatsapp.net`
+                : remoteJid;
+
+            const pushName =
+              (ch.pushName && ch.pushName !== 'Você' ? ch.pushName : '') ||
+              (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
+
+            const existing = conversations.find(
+              c =>
+                c.sessionId === canonicalSessionId ||
+                c.sessionId === remoteJid ||
+                (cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone) ||
+                relatedJidsBySession.get(c.sessionId)?.has(remoteJid) ||
+                (!isGenericContactName(pushName) &&
+                  !isGenericContactName(c.customerName) &&
+                  c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase())
+            );
+
+            if (!existing) {
+              const odooMatch = findOdooPartnerByPhone(cleanPhone);
+              const isAiPausedForChat =
+                aiEnabledBySession.get(canonicalSessionId) === false ||
+                aiEnabledBySession.get(remoteJid) === false ||
+                (cleanPhone ? aiEnabledBySession.get(cleanPhone) === false : false);
+              const newConv: Conversation = {
+                sessionId: canonicalSessionId,
+                customerName: odooMatch?.name || pushName,
+                customerPhone: cleanPhone,
+                odooPartnerId: odooMatch?.id,
+                isOdooClient: Boolean(odooMatch),
+                aiEnabled: !isAiPausedForChat,
+                unreadCount: Number(ch.unreadCount || 0),
+                lastMessagePreview: 'Toca para cargar mensajes...',
+                lastMessageType: 'text',
+                lastTimestamp: ch.updatedAt || new Date().toISOString(),
+                stage: odooMatch ? 'Cliente Registrado' : 'Explorando',
+                messagesLoaded: false,
+                messages: [],
+              };
+              const jSet = relatedJidsBySession.get(newConv.sessionId) || new Set<string>([newConv.sessionId]);
+              jSet.add(remoteJid);
+              relatedJidsBySession.set(newConv.sessionId, jSet);
+              conversations.push(newConv);
+              hasChanges = true;
+            } else if (!isGenericContactName(pushName) && isGenericContactName(existing.customerName)) {
+              existing.customerName = pushName;
+              hasChanges = true;
+            }
+          }
+        }
+      } catch (e: any) {
+        console.log('[Evolution findChats hydration info]:', e?.message || e);
       }
     }
 
@@ -9409,11 +9493,11 @@ app.get('/api/conversations', async (req, res) => {
     loadPersistedConversations();
   }
   if (conversations.length === 0) {
-    await syncEvolutionChats().catch(() => {});
+    await syncEvolutionChats(true).catch(() => {});
   } else if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
     lastEvolutionChatsSync = 0;
-    await syncEvolutionChats().catch(() => {});
+    await syncEvolutionChats(true).catch(() => {});
   } else if (now - lastEvolutionChatsSync > 15000) {
     syncEvolutionChats().catch(() => {});
   }
