@@ -4490,6 +4490,11 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
         .replace(/@.*$/, '')
         .replace(/\D/g, '');
 
+      const ownPhone = (evolutionQrCache.ownerJid || '18094228738').replace(/@.*$/, '').replace(/\D/g, '');
+      if (cleanPhone && ownPhone && cleanPhone === ownPhone) {
+        continue;
+      }
+
       const canonicalSessionId =
         cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13
           ? `${cleanPhone}@s.whatsapp.net`
@@ -4689,10 +4694,10 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
     }
 
     // Auto-reply fallback polling:
-    // ONLY run on the active webhook server (never on secondary local dev PCs racing with vendema.site),
-    // and ONLY after a 15-second grace window so the real-time Webhook always answers first without race conditions!
-    const isSecondaryLocalDevWithoutWebhook = process.platform === 'win32' && !lastWebhookReceivedAt;
-    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer() && !isSecondaryLocalDevWithoutWebhook) {
+    // Waits 15s on webhook server (or 25s on secondary local server) and verifies live via hasEvolutionAlreadyAnsweredSince
+    // so the real-time Webhook always has priority without race conditions, while ensuring messages are never left unanswered.
+    const pollGraceMs = process.platform === 'win32' && !lastWebhookReceivedAt ? 25000 : 15000;
+    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
       const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = new Set<string>();
 
@@ -4719,8 +4724,8 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
 
-        // Wait at least 15s before polling fallback triggers so the real-time webhook has full priority
-        if (ageMs < 15000) {
+        // Wait at least pollGraceMs before polling fallback triggers so the real-time webhook has full priority
+        if (ageMs < pollGraceMs) {
           continue;
         }
 
@@ -9398,20 +9403,29 @@ app.post('/api/evolution/restart', async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || '').replace(/\/$/, '');
   try {
-    // Check if already open — in Evolution API v2.3.7 calling restart on an open socket spawns a duplicate socket!
+    await fetch(`${baseUrl}/instance/restart/${instance}`, {
+      method: 'POST',
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(10000),
+    }).catch(() => null);
+
+    ensureEvolutionWebhookRegistered().catch(() => {});
+
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(4000),
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     if ((stateData?.instance?.state || stateData?.state) === 'open') {
+      lastEvolutionChatsSync = 0;
+      await syncEvolutionChats(true).catch(() => {});
       return res.json({
         success: true,
         state: 'open',
         connected: true,
         qrBase64: null,
         pairingCode: null,
-        message: `La instancia "${instance}" ya está conectada y activa.`,
+        message: `Instancia "${instance}" reiniciada y chats sincronizados.`,
       });
     }
 
@@ -9501,7 +9515,13 @@ app.get('/api/conversations', async (req, res) => {
   } else if (now - lastEvolutionChatsSync > 15000) {
     syncEvolutionChats().catch(() => {});
   }
-  // Ensure each conversation has the latest Odoo client status resolved
+  // Filter out the store's own WhatsApp number and resolve latest Odoo client status
+  const ownPhone = (evolutionQrCache.ownerJid || '18094228738').replace(/@.*$/, '').replace(/\D/g, '');
+  if (ownPhone) {
+    conversations = conversations.filter(
+      c => c.customerPhone !== ownPhone && c.sessionId !== `${ownPhone}@s.whatsapp.net`
+    );
+  }
   for (const conv of conversations) {
     if (conv.customerPhone) {
       const match = findOdooPartnerByPhone(conv.customerPhone);

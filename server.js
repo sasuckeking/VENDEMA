@@ -5961,6 +5961,10 @@ async function syncEvolutionChats(forceWide = false) {
         }
       }
       const cleanPhone = (rawAlt.endsWith("@s.whatsapp.net") ? rawAlt : remoteJid.endsWith("@lid") && (lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, ""))) ? lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, "")) : remoteJid).replace(/@.*$/, "").replace(/\D/g, "");
+      const ownPhone = (evolutionQrCache.ownerJid || "18094228738").replace(/@.*$/, "").replace(/\D/g, "");
+      if (cleanPhone && ownPhone && cleanPhone === ownPhone) {
+        continue;
+      }
       const canonicalSessionId = cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 ? `${cleanPhone}@s.whatsapp.net` : remoteJid;
       const pushName = (!key.fromMe && rec.pushName && rec.pushName !== "Voc\xEA" ? rec.pushName : "") || (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
       const parsedMsg = parseSingleEvolutionMessage(rec, pushName);
@@ -6106,8 +6110,8 @@ async function syncEvolutionChats(forceWide = false) {
         }
       }
     }
-    const isSecondaryLocalDevWithoutWebhook = process.platform === "win32" && !lastWebhookReceivedAt;
-    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer() && !isSecondaryLocalDevWithoutWebhook) {
+    const pollGraceMs = process.platform === "win32" && !lastWebhookReceivedAt ? 25e3 : 15e3;
+    if (appConfig.globalAiActive && !isAiStudioIdleBackgroundContainer()) {
       const nowMs = getEffectiveCurrentDate().getTime();
       const handledContactsThisCycle = /* @__PURE__ */ new Set();
       for (const conv of conversations.slice(0, 50)) {
@@ -6123,7 +6127,7 @@ async function syncEvolutionChats(forceWide = false) {
         if (lastMsg.sender !== "customer") continue;
         const msgTimeMs = new Date(lastMsg.timestamp).getTime();
         const ageMs = nowMs - msgTimeMs;
-        if (ageMs < 15e3) {
+        if (ageMs < pollGraceMs) {
           continue;
         }
         if (msgTimeMs < botStartupCutoffMs - 3e3 || ageMs > 10 * 60 * 1e3) {
@@ -9917,19 +9921,29 @@ app.post("/api/evolution/restart", async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {
+    await fetch(`${baseUrl}/instance/restart/${instance}`, {
+      method: "POST",
+      headers: { apikey: apiKey },
+      signal: AbortSignal.timeout(1e4)
+    }).catch(() => null);
+    ensureEvolutionWebhookRegistered().catch(() => {
+    });
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(4e3)
     }).catch(() => null);
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     if ((stateData?.instance?.state || stateData?.state) === "open") {
+      lastEvolutionChatsSync = 0;
+      await syncEvolutionChats(true).catch(() => {
+      });
       return res.json({
         success: true,
         state: "open",
         connected: true,
         qrBase64: null,
         pairingCode: null,
-        message: `La instancia "${instance}" ya est\xE1 conectada y activa.`
+        message: `Instancia "${instance}" reiniciada y chats sincronizados.`
       });
     }
     evolutionQrCache.qrBase64 = null;
@@ -10010,6 +10024,12 @@ app.get("/api/conversations", async (req, res) => {
   } else if (now - lastEvolutionChatsSync > 15e3) {
     syncEvolutionChats().catch(() => {
     });
+  }
+  const ownPhone = (evolutionQrCache.ownerJid || "18094228738").replace(/@.*$/, "").replace(/\D/g, "");
+  if (ownPhone) {
+    conversations = conversations.filter(
+      (c) => c.customerPhone !== ownPhone && c.sessionId !== `${ownPhone}@s.whatsapp.net`
+    );
   }
   for (const conv of conversations) {
     if (conv.customerPhone) {
