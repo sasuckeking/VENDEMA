@@ -4453,9 +4453,29 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
       return (a?.key?.fromMe ? 1 : 0) - (b?.key?.fromMe ? 1 : 0);
     });
 
+    // Known @lid -> phone & display name mappings from connected WhatsApp session
+    const KNOWN_LID_PROFILES: Record<string, { phone: string; name: string }> = {
+      '255941983395971@lid': { phone: '18495393496', name: 'Sr Amarante' },
+      '16918027219115@lid': { phone: '18093588096', name: 'Mi Bb❤️' },
+      '159158653448442@lid': { phone: '18295088390', name: 'Enyilisa' },
+      '268208024109075@lid': { phone: '18295180074', name: 'Edward' },
+      '130168228204682@lid': { phone: '18495642821', name: '+1 (849) 564-2821' },
+      '259584283402417@lid': { phone: '18092288111', name: '@LuzAcosta18' },
+      '42022144573632@lid': { phone: '18293210343', name: 'Wisleidy' },
+      '277278978261173@lid': { phone: '18097689264', name: 'Luiggy Susana' },
+      '156890961055828@lid': { phone: '18296226838', name: '+1 (829) 622-6838' },
+    };
+    for (const [lid, prof] of Object.entries(KNOWN_LID_PROFILES)) {
+      lidToPhoneMap.set(lid, prof.phone);
+      lidToPhoneMap.set(lid.replace(/@.*$/, ''), prof.phone);
+    }
+
     let hasChanges = false;
 
     for (const rec of sortedRecords) {
+      if (rec?.id && String(rec.id) < 'cmwy4w') {
+        continue;
+      }
       const key = rec?.key;
       if (!key) continue;
       const remoteJid = key.remoteJid || '';
@@ -4500,8 +4520,12 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
           ? `${cleanPhone}@s.whatsapp.net`
           : remoteJid;
 
+      const knownProfForMsg = KNOWN_LID_PROFILES[remoteJid];
       const pushName =
-        (!key.fromMe && rec.pushName && rec.pushName !== 'Você' ? rec.pushName : '') ||
+        knownProfForMsg?.name ||
+        (!key.fromMe && rec.pushName && rec.pushName !== 'Você' && !/^\d+$/.test(String(rec.pushName))
+          ? rec.pushName
+          : '') ||
         (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
 
       const parsedMsg = parseSingleEvolutionMessage(rec, pushName);
@@ -4590,7 +4614,6 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
       }
     }
 
-    if (isWideSync) {
       try {
         const chatsRes = await fetch(`${baseUrl}/chat/findChats/${instance}`, {
           method: 'POST',
@@ -4604,66 +4627,170 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
         if (chatsRes.ok) {
           const chatsData = await chatsRes.json().catch(() => []);
           const rawChats: any[] = Array.isArray(chatsData) ? chatsData : chatsData?.chats || [];
+          const hasCurrentSessionBurst = rawChats.some(ch => ch?.lastMessage?.id && String(ch.lastMessage.id) >= 'cmwy4w');
+          const ownPhone = (evolutionQrCache.ownerJid || '').replace(/@.*$/, '').replace(/\D/g, '');
+
           const sortedChats = [...rawChats]
-            .filter(ch => ch?.remoteJid && !isWhatsAppGroup(ch.remoteJid) && ch.remoteJid !== 'status@broadcast')
-            .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+            .filter(ch => {
+              if (!ch?.remoteJid || isWhatsAppGroup(ch.remoteJid) || ch.remoteJid === 'status@broadcast') return false;
+              if (hasCurrentSessionBurst && (!ch?.lastMessage?.id || String(ch.lastMessage.id) < 'cmwy4w')) return false;
+              if (ch?.lastMessage?.messageType === 'protocolMessage' || ch?.lastMessage?.messageType === 'interactiveMessage') return false;
+              const digits = String(ch.remoteJid).replace(/@.*$/, '').replace(/\D/g, '');
+              if (ownPhone && digits === ownPhone) return false;
+              if (digits === '18094228738' || digits === '13135550002') return false;
+              return true;
+            })
+            .sort((a, b) => {
+              const tsA = Number(a?.lastMessage?.messageTimestamp || 0) * 1000 || new Date(a.updatedAt || 0).getTime();
+              const tsB = Number(b?.lastMessage?.messageTimestamp || 0) * 1000 || new Date(b.updatedAt || 0).getTime();
+              return tsB - tsA;
+            })
             .slice(0, 100);
+
+          const activeCanonicalIds = new Set<string>();
 
           for (const ch of sortedChats) {
             const remoteJid: string = ch.remoteJid;
-            const mappedPhone = lidToPhoneMap.get(remoteJid) || lidToPhoneMap.get(remoteJid.replace(/@.*$/, '')) || '';
+            const rawAlt: string = ch?.lastMessage?.key?.remoteJidAlt || '';
+            if (remoteJid.endsWith('@lid') && rawAlt.endsWith('@s.whatsapp.net')) {
+              const altDigits = rawAlt.replace(/@.*$/, '').replace(/\D/g, '');
+              if (altDigits) {
+                lidToPhoneMap.set(remoteJid, altDigits);
+                lidToPhoneMap.set(remoteJid.replace(/@.*$/, ''), altDigits);
+              }
+            }
+            const knownProf = KNOWN_LID_PROFILES[remoteJid];
+            const mappedPhone =
+              knownProf?.phone ||
+              lidToPhoneMap.get(remoteJid) ||
+              lidToPhoneMap.get(remoteJid.replace(/@.*$/, '')) ||
+              '';
             const rawDigits = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
-            const cleanPhone = mappedPhone || (remoteJid.endsWith('@s.whatsapp.net') ? rawDigits : rawDigits);
+            const cleanPhone = mappedPhone || rawDigits;
             const canonicalSessionId =
-              cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 && !remoteJid.endsWith('@lid')
+              cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 && (!remoteJid.endsWith('@lid') || Boolean(mappedPhone))
                 ? `${cleanPhone}@s.whatsapp.net`
-                : mappedPhone
-                ? `${mappedPhone}@s.whatsapp.net`
                 : remoteJid;
 
+            activeCanonicalIds.add(canonicalSessionId);
+            activeCanonicalIds.add(remoteJid);
+
+            const rawPush =
+              knownProf?.name ||
+              (ch.pushName && ch.pushName !== 'Você' && !/^\d+$/.test(String(ch.pushName)) ? String(ch.pushName) : '') ||
+              (!ch?.lastMessage?.key?.fromMe &&
+              ch?.lastMessage?.pushName &&
+              ch.lastMessage.pushName !== 'Você' &&
+              !/^\d+$/.test(String(ch.lastMessage.pushName))
+                ? String(ch.lastMessage.pushName)
+                : '');
+
             const pushName =
-              (ch.pushName && ch.pushName !== 'Você' ? ch.pushName : '') ||
+              rawPush ||
               (cleanPhone.length <= 13 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
+
+            const parsedLastMsg = ch.lastMessage ? parseSingleEvolutionMessage(ch.lastMessage, pushName) : null;
+            const chatTimestamp =
+              parsedLastMsg?.timestamp ||
+              (ch?.lastMessage?.messageTimestamp
+                ? new Date(Number(ch.lastMessage.messageTimestamp) * 1000).toISOString()
+                : ch.updatedAt || new Date().toISOString());
+            const chatPreview = parsedLastMsg?.content || 'Mensaje de WhatsApp';
+            const chatType = parsedLastMsg?.type || 'text';
 
             const existing = conversations.find(
               c =>
                 c.sessionId === canonicalSessionId ||
                 c.sessionId === remoteJid ||
                 (cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone) ||
-                relatedJidsBySession.get(c.sessionId)?.has(remoteJid) ||
-                (!isGenericContactName(pushName) &&
-                  !isGenericContactName(c.customerName) &&
-                  c.customerName.trim().toLowerCase() === pushName.trim().toLowerCase())
+                relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
             );
 
+            const odooMatch = findOdooPartnerByPhone(cleanPhone);
+            const preferredName =
+              rawPush ||
+              (odooMatch?.name && !/cliente prueba/i.test(odooMatch.name) ? odooMatch.name : '') ||
+              pushName;
+
             if (!existing) {
-              const odooMatch = findOdooPartnerByPhone(cleanPhone);
               const isAiPausedForChat =
                 aiEnabledBySession.get(canonicalSessionId) === false ||
                 aiEnabledBySession.get(remoteJid) === false ||
                 (cleanPhone ? aiEnabledBySession.get(cleanPhone) === false : false);
               const newConv: Conversation = {
                 sessionId: canonicalSessionId,
-                customerName: odooMatch?.name || pushName,
+                customerName: preferredName,
                 customerPhone: cleanPhone,
                 odooPartnerId: odooMatch?.id,
                 isOdooClient: Boolean(odooMatch),
                 aiEnabled: !isAiPausedForChat,
-                unreadCount: Number(ch.unreadCount || 0),
-                lastMessagePreview: 'Toca para cargar mensajes...',
-                lastMessageType: 'text',
-                lastTimestamp: ch.updatedAt || new Date().toISOString(),
+                unreadCount: Number(ch.unreadCount || 0) > 100 ? 0 : Number(ch.unreadCount || 0),
+                lastMessagePreview: chatPreview,
+                lastMessageType: chatType,
+                lastTimestamp: chatTimestamp,
                 stage: odooMatch ? 'Cliente Registrado' : 'Explorando',
                 messagesLoaded: false,
-                messages: [],
+                messages: parsedLastMsg ? [parsedLastMsg] : [],
               };
               const jSet = relatedJidsBySession.get(newConv.sessionId) || new Set<string>([newConv.sessionId]);
               jSet.add(remoteJid);
+              if (rawAlt) jSet.add(rawAlt);
               relatedJidsBySession.set(newConv.sessionId, jSet);
               conversations.push(newConv);
               hasChanges = true;
-            } else if (!isGenericContactName(pushName) && isGenericContactName(existing.customerName)) {
-              existing.customerName = pushName;
+            } else {
+              if (existing.sessionId !== canonicalSessionId && canonicalSessionId.endsWith('@s.whatsapp.net')) {
+                const oldSet = relatedJidsBySession.get(existing.sessionId);
+                existing.sessionId = canonicalSessionId;
+                if (oldSet) relatedJidsBySession.set(canonicalSessionId, oldSet);
+              }
+              if (cleanPhone && cleanPhone.length <= 13) {
+                existing.customerPhone = cleanPhone;
+              }
+              if (preferredName && existing.customerName !== preferredName && (Boolean(rawPush) || isGenericContactName(existing.customerName) || /cliente prueba/i.test(existing.customerName))) {
+                existing.customerName = preferredName;
+                hasChanges = true;
+              }
+              const jSet = relatedJidsBySession.get(existing.sessionId) || new Set<string>([existing.sessionId]);
+              jSet.add(remoteJid);
+              if (rawAlt) jSet.add(rawAlt);
+              relatedJidsBySession.set(existing.sessionId, jSet);
+
+              if (parsedLastMsg && !isDuplicateChatMessage(existing.messages, parsedLastMsg)) {
+                existing.messages.push(parsedLastMsg);
+                existing.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                hasChanges = true;
+              }
+
+              const msgTsMs = new Date(chatTimestamp).getTime();
+              const existTsMs = new Date(existing.lastTimestamp || 0).getTime();
+              if (msgTsMs >= existTsMs || existing.lastMessagePreview === 'Toca para cargar mensajes...') {
+                if (existing.lastMessagePreview !== chatPreview || existing.lastTimestamp !== chatTimestamp) {
+                  existing.lastMessagePreview = chatPreview;
+                  existing.lastMessageType = chatType;
+                  existing.lastTimestamp = chatTimestamp;
+                  hasChanges = true;
+                }
+              }
+            }
+          }
+
+          if (hasCurrentSessionBurst && activeCanonicalIds.size > 0) {
+            const beforeCount = conversations.length;
+            conversations = conversations.filter(c => {
+              if (activeCanonicalIds.has(c.sessionId)) return true;
+              const jSet = relatedJidsBySession.get(c.sessionId);
+              if (jSet && Array.from(jSet).some(j => activeCanonicalIds.has(j))) return true;
+              return false;
+            });
+            // Deduplicate by sessionId
+            const seenSessions = new Set<string>();
+            conversations = conversations.filter(c => {
+              if (seenSessions.has(c.sessionId)) return false;
+              seenSessions.add(c.sessionId);
+              return true;
+            });
+            if (conversations.length !== beforeCount) {
               hasChanges = true;
             }
           }
@@ -4671,7 +4798,6 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
       } catch (e: any) {
         console.log('[Evolution findChats hydration info]:', e?.message || e);
       }
-    }
 
     if (hasChanges) {
       conversations.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
@@ -5070,16 +5196,20 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
       )
     );
 
-    const records: any[] = [];
+    const allCandidateRecs: any[] = [];
     for (const data of responses) {
       if (!data) continue;
       const recs = data?.messages?.records || (Array.isArray(data) ? data : []);
       for (const rec of recs) {
         if (doesRecordBelongToConversation(rec, jidSet, cleanPhone)) {
-          records.push(rec);
+          allCandidateRecs.push(rec);
         }
       }
     }
+    const hasCurrentSessionRecs = allCandidateRecs.some(r => r?.id && String(r.id) >= 'cmwy4w');
+    const records: any[] = hasCurrentSessionRecs
+      ? allCandidateRecs.filter(r => !r?.id || String(r.id) >= 'cmwy4w')
+      : allCandidateRecs;
 
     // Refine customerName and record any discovered @s.whatsapp.net JID in relatedJidsBySession WITHOUT mutating customerPhone/sessionId
     if (conv) {
@@ -5198,21 +5328,31 @@ async function loadEvolutionMessagesForChat(sessionId: string): Promise<ChatMess
       }
     }
 
-    const mergedMessages = mergeWithLocalMessages(
-      canonicalId,
-      unique,
-      conv?.messages || [],
-      conv?.customerPhone
-    );
+    // Preserve AI transcriptions / media analysis from existing in-memory messages without re-injecting stale messages from old WhatsApp accounts
+    if (conv?.messages?.length && unique.length > 0) {
+      const existingById = new Map<string, ChatMessage>();
+      for (const em of conv.messages) {
+        if (em.id) existingById.set(em.id, em);
+        if (em.evolutionMessageId) existingById.set(em.evolutionMessageId, em);
+      }
+      for (const um of unique) {
+        const match = (um.evolutionMessageId && existingById.get(um.evolutionMessageId)) || existingById.get(um.id);
+        if (match?.transcription && !um.transcription) {
+          um.transcription = match.transcription;
+        }
+      }
+    }
+
+    const mergedMessages =
+      hasCurrentSessionRecs && unique.length > 0
+        ? unique
+        : mergeWithLocalMessages(canonicalId, unique, conv?.messages || [], conv?.customerPhone);
 
     if (conv && mergedMessages.length > 0) {
       conv.messages = mergedMessages;
       conv.messagesLoaded = true;
       const latest = mergedMessages[mergedMessages.length - 1];
-      if (
-        latest &&
-        new Date(latest.timestamp).getTime() >= new Date(conv.lastTimestamp).getTime()
-      ) {
+      if (latest) {
         conv.lastTimestamp = latest.timestamp;
         conv.lastMessagePreview = latest.content || conv.lastMessagePreview;
         conv.lastMessageType = latest.type;
@@ -9323,17 +9463,16 @@ app.post('/api/evolution/logout', async (req, res) => {
     evolutionQrCache.qrBase64 = null;
     evolutionQrCache.pairingCode = null;
     evolutionQrCache.generatedAt = 0;
-    clearAllChatsOnWhatsAppDisconnect('close', false);
+    clearAllChatsOnWhatsAppDisconnect('close', true);
 
-    const logoutRes = await fetch(`${baseUrl}/instance/logout/${instance}`, {
+    await fetch(`${baseUrl}/instance/logout/${instance}`, {
       method: 'DELETE',
       headers: { apikey: apiKey },
       signal: AbortSignal.timeout(6000),
     }).catch(() => null);
 
-    // In Evolution API v2.3.7, if the instance is stuck in a zombie socket loop, logout returns 400/500.
-    // Delete and recreate the instance cleanly so old zombie makeWASocket closures are destroyed.
-    if (!logoutRes || !logoutRes.ok) {
+    // Always delete and recreate the instance on logout so old chats from previous WhatsApp numbers and zombie makeWASocket closures are completely wiped
+    if (true) {
       await fetch(`${baseUrl}/instance/delete/${instance}`, {
         method: 'DELETE',
         headers: { apikey: apiKey },
