@@ -6107,7 +6107,7 @@ async function syncEvolutionChats(forceWide = false) {
           const chatPreview = parsedLastMsg?.content || "Mensaje de WhatsApp";
           const chatType = parsedLastMsg?.type || "text";
           const existing = conversations.find(
-            (c) => c.sessionId === canonicalSessionId || c.sessionId === remoteJid || cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone || relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
+            (c) => c.sessionId === canonicalSessionId || c.sessionId === remoteJid || cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 && c.customerPhone === cleanPhone
           );
           const odooMatch = findOdooPartnerByPhone(cleanPhone);
           const preferredName = rawPush || (odooMatch?.name && !/cliente prueba/i.test(odooMatch.name) ? odooMatch.name : "") || pushName;

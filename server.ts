@@ -4702,8 +4702,7 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
               c =>
                 c.sessionId === canonicalSessionId ||
                 c.sessionId === remoteJid ||
-                (cleanPhone && cleanPhone.length <= 13 && c.customerPhone === cleanPhone) ||
-                relatedJidsBySession.get(c.sessionId)?.has(remoteJid)
+                (cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 13 && c.customerPhone === cleanPhone)
             );
 
             const odooMatch = findOdooPartnerByPhone(cleanPhone);
