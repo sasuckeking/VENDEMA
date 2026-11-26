@@ -6972,24 +6972,6 @@ function shouldSkipBotReply(conv, lastCustomerMsg, triggerSource) {
       });
       return { skip: true, reason };
     }
-    if (triggerSource !== "manual_crm_trigger") {
-      const elapsedMs = now - prev.timestamp;
-      if (elapsedMs < 7e3) {
-        const reason = `Cooldown de seguridad activo: se envi\xF3 una respuesta hace ${(elapsedMs / 1e3).toFixed(1)}s (m\xEDnimo 7s entre mensajes autom\xE1ticos).`;
-        recordBotAuditLog({
-          customerName,
-          customerPhone,
-          sessionId: conv.sessionId,
-          triggerSource,
-          incomingMessageId: incomingId,
-          incomingText,
-          decision: "blocked_cooldown",
-          reason,
-          durationMs: 0
-        });
-        return { skip: true, reason };
-      }
-    }
   }
   return { skip: false };
 }

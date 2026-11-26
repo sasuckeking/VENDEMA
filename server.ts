@@ -5812,25 +5812,9 @@ function shouldSkipBotReply(
       return { skip: true, reason };
     }
 
-    // 5. Anti-spam cooldown (7 seconds) for automated triggers
-    if (triggerSource !== 'manual_crm_trigger') {
-      const elapsedMs = now - prev.timestamp;
-      if (elapsedMs < 7000) {
-        const reason = `Cooldown de seguridad activo: se envió una respuesta hace ${(elapsedMs / 1000).toFixed(1)}s (mínimo 7s entre mensajes automáticos).`;
-        recordBotAuditLog({
-          customerName,
-          customerPhone,
-          sessionId: conv.sessionId,
-          triggerSource,
-          incomingMessageId: incomingId,
-          incomingText,
-          decision: 'blocked_cooldown',
-          reason,
-          durationMs: 0,
-        });
-        return { skip: true, reason };
-      }
-    }
+    // 5. Note: Do NOT drop genuinely new, different messages arriving shortly after a bot reply
+    // (Rules 3 & 4 already deduplicate identical message IDs and repeated identical text within 20s,
+    // and acquireBotLock / hasEvolutionAlreadyAnsweredSince prevent concurrent duplicate sends).
   }
 
   return { skip: false };
