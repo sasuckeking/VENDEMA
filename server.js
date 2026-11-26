@@ -9921,11 +9921,6 @@ app.post("/api/evolution/restart", async (req, res) => {
   const { serverUrl, instance, apiKey } = appConfig.evolution;
   const baseUrl = (serverUrl || "").replace(/\/$/, "");
   try {
-    await fetch(`${baseUrl}/instance/restart/${instance}`, {
-      method: "POST",
-      headers: { apikey: apiKey },
-      signal: AbortSignal.timeout(1e4)
-    }).catch(() => null);
     ensureEvolutionWebhookRegistered().catch(() => {
     });
     const stateRes = await fetch(`${baseUrl}/instance/connectionState/${instance}`, {
@@ -9943,7 +9938,7 @@ app.post("/api/evolution/restart", async (req, res) => {
         connected: true,
         qrBase64: null,
         pairingCode: null,
-        message: `Instancia "${instance}" reiniciada y chats sincronizados.`
+        message: `La instancia "${instance}" reporta estado 'open' y los chats fueron sincronizados. Si los mensajes de WhatsApp no entran, usa "Cambiar WhatsApp / Generar QR" para renovar el socket.`
       });
     }
     evolutionQrCache.qrBase64 = null;
