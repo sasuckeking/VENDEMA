@@ -4405,10 +4405,7 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
     const currentState = stateData?.instance?.state || stateData?.state || 'close';
 
     if (currentState !== 'open') {
-      if (conversations.length === 0) {
-        await quickSeedConversationsFromRecentMessages().catch(() => {});
-      }
-      clearAllChatsOnWhatsAppDisconnect(currentState, false);
+      clearAllChatsOnWhatsAppDisconnect(currentState, currentState === 'close' || currentState === 'logged_out');
       return conversations;
     }
 
@@ -9390,8 +9387,8 @@ app.get('/api/evolution/qrcode', async (req, res) => {
       });
     }
 
-    // 3. Not 'open': update status without wiping existing conversations
-    clearAllChatsOnWhatsAppDisconnect(currentState, false);
+    // 3. Not 'open': if closed/unlinked, wipe old chats so disconnected WhatsApp never shows stale conversations
+    clearAllChatsOnWhatsAppDisconnect(currentState, currentState === 'close' || currentState === 'logged_out');
 
     // Rate-limit /instance/connect/:instance calls so we NEVER spawn duplicate Baileys sockets in Evolution API v2.3.7!
     const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
@@ -9636,17 +9633,15 @@ app.get('/api/conversations', async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === 'true';
   const now = Date.now();
-  if (conversations.length === 0) {
-    loadPersistedConversations();
-  }
-  if (conversations.length === 0) {
-    await syncEvolutionChats(true).catch(() => {});
-  } else if (forceRefresh) {
+  if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
     lastEvolutionChatsSync = 0;
     await syncEvolutionChats(true).catch(() => {});
-  } else if (now - lastEvolutionChatsSync > 15000) {
-    syncEvolutionChats().catch(() => {});
+  } else if (conversations.length === 0 || now - lastEvolutionChatsSync > 15000) {
+    await syncEvolutionChats(conversations.length === 0).catch(() => {});
+  }
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== 'open') {
+    return res.json({ success: true, conversations: [] });
   }
   // Filter out the store's own WhatsApp number and resolve latest Odoo client status
   const ownPhone = (evolutionQrCache.ownerJid || '18094228738').replace(/@.*$/, '').replace(/\D/g, '');
@@ -13155,7 +13150,7 @@ const handleEvolutionWebhook = async (req: express.Request, res: express.Respons
         broadcastEvent('evolution_status', { connected: true, state: 'open' });
       }
     } else if (newState === 'close' || newState === 'closed' || newState === 'logged_out') {
-      clearAllChatsOnWhatsAppDisconnect('close', false);
+      clearAllChatsOnWhatsAppDisconnect('close', true);
     }
     return;
   }
@@ -13806,6 +13801,7 @@ async function startServer() {
         .catch(e => console.log('Initial Odoo sync info:', e?.message || e));
 
       hydrateAndSyncUsersWithSupabase()
+        .then(() => hydrateAndSyncFullConfigWithSupabase())
         .then(() => hydrateAndSyncAiConfigWithSupabase())
         .then(() => hydrateAndSyncHolidaysWithSupabase())
         .then(() => autoSyncConfigToSupabase(appConfig))
@@ -13864,6 +13860,11 @@ async function startServer() {
     registerBackgroundInterval(() => {
       syncOdooCustomers().catch(() => {});
     }, 1000 * 60 * 30);
+
+    // 5. Supabase Cloud Config (Evolution API, AI Provider, Odoo): Synchronized every 30 seconds across all PCs
+    registerBackgroundInterval(() => {
+      hydrateAndSyncFullConfigWithSupabase().catch(() => {});
+    }, 30000);
   };
 
   server.on('error', (err: any) => {

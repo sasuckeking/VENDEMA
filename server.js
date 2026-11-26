@@ -2059,12 +2059,31 @@ async function loadFullSystemConfigFromSupabase(url, anonKey) {
   try {
     const { data, error } = await client.from("configuracion_sistema").select("global_ai_active, ai_provider, odoo_config, evolution_config, supabase_config").eq("config_key", "main").maybeSingle();
     if (!error && data) {
+      let evoCfg = data.evolution_config;
+      if (!evoCfg || !evoCfg.serverUrl || !evoCfg.apiKey) {
+        try {
+          const { data: backupEvo } = await client.from("cerebro_ia_aprendizajes").select("winning_pitch").eq("insight_id", "__system_evolution_config_backup__").maybeSingle();
+          if (backupEvo?.winning_pitch) {
+            evoCfg = { ...JSON.parse(backupEvo.winning_pitch), ...evoCfg };
+          }
+        } catch {
+        }
+      }
       return {
         global_ai_active: data.global_ai_active,
         ai_provider: data.ai_provider,
         odoo_config: data.odoo_config,
-        evolution_config: data.evolution_config,
+        evolution_config: evoCfg,
         supabase_config: data.supabase_config
+      };
+    }
+  } catch {
+  }
+  try {
+    const { data: backupEvo } = await client.from("cerebro_ia_aprendizajes").select("winning_pitch").eq("insight_id", "__system_evolution_config_backup__").maybeSingle();
+    if (backupEvo?.winning_pitch) {
+      return {
+        evolution_config: JSON.parse(backupEvo.winning_pitch)
       };
     }
   } catch {
@@ -2138,6 +2157,32 @@ async function autoSyncConfigToSupabase(config) {
           success_rate: 100,
           occurrences: 1,
           tags: ["system", "ai_provider_backup"],
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        { onConflict: "insight_id" }
+      );
+    } catch {
+    }
+  }
+  if (config.evolution && config.evolution.serverUrl) {
+    try {
+      await client.from("cerebro_ia_aprendizajes").upsert(
+        {
+          insight_id: "__system_evolution_config_backup__",
+          categoria: "__system_internal__",
+          trigger_phrase: "Configuraci\xF3n Online de Evolution API (WhatsApp Gateway)",
+          winning_pitch: JSON.stringify({
+            serverUrl: config.evolution.serverUrl,
+            instance: config.evolution.instance,
+            apiKey: config.evolution.apiKey && !isMaskedSecret(config.evolution.apiKey) ? config.evolution.apiKey : void 0,
+            teamPhone: config.evolution.teamPhone,
+            adminPhone: config.evolution.adminPhone,
+            connected: config.evolution.connected
+          }),
+          counter_objection: "Sincronizaci\xF3n centralizada de conexi\xF3n WhatsApp Evolution API en nube",
+          success_rate: 100,
+          occurrences: 1,
+          tags: ["system", "evolution_config_backup"],
           updated_at: (/* @__PURE__ */ new Date()).toISOString()
         },
         { onConflict: "insight_id" }
@@ -5815,73 +5860,6 @@ function loadPersistedConversations() {
 loadPersistedConversations();
 syncEvolutionContactsDirectory().catch(() => {
 });
-async function quickSeedConversationsFromRecentMessages() {
-  if (conversations.length > 0) return;
-  try {
-    const url = `${appConfig.evolution.serverUrl}/chat/findMessages/${appConfig.evolution.instance}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: appConfig.evolution.apiKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ limit: 50 }),
-      signal: AbortSignal.timeout(15e3)
-    });
-    if (!res.ok) return;
-    const data = await res.json().catch(() => null);
-    const records = data?.messages?.records || (Array.isArray(data) ? data : []);
-    if (!Array.isArray(records) || records.length === 0 || conversations.length > 0) return;
-    const bySession = /* @__PURE__ */ new Map();
-    for (const rec of records) {
-      const remoteJid = rec?.key?.remoteJid || "";
-      const rawAlt = rec?.key?.remoteJidAlt || "";
-      if (!remoteJid || isWhatsAppGroup(remoteJid) || remoteJid === "status@broadcast") continue;
-      const cleanPhone = (rawAlt.endsWith("@s.whatsapp.net") ? rawAlt.replace("@s.whatsapp.net", "") : remoteJid.replace(/@.*$/, "")).replace(/\D/g, "");
-      const sessionId = cleanPhone && cleanPhone.length >= 10 && cleanPhone.length <= 12 ? `${cleanPhone}@s.whatsapp.net` : remoteJid;
-      const pushName = (!rec?.key?.fromMe && rec?.pushName && rec.pushName !== "Voc\xEA" ? rec.pushName : "") || (cleanPhone.length <= 12 ? `Cliente +${cleanPhone}` : `WhatsApp #${cleanPhone.slice(-6)}`);
-      const parsed = parseSingleEvolutionMessage(rec, pushName);
-      if (!parsed) continue;
-      const existing = bySession.get(sessionId);
-      if (!existing) {
-        bySession.set(sessionId, {
-          sessionId,
-          customerPhone: cleanPhone,
-          customerName: pushName,
-          messages: [parsed],
-          messagesLoaded: false,
-          aiEnabled: true,
-          unreadCount: 0,
-          lastTimestamp: parsed.timestamp,
-          lastMessagePreview: parsed.content,
-          lastMessageType: parsed.type,
-          intentStatus: "explorando",
-          detectedProducts: [],
-          zone: "santo_domingo",
-          isLiveEvolution: true
-        });
-      } else {
-        if (!existing.messages.some((m) => m.id === parsed.id)) {
-          existing.messages.push(parsed);
-          existing.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        }
-        if (new Date(parsed.timestamp).getTime() >= new Date(existing.lastTimestamp).getTime()) {
-          existing.lastTimestamp = parsed.timestamp;
-          existing.lastMessagePreview = parsed.content;
-          existing.lastMessageType = parsed.type;
-        }
-      }
-    }
-    if (conversations.length === 0 && bySession.size > 0) {
-      conversations = Array.from(bySession.values()).sort(
-        (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime()
-      );
-      savePersistedConversations();
-      broadcastEvent("conversations_update", { count: conversations.length });
-    }
-  } catch {
-  }
-}
 async function syncEvolutionChats(forceWide = false) {
   if (isEvoSyncRunning) return conversations;
   const now = Date.now();
@@ -5903,11 +5881,7 @@ async function syncEvolutionChats(forceWide = false) {
     const stateData = stateRes && stateRes.ok ? await stateRes.json().catch(() => null) : null;
     const currentState = stateData?.instance?.state || stateData?.state || "close";
     if (currentState !== "open") {
-      if (conversations.length === 0) {
-        await quickSeedConversationsFromRecentMessages().catch(() => {
-        });
-      }
-      clearAllChatsOnWhatsAppDisconnect(currentState, false);
+      clearAllChatsOnWhatsAppDisconnect(currentState, currentState === "close" || currentState === "logged_out");
       return conversations;
     }
     consecutiveEvoDisconnects = 0;
@@ -9893,7 +9867,7 @@ app.get("/api/evolution/qrcode", async (req, res) => {
         pairingCode: null
       });
     }
-    clearAllChatsOnWhatsAppDisconnect(currentState, false);
+    clearAllChatsOnWhatsAppDisconnect(currentState, currentState === "close" || currentState === "logged_out");
     const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
     const sinceLastConnectCallMs = Date.now() - lastEvolutionConnectCallAt;
     const shouldRequestNewQr = forceConnect && sinceLastConnectCallMs > 8e3 || (!evolutionQrCache.qrBase64 || qrAgeMs > 45e3) && sinceLastConnectCallMs > 25e3;
@@ -10112,20 +10086,17 @@ app.get("/api/conversations", async (req, res) => {
   recordFrontendHeartbeat();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
-  if (conversations.length === 0) {
-    loadPersistedConversations();
-  }
-  if (conversations.length === 0) {
-    await syncEvolutionChats(true).catch(() => {
-    });
-  } else if (forceRefresh) {
+  if (forceRefresh) {
     lastChatMessagesFetchBySession.clear();
     lastEvolutionChatsSync = 0;
     await syncEvolutionChats(true).catch(() => {
     });
-  } else if (now - lastEvolutionChatsSync > 15e3) {
-    syncEvolutionChats().catch(() => {
+  } else if (conversations.length === 0 || now - lastEvolutionChatsSync > 15e3) {
+    await syncEvolutionChats(conversations.length === 0).catch(() => {
     });
+  }
+  if (!appConfig.evolution.connected && evolutionLastKnownState !== "open") {
+    return res.json({ success: true, conversations: [] });
   }
   const ownPhone = (evolutionQrCache.ownerJid || "18094228738").replace(/@.*$/, "").replace(/\D/g, "");
   if (ownPhone) {
@@ -12980,7 +12951,7 @@ var handleEvolutionWebhook = async (req, res) => {
         broadcastEvent("evolution_status", { connected: true, state: "open" });
       }
     } else if (newState === "close" || newState === "closed" || newState === "logged_out") {
-      clearAllChatsOnWhatsAppDisconnect("close", false);
+      clearAllChatsOnWhatsAppDisconnect("close", true);
     }
     return;
   }
@@ -13493,7 +13464,7 @@ async function startServer() {
       botStartupCutoffMs = getEffectiveCurrentDate().getTime() - 1e4;
       syncEvolutionChats().then(() => ensureEvolutionWebhookRegistered()).catch((e) => console.log("Initial Evolution sync info:", e?.message || e));
       syncOdooInventory().then(() => syncOdooCustomers()).catch((e) => console.log("Initial Odoo sync info:", e?.message || e));
-      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(async () => {
+      hydrateAndSyncUsersWithSupabase().then(() => hydrateAndSyncFullConfigWithSupabase()).then(() => hydrateAndSyncAiConfigWithSupabase()).then(() => hydrateAndSyncHolidaysWithSupabase()).then(() => autoSyncConfigToSupabase(appConfig)).then(async () => {
         const pausedKeys = await loadPausedAiContactsFromSupabase(
           appConfig.supabase?.url,
           appConfig.supabase?.anonKey
@@ -13539,6 +13510,10 @@ async function startServer() {
       syncOdooCustomers().catch(() => {
       });
     }, 1e3 * 60 * 30);
+    registerBackgroundInterval(() => {
+      hydrateAndSyncFullConfigWithSupabase().catch(() => {
+      });
+    }, 3e4);
   };
   server.on("error", (err) => {
     console.log(`[Server Listen Notice on ${PORT}]:`, err.message);

@@ -899,12 +899,38 @@ export async function loadFullSystemConfigFromSupabase(
       .maybeSingle();
 
     if (!error && data) {
+      let evoCfg = data.evolution_config;
+      if (!evoCfg || !evoCfg.serverUrl || !evoCfg.apiKey) {
+        try {
+          const { data: backupEvo } = await client
+            .from('cerebro_ia_aprendizajes')
+            .select('winning_pitch')
+            .eq('insight_id', '__system_evolution_config_backup__')
+            .maybeSingle();
+          if (backupEvo?.winning_pitch) {
+            evoCfg = { ...JSON.parse(backupEvo.winning_pitch), ...evoCfg };
+          }
+        } catch {}
+      }
       return {
         global_ai_active: data.global_ai_active,
         ai_provider: data.ai_provider,
         odoo_config: data.odoo_config,
-        evolution_config: data.evolution_config,
+        evolution_config: evoCfg,
         supabase_config: data.supabase_config,
+      };
+    }
+  } catch {}
+
+  try {
+    const { data: backupEvo } = await client
+      .from('cerebro_ia_aprendizajes')
+      .select('winning_pitch')
+      .eq('insight_id', '__system_evolution_config_backup__')
+      .maybeSingle();
+    if (backupEvo?.winning_pitch) {
+      return {
+        evolution_config: JSON.parse(backupEvo.winning_pitch),
       };
     }
   } catch {}
@@ -1068,6 +1094,37 @@ export async function autoSyncConfigToSupabase(config: AppConfig): Promise<void>
     } catch {
       // Ignore cloud backup error
     }
+  }
+
+  if (config.evolution && config.evolution.serverUrl) {
+    try {
+      await client
+        .from('cerebro_ia_aprendizajes')
+        .upsert(
+          {
+            insight_id: '__system_evolution_config_backup__',
+            categoria: '__system_internal__',
+            trigger_phrase: 'Configuración Online de Evolution API (WhatsApp Gateway)',
+            winning_pitch: JSON.stringify({
+              serverUrl: config.evolution.serverUrl,
+              instance: config.evolution.instance,
+              apiKey:
+                config.evolution.apiKey && !isMaskedSecret(config.evolution.apiKey)
+                  ? config.evolution.apiKey
+                  : undefined,
+              teamPhone: config.evolution.teamPhone,
+              adminPhone: config.evolution.adminPhone,
+              connected: config.evolution.connected,
+            }),
+            counter_objection: 'Sincronización centralizada de conexión WhatsApp Evolution API en nube',
+            success_rate: 100,
+            occurrences: 1,
+            tags: ['system', 'evolution_config_backup'],
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'insight_id' }
+        );
+    } catch {}
   }
 
   if (Array.isArray(config.holidayOverrides)) {

@@ -246,6 +246,9 @@ export default function App() {
   // Merge incoming conversation list while preserving already-loaded message histories, unifying LID/phone duplicates, and keeping order stable
   const mergeConversations = (incomingList: Conversation[]) => {
     setConversations(prev => {
+      if (!incomingList || incomingList.length === 0) {
+        return [];
+      }
       if (prev.length === 0) {
         // Deduplicate incomingList before returning
         const finalDedup: Conversation[] = [];
@@ -376,10 +379,8 @@ export default function App() {
           profilePicUrl: inc.profilePicUrl || existingPrev?.profilePicUrl,
           messages: mergedMessages,
           messagesLoaded: existingPrev?.messagesLoaded || inc.messagesLoaded,
-          lastTimestamp: hasNewerIncoming ? inc.lastTimestamp : existingPrev?.lastTimestamp || inc.lastTimestamp,
-          lastMessagePreview: hasNewerIncoming
-            ? inc.lastMessagePreview
-            : existingPrev?.lastMessagePreview || inc.lastMessagePreview,
+          lastTimestamp: inc.lastTimestamp || existingPrev?.lastTimestamp,
+          lastMessagePreview: inc.lastMessagePreview || existingPrev?.lastMessagePreview,
           unreadCount:
             selectedSessionRef.current === canonicalSessionId ||
             selectedSessionRef.current === inc.sessionId ||
@@ -398,35 +399,9 @@ export default function App() {
         setSelectedSessionId(newId);
       }
 
-      const incomingBySession = new Map<string, Conversation>(mergedList.map(c => [c.sessionId, c]));
-      let candidateList: Conversation[] = [];
-
-      if (!anyNewerMessage) {
-        for (const oldConv of prev) {
-          if (claimedPrevSessionIds.has(oldConv.sessionId)) {
-            const migratedId = sessionMigrationMap.get(oldConv.sessionId) || oldConv.sessionId;
-            const updated = incomingBySession.get(migratedId);
-            if (updated) {
-              candidateList.push(updated);
-              incomingBySession.delete(migratedId);
-            }
-          } else {
-            const updated = incomingBySession.get(oldConv.sessionId);
-            if (updated) {
-              candidateList.push(updated);
-              incomingBySession.delete(oldConv.sessionId);
-            } else {
-              candidateList.push(oldConv);
-            }
-          }
-        }
-        for (const remaining of incomingBySession.values()) {
-          candidateList.push(remaining);
-        }
-      } else {
-        candidateList = Array.from(incomingBySession.values());
-        candidateList.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
-      }
+      const candidateList: Conversation[] = [...mergedList].sort(
+        (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime()
+      );
 
       // Strict final deduplication pass: eliminate all duplicate contacts and merge matching LID/phone sessions
       const finalDedup: Conversation[] = [];
@@ -633,13 +608,17 @@ export default function App() {
       if (productsData?.success && productsData.products) {
         setProducts(productsData.products);
       }
-      if (convData?.success && convData.conversations) {
+      if (convData?.success && Array.isArray(convData.conversations)) {
         if (convData.conversations.length > 0) {
           mergeConversations(convData.conversations);
           if (!selectedSessionRef.current) {
             const firstId = convData.conversations[0].sessionId;
             setSelectedSessionId(firstId);
           }
+        } else {
+          setConversations([]);
+          selectedSessionRef.current = null;
+          setSelectedSessionId(null);
         }
       }
       if (custData?.success && custData.customers) {
@@ -713,6 +692,11 @@ export default function App() {
         } else if (payload.type === 'evolution_status' && payload.payload) {
           const isConnected = Boolean(payload.payload.connected);
           setConfig(prev => ({ ...prev, evolution: { ...prev.evolution, connected: isConnected } }));
+          if (!isConnected) {
+            setConversations([]);
+            selectedSessionRef.current = null;
+            setSelectedSessionId(null);
+          }
         } else if (payload.type === 'conversations_update') {
           const isCleared = Boolean(payload.payload?.cleared);
           if (isCleared) {
@@ -724,7 +708,7 @@ export default function App() {
           fetch('/api/conversations')
             .then(r => r.json())
             .then(d => {
-              if (d.success && Array.isArray(d.conversations) && d.conversations.length > 0) {
+              if (d.success && Array.isArray(d.conversations)) {
                 mergeConversations(d.conversations);
               }
             });
