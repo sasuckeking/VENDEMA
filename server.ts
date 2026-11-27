@@ -4470,9 +4470,6 @@ async function syncEvolutionChats(forceWide = false): Promise<Conversation[]> {
     let hasChanges = false;
 
     for (const rec of sortedRecords) {
-      if (rec?.id && String(rec.id) < 'cmwy4w') {
-        continue;
-      }
       const key = rec?.key;
       if (!key) continue;
       const remoteJid = key.remoteJid || '';
@@ -9346,10 +9343,10 @@ app.get('/api/evolution/qrcode', async (req, res) => {
           ? instancesData.find((i: any) => i.name === instance || i.instanceName === instance) || instancesData[0]
           : null;
         if (instRecord) {
-          evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
+          evolutionQrCache.ownerJid = instRecord.ownerJid || null;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (currentState === 'unknown' && instRecord.connectionStatus) {
+          if (instRecord.connectionStatus === 'open' || (currentState === 'unknown' && instRecord.connectionStatus)) {
             currentState = instRecord.connectionStatus;
           }
         }
@@ -9357,7 +9354,10 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     }
 
     const forceConnect = req.query.forceConnect === 'true';
-    const isConnected = currentState === 'open';
+    // Treat 'connecting' when an ownerJid is already linked as transiently connected so we never wipe chats or spawn a duplicate socket during Baileys 1s keepalive
+    const isConnected =
+      currentState === 'open' ||
+      (Boolean(evolutionQrCache.ownerJid) && (currentState === 'connecting' || currentState === 'unknown'));
 
     if (isConnected) {
       consecutiveEvoDisconnects = 0;
@@ -9390,12 +9390,14 @@ app.get('/api/evolution/qrcode', async (req, res) => {
     // 3. Not 'open': if closed/unlinked, wipe old chats so disconnected WhatsApp never shows stale conversations
     clearAllChatsOnWhatsAppDisconnect(currentState, currentState === 'close' || currentState === 'logged_out');
 
-    // Rate-limit /instance/connect/:instance calls so we NEVER spawn duplicate Baileys sockets in Evolution API v2.3.7!
-    const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
+    // CRITICAL: Background status checks (!forceConnect) from Navbar/SettingsView MUST NEVER call /instance/connect/:instance!
+    // In Evolution API v2.3.7, calling /instance/connect/:instance during a 1s Baileys keepalive reconnect spawns a duplicate makeWASocket closure in RAM that freezes incoming messages!
     const sinceLastConnectCallMs = Date.now() - lastEvolutionConnectCallAt;
     const shouldRequestNewQr =
-      (forceConnect && sinceLastConnectCallMs > 8000) ||
-      ((!evolutionQrCache.qrBase64 || qrAgeMs > 45000) && sinceLastConnectCallMs > 25000);
+      forceConnect &&
+      !evolutionQrCache.ownerJid &&
+      currentState === 'close' &&
+      sinceLastConnectCallMs > 8000;
 
     if (shouldRequestNewQr) {
       lastEvolutionConnectCallAt = Date.now();

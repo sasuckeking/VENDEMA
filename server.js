@@ -5946,9 +5946,6 @@ async function syncEvolutionChats(forceWide = false) {
     }
     let hasChanges = false;
     for (const rec of sortedRecords) {
-      if (rec?.id && String(rec.id) < "cmwy4w") {
-        continue;
-      }
       const key = rec?.key;
       if (!key) continue;
       const remoteJid = key.remoteJid || "";
@@ -9843,17 +9840,17 @@ app.get("/api/evolution/qrcode", async (req, res) => {
         const instancesData = await instancesRes.json().catch(() => []);
         const instRecord = Array.isArray(instancesData) ? instancesData.find((i) => i.name === instance || i.instanceName === instance) || instancesData[0] : null;
         if (instRecord) {
-          evolutionQrCache.ownerJid = instRecord.ownerJid || evolutionQrCache.ownerJid;
+          evolutionQrCache.ownerJid = instRecord.ownerJid || null;
           evolutionQrCache.profileName = instRecord.profileName || evolutionQrCache.profileName;
           evolutionQrCache.profilePicUrl = instRecord.profilePicUrl || evolutionQrCache.profilePicUrl;
-          if (currentState === "unknown" && instRecord.connectionStatus) {
+          if (instRecord.connectionStatus === "open" || currentState === "unknown" && instRecord.connectionStatus) {
             currentState = instRecord.connectionStatus;
           }
         }
       }
     }
     const forceConnect = req.query.forceConnect === "true";
-    const isConnected = currentState === "open";
+    const isConnected = currentState === "open" || Boolean(evolutionQrCache.ownerJid) && (currentState === "connecting" || currentState === "unknown");
     if (isConnected) {
       consecutiveEvoDisconnects = 0;
       if (evolutionLastKnownState !== "open") {
@@ -9880,9 +9877,8 @@ app.get("/api/evolution/qrcode", async (req, res) => {
       });
     }
     clearAllChatsOnWhatsAppDisconnect(currentState, currentState === "close" || currentState === "logged_out");
-    const qrAgeMs = Date.now() - evolutionQrCache.generatedAt;
     const sinceLastConnectCallMs = Date.now() - lastEvolutionConnectCallAt;
-    const shouldRequestNewQr = forceConnect && sinceLastConnectCallMs > 8e3 || (!evolutionQrCache.qrBase64 || qrAgeMs > 45e3) && sinceLastConnectCallMs > 25e3;
+    const shouldRequestNewQr = forceConnect && !evolutionQrCache.ownerJid && currentState === "close" && sinceLastConnectCallMs > 8e3;
     if (shouldRequestNewQr) {
       lastEvolutionConnectCallAt = Date.now();
       const connectRes = await fetch(`${baseUrl}/instance/connect/${instance}`, {
