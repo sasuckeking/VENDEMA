@@ -11025,6 +11025,201 @@ function resolveCatalogItemAndModelReference(
 }
 
 // Helper: Handle positional/numbered catalog selections, quoted product/question replies, AND discount escalation to human sales advisor
+function getTechnicianNotificationTargets(): string[] {
+  const targets = new Set<string>();
+  const cfgTeam = (appConfig.evolution?.teamPhone || process.env.EVOLUTION_TEAM_PHONE || '18492588738')
+    .replace(/\D/g, '');
+  if (cfgTeam.length >= 10) {
+    targets.add(cfgTeam.length === 10 ? `1${cfgTeam}` : cfgTeam);
+  }
+
+  // Also extract any technician phone number written inside the Master Prompt or customInstructions
+  const promptSources = `${appConfig.aiProvider?.systemPrompt || ''}\n${appConfig.aiProvider?.customInstructions || ''}`;
+  const techPhoneRegex = /(?:t[eé]cnico|taller|soporte|reparaci[oó]n|asistencia)[^0-9\n]{0,60}(\+?1?[-\s.]?(?:809|829|849)[-\s.]?\d{3}[-\s.]?\d{4})/gi;
+  let match: RegExpExecArray | null;
+  while ((match = techPhoneRegex.exec(promptSources)) !== null) {
+    const digits = (match[1] || '').replace(/\D/g, '');
+    // Exclude store's main public sales number 809-422-8738 if it's the connected sender
+    if (digits.length >= 10 && !digits.endsWith('8094228738')) {
+      targets.add(digits.length === 10 ? `1${digits}` : digits);
+    }
+  }
+
+  if (targets.size === 0) {
+    targets.add('18492588738');
+  }
+  return Array.from(targets);
+}
+
+async function notifyTechnicianAndTeam(alertText: string): Promise<void> {
+  const targets = getTechnicianNotificationTargets();
+  for (const phone of targets) {
+    await sendEvolutionMessage(phone, alertText).catch(err =>
+      console.warn(`[Technician Alert Send Notice to ${phone}]:`, err?.message || err)
+    );
+  }
+}
+
+function autoPauseChatAiForTechnicianHandoff(conv: Conversation): void {
+  conv.aiEnabled = false;
+  aiEnabledBySession.set(conv.sessionId, false);
+  if (conv.customerPhone) {
+    aiEnabledBySession.set(conv.customerPhone, false);
+    aiEnabledBySession.set(`${conv.customerPhone}@s.whatsapp.net`, false);
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  for (const k of contactKeys) {
+    aiEnabledBySession.set(k, false);
+  }
+  savePersistedConversations();
+  syncChatAiEnabledToSupabase(
+    conv.customerPhone,
+    conv.sessionId,
+    conv.customerName,
+    false,
+    appConfig.supabase?.url,
+    appConfig.supabase?.anonKey
+  ).catch(() => {});
+  broadcastEvent('chat_ai_toggled', {
+    sessionId: conv.sessionId,
+    customerPhone: conv.customerPhone,
+    aiEnabled: false,
+  });
+  broadcastEvent('conversations_update', { count: conversations.length });
+}
+
+function resolveHumanOrTechnicianEscalation(
+  conv: Conversation,
+  targetCustomerMsg: ChatMessage,
+  baseCustomerText: string
+): {
+  reply: string;
+  technicianAlertText: string;
+  pauseAi: boolean;
+} | null {
+  const customerName =
+    conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : '';
+  const namePart = customerName ? `, ${customerName}` : '';
+  const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
+  const stdPhone =
+    cleanPhone.length >= 10 && cleanPhone.length <= 13
+      ? cleanPhone.length === 10
+        ? `1${cleanPhone}`
+        : cleanPhone
+      : 'No disponible';
+
+  const rawText = `${baseCustomerText || ''} ${targetCustomerMsg.quotedMessage?.text || ''}`.trim();
+  const norm = rawText
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const recentTranscript = (conv?.messages || [])
+    .slice(-8)
+    .map(m => `${m.sender === 'customer' ? 'Cliente' : 'Tienda'}: ${(m.transcription || m.content || '').slice(0, 140)}`)
+    .join('\n');
+
+  const recentHistoryNorm = (conv?.messages || [])
+    .slice(-10)
+    .map(m => (m.transcription || m.content || ''))
+    .join(' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  // 1. Explicit request to talk to a person / human / technician / specialist / agent
+  const asksForHumanOrTechnician =
+    /\b(hablar con una persona|hablar con alguien|hablar con un humano|hablar con un tecnico|hablar con el tecnico|hablar con un asesor|hablar con un representante|necesito una persona|necesito hablar con|quiero hablar con|pasame con|comunicame con|ponme en contacto con|atencion personal|atencion humana|agente humano|un tecnico|el tecnico|con una persona|no entend[ií] nada)\b/i.test(
+      norm
+    );
+
+  // 2. General repair question ("¿Reparan laptops?", "¿Hacen reparaciones?")
+  const isGeneralRepairQuestion =
+    /\b(reparan|hacen reparaciones|arreglan laptops|arreglan computadoras|tienen servicio tecnico|tienen taller)\b/i.test(
+      norm
+    ) && norm.length < 45;
+
+  // 3. Specific repair / workshop follow-up / hardware fault / equipment left at store
+  const isSpecificRepairOrWorkshopQuery =
+    /\b(seguimiento al equipo|seguimiento de equipo|seguimiento a la|mi equipo|mi laptop|mi pc|que me dicen de la pc|que me dicen de la laptop|que me dicen del equipo|ya esta lista|ya esta listo|lista para retirar|pasar a retirar|ir a retirarla|ir a retirarlo|el disco que deje|la laptop que deje|el equipo que deje|puerto danado|no lee la ram|no lee las ram|memoria ram nueva o no|se le puso una|que sera lo que tiene|no enciende|no prende|no da video|pantalla rota|pantalla danada|cambiar pantalla|cambiar teclado|cambiar bateria|bisagra|se apaga|se calienta|esto no me abre|no me abre|calibrar|diagnosticando|reparacion|reparar|arreglar)\b/i.test(
+      norm
+    );
+
+  // 4. Ongoing workshop/technician thread in conversation history
+  const hasActiveWorkshopThreadInHistory =
+    /\b(seguimiento al equipo|seguimiento de equipo|aun no esta lista|esta montado|esta armado|estamos diagnosticando|estamos verificando|proceder a armar|no lee las ram|puerto danado|disco que dejaste)\b/i.test(
+      recentHistoryNorm
+    );
+
+  const hasRecentTechnicianMessages =
+    hasActiveWorkshopThreadInHistory &&
+    (conv?.messages || [])
+      .slice(-6)
+      .some(
+        m =>
+          m.sender !== 'customer' &&
+          /\b(diagnosticando|verificando|proceder a armar|no lee las ram|aun no esta lista|esta montado|disco que dejaste)\b/i.test(
+            (m.content || '')
+              .toLowerCase()
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+          )
+      );
+
+  if (asksForHumanOrTechnician) {
+    const alertText =
+      `🔔 *👨‍🔧 CLIENTE SOLICITA ATENCIÓN DE UNA PERSONA / TÉCNICO*\n\n` +
+      `👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n` +
+      `📱 Teléfono: ${stdPhone}\n` +
+      `💬 Mensaje del cliente: "${baseCustomerText}"\n` +
+      `📋 Contexto reciente:\n${recentTranscript}\n\n` +
+      `👉 *Acción:* La IA fue pausada automáticamente en este chat para que el técnico o asesor lo atienda directamente.`;
+
+    const reply =
+      `👨‍🔧 *¡Claro que sí${namePart}!*\n\n` +
+      `Acabo de notificar y transferir tu conversación directamente a nuestro *técnico especialista y equipo de atención personal* para que te atiendan ahora mismo por esta vía.\n\n` +
+      `⏰ En unos minutos nuestro técnico te estará respondiendo personalmente. ¡Gracias por comunicarte con *Todo Lapto*! 😊`;
+
+    return { reply, technicianAlertText: alertText, pauseAi: true };
+  }
+
+  if (isGeneralRepairQuestion && !isSpecificRepairOrWorkshopQuery && !hasActiveWorkshopThreadInHistory) {
+    const alertText =
+      `🔔 *🔧 CONSULTA DE SERVICIO TÉCNICO / REPARACIÓN*\n\n` +
+      `👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n` +
+      `📱 Teléfono: ${stdPhone}\n` +
+      `💬 Mensaje del cliente: "${baseCustomerText}"\n\n` +
+      `👉 El cliente está consultando por reparación de equipos.`;
+
+    const reply =
+      `🔧 *¡Sí, reparamos laptops y equipos${namePart}!*\n\n` +
+      `¿Cuál es el problema con tu equipo? Cuéntanos los detalles y ya mismo le estoy notificando a nuestro *técnico especialista* para que te asista. 😊`;
+
+    return { reply, technicianAlertText: alertText, pauseAi: false };
+  }
+
+  if (isSpecificRepairOrWorkshopQuery || hasActiveWorkshopThreadInHistory) {
+    const alertText =
+      `🔔 *🔧 SERVICIO TÉCNICO / SEGUIMIENTO DE REPARACIÓN — TÉCNICO REQUERIDO*\n\n` +
+      `👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n` +
+      `📱 Teléfono: ${stdPhone}\n` +
+      `💬 Mensaje del cliente: "${baseCustomerText}"\n` +
+      `📋 Historial reciente del caso:\n${recentTranscript}\n\n` +
+      `👉 *Acción:* Por favor responde al cliente sobre su reparación. La IA quedó pausada en este chat para no interrumpir al técnico.`;
+
+    const reply = hasRecentTechnicianMessages
+      ? `🔧 *¡Mensaje recibido${namePart}!* Ya notifiqué directamente al *técnico* que está a cargo de tu equipo con tu consulta para que te confirme y te explique todos los detalles ahora mismo por aquí. 😊`
+      : `🔧 *¡Entendido${namePart}! Ya notificamos a nuestro técnico especialista.*\n\n` +
+        `Acabo de enviar tu mensaje directamente a nuestro *departamento de servicio técnico* para que el técnico encargado revise tu caso y te responda personalmente en breve por esta misma vía.\n\n` +
+        `📍 Taller y tienda física: *Av. Charles de Gaulle No. 133, Santo Domingo Este*.\n` +
+        `⏰ Tiempo de respuesta: en los próximos minutos en horario laboral. ¡Gracias por contactar a *Todo Lapto*! 😊`;
+
+    return { reply, technicianAlertText: alertText, pauseAi: true };
+  }
+
+  return null;
+}
+
 function resolveDirectProductSelectionOrDiscountReply(
   conv: Conversation,
   targetCustomerMsg: ChatMessage,
@@ -11360,8 +11555,18 @@ function buildMasterSalesSystemInstruction(conv?: Conversation, latestQuery = ''
     return buildFastConversationalSystemInstruction(conv);
   }
 
-  // Use the user's configured Master Prompt from Cerebro IA if present, otherwise fallback to OFFICIAL_TODO_LAPTO_MASTER_PROMPT
-  const customMasterPrompt = (appConfig.aiProvider?.systemPrompt || '').trim();
+  // Use the user's configured Master Prompt from Cerebro IA if present; auto-upgrade legacy template if it still contains old placeholders or lacks CASO C technician escalation
+  let customMasterPrompt = (appConfig.aiProvider?.systemPrompt || '').trim();
+  if (
+    customMasterPrompt &&
+    (customMasterPrompt.includes('continúa enumerando') ||
+      !customMasterPrompt.includes('CASO C — CUANDO EL CLIENTE PIDE HABLAR CON UNA PERSONA'))
+  ) {
+    customMasterPrompt = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+    if (appConfig.aiProvider) {
+      appConfig.aiProvider.systemPrompt = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+    }
+  }
   const rawTemplate = customMasterPrompt.length > 200 ? customMasterPrompt : OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
   const extraCustomInstructions = (appConfig.aiProvider?.customInstructions || '').trim();
   const cleanPhone = (conv?.customerPhone || '').replace(/\D/g, '');
@@ -11669,7 +11874,7 @@ async function processAndExecuteCrmTools(
           const alertText = `🔔 *${tipo}*\n\n👤 Cliente: ${conv?.customerName || 'WhatsApp'}\n📱 Teléfono: ${stdPhone || 'No disponible'}\n📋 Detalle: ${resumen}${
             createdOdooOrderId ? `\n🧾 Cotización Odoo: #${createdOdooOrderId}` : ''
           }`;
-          await sendEvolutionMessage(appConfig.evolution.teamPhone, alertText);
+          await notifyTechnicianAndTeam(alertText);
           toolsExecuted.push('notificar_equipo');
         }
       }
@@ -12277,14 +12482,24 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
       details: `Generando respuesta para: "${baseCustomerText.slice(0, 100)}"`,
     });
 
-    const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+    const humanOrTechEscalation = resolveHumanOrTechnicianEscalation(
       conv,
       targetCustomerMsg,
       baseCustomerText
     );
-    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
-    const directQuotedReply = hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
-    const genericFamily = detectGenericProductFamily(baseCustomerText);
+    const directSelectionOrDiscount = humanOrTechEscalation
+      ? null
+      : resolveDirectProductSelectionOrDiscountReply(
+          conv,
+          targetCustomerMsg,
+          baseCustomerText
+        );
+    const storeAnswer = humanOrTechEscalation
+      ? null
+      : resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+    const directQuotedReply =
+      !humanOrTechEscalation && hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
+    const genericFamily = humanOrTechEscalation ? null : detectGenericProductFamily(baseCustomerText);
 
     // Fast-path catalog extraction from systemInstruction or direct inventory highlight
     const catalogBlockMatch =
@@ -12322,7 +12537,16 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
           normalizedForIntent
         ));
 
-    if (directSelectionOrDiscount) {
+    if (humanOrTechEscalation) {
+      aiReply = humanOrTechEscalation.reply;
+      providerUsed = 'openai';
+      modelUsed = 'technician-escalation-engine';
+      toolsExecuted = ['notificar_equipo'];
+      notifyTechnicianAndTeam(humanOrTechEscalation.technicianAlertText).catch(() => {});
+      if (humanOrTechEscalation.pauseAi) {
+        autoPauseChatAiForTechnicianHandoff(conv);
+      }
+    } else if (directSelectionOrDiscount) {
       aiReply = directSelectionOrDiscount.reply;
       providerUsed = 'openai';
       modelUsed = directSelectionOrDiscount.advisorAlertText
@@ -12330,10 +12554,7 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         : 'catalog-selection-engine';
       if (directSelectionOrDiscount.advisorAlertText) {
         toolsExecuted = ['notificar_equipo'];
-        sendEvolutionMessage(
-          appConfig.evolution.teamPhone,
-          directSelectionOrDiscount.advisorAlertText
-        ).catch(() => {});
+        notifyTechnicianAndTeam(directSelectionOrDiscount.advisorAlertText).catch(() => {});
       }
     } else if (directQuotedReply) {
       aiReply = directQuotedReply;
@@ -12365,32 +12586,44 @@ ${rdNow.movedHolidayNotice ? `- Aviso de feriado hoy: ${rdNow.movedHolidayNotice
         candidateReply = catalogBlockMatch[1].trim();
       }
 
-      // Safety Guard 2 (Anti-Catalog-Dump Guard): Only block genuine full-catalog dumps (>= 15 items) when the customer did NOT ask for a catalog or products
+      // Safety Guard 2 (Anti-Catalog-Dump & Anti-Hallucination Guard): Block any unrequested or template-placeholder catalog dumps
+      const hasHallucinatedTemplateCatalog =
+        /\*\(\.\.\.contin[uú]a enumerando/i.test(candidateReply) ||
+        /https:\/\/todolapto\.com\.do\/shop\/\.\.\./i.test(candidateReply) ||
+        /hp-15-dw1085nr/i.test(candidateReply);
       if (
-        !isGenericCategoryInquiry &&
-        (hasQuote || isStatusReply || isRepairOrPickupQuery || baseCustomerText.trim().length < 12) &&
-        (/Cat[aá]logo completo de laptops/i.test(candidateReply) ||
-          (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)
+        hasHallucinatedTemplateCatalog ||
+        (!isGenericCategoryInquiry &&
+          !isUseCaseRecommendationQuery &&
+          (/Cat[aá]logo completo de laptops/i.test(candidateReply) ||
+            (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 10))
       ) {
-        const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
-        if (fallbackQuote) {
-          candidateReply = fallbackQuote;
+        const prefixBeforeCatalog = candidateReply
+          .split(/🖥️\s*\*?Cat[aá]logo completo|📦\s*\*?Cat[aá]logo completo/i)[0]
+          .trim();
+        if (prefixBeforeCatalog && prefixBeforeCatalog.length >= 25 && !hasHallucinatedTemplateCatalog) {
+          candidateReply = prefixBeforeCatalog;
         } else {
-          const resolvedCtx = resolveCatalogItemAndModelReference(
-            conv,
-            baseCustomerText,
-            targetCustomerMsg.quotedMessage?.text || ''
-          );
-          if (resolvedCtx?.product) {
-            const p = resolvedCtx.product;
-            const posBadge = resolvedCtx.itemNumber ? ` (opción *#${resolvedCtx.itemNumber}* de la lista)` : '';
-            const condBadge =
-              p.condition === 'Nuevo'
-                ? '✨ Nuevo de Caja (Garantía 1 año)'
-                : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
-            candidateReply = `¡Claro que sí${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! Te confirmo los detalles de la *${p.name}*${posBadge}:\n\n💻 *${p.name}*\n💰 *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_\n📦 *Disponibilidad:* ${p.virtual_available} unidad(es) en stock real\n🏷️ *Condición:* ${condBadge}\n⚙️ *Especificaciones:* ${p.specsSummary || p.description_sale || 'Excelente estado y rendimiento garantizado'}\n${p.website_url ? `🔗 https://todolapto.com.do${p.website_url}\n` : ''}\n¿Deseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el envío a domicilio? 🚚`;
+          const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
+          if (fallbackQuote) {
+            candidateReply = fallbackQuote;
           } else {
-            candidateReply = `¡Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! 😊 Cuéntame qué equipo o servicio necesitas para ayudarte de inmediato.`;
+            const resolvedCtx = resolveCatalogItemAndModelReference(
+              conv,
+              baseCustomerText,
+              targetCustomerMsg.quotedMessage?.text || ''
+            );
+            if (resolvedCtx?.product) {
+              const p = resolvedCtx.product;
+              const posBadge = resolvedCtx.itemNumber ? ` (opción *#${resolvedCtx.itemNumber}* de la lista)` : '';
+              const condBadge =
+                p.condition === 'Nuevo'
+                  ? '✨ Nuevo de Caja (Garantía 1 año)'
+                  : '♻️ Reacondicionado Clase A (Garantía 6 meses)';
+              candidateReply = `¡Claro que sí${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! Te confirmo los detalles de la *${p.name}*${posBadge}:\n\n💻 *${p.name}*\n💰 *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_\n📦 *Disponibilidad:* ${p.virtual_available} unidad(es) en stock real\n🏷️ *Condición:* ${condBadge}\n⚙️ *Especificaciones:* ${p.specsSummary || p.description_sale || 'Excelente estado y rendimiento garantizado'}\n${p.website_url ? `🔗 https://todolapto.com.do${p.website_url}\n` : ''}\n¿Deseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el envío a domicilio? 🚚`;
+            } else {
+              candidateReply = `¡Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ''}! 😊 Cuéntame qué equipo o servicio necesitas para ayudarte de inmediato.`;
+            }
           }
         }
       }

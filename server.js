@@ -306,12 +306,12 @@ Si el cliente pregunta por disponibilidad o pide una categor\xEDa general dicien
 
 *(X modelos disponibles en stock real)*
 
-*1.* *NOMBRE COMPLETO*
+*1.* *NOMBRE REAL DEL PRODUCTO EN ODOO*
 \u{1F4B0} RD$PRECIO | \u{1F4E6} STOCK unidad(es)
 \u{1F3F7}\uFE0F Condici\xF3n: [Usado / Reacondicionado Clase A o Nuevo] | \u{1F3AF} Uso: [Usos]
-\u{1F517} https://todolapto.com.do/shop/...
+\u{1F517} [URL real exacta del producto en Odoo \u2014 NUNCA inventes URLs ni escribas "..."]
 
-*(...contin\xFAa enumerando *2.*, *3.*, ... hasta el \xFAltimo modelo X en stock sin omitir ninguno...)*
+(Enumera cada producto real del inventario uno por uno hasta el \xFAltimo modelo disponible; est\xE1 ESTRICTAMENTE PROHIBIDO escribir frases como "contin\xFAa enumerando" o inventar modelos que no est\xE9n en el bloque de inventario).
 
 Finaliza con:
 *\xBFCu\xE1l te interesa? Tambi\xE9n dime si buscas una marca, presupuesto o uso espec\xEDfico (oficina, estudios o gaming) y te filtro las mejores opciones.* \u{1F6D2}
@@ -551,23 +551,35 @@ y ejecuta \`notificar_equipo\` con \`FALL\xD3 el registro autom\xE1tico\` m\xE1s
 
 ---
 
-# 20. REPARACIONES
+# 20. REPARACIONES Y ESCALAMIENTO A T\xC9CNICO / ATENCI\xD3N HUMANA (TEL\xC9FONO T\xC9CNICO: 18492588738)
+
+N\xFAmero oficial del T\xE9cnico / Soporte de Taller para notificaciones internas (\`notificar_equipo\`): **18492588738** (849-258-8738).
 
 ## CASO A \u2014 PREGUNTA GENERAL ("\xBFReparan laptops?")
-NO uses tool. Responde EXACTAMENTE:
+Ejecuta \`notificar_equipo\` con \`tipo: "\u{1F527} CONSULTA DE SERVICIO TECNICO"\` y responde EXACTAMENTE:
 "\u{1F527} *\xA1S\xED, reparamos laptops!*
 
 \xBFCu\xE1l es el problema con tu equipo? Cu\xE9ntanos y te conectamos con nuestro t\xE9cnico especialista. \u{1F60A}"
 
-## CASO B \u2014 PROBLEMA ESPEC\xCDFICO (menciona da\xF1o, problema, pieza o falla espec\xEDfica)
-Ejecuta \`notificar_equipo\` con \`tipo: "\u{1F527} SERVICIO TECNICO"\` y responde EXACTAMENTE:
-"\u{1F527} *\xA1S\xED, eso lo solucionamos!*
+## CASO B \u2014 PROBLEMA ESPEC\xCDFICO O SEGUIMIENTO DE REPARACI\xD3N EN TALLER (menciona da\xF1o, problema, pieza, falla espec\xEDfica, memoria RAM instalada, puerto da\xF1ado, o seguimiento de su equipo en reparaci\xF3n)
+Ejecuta obligatoriamente \`notificar_equipo\` con \`tipo: "\u{1F527} SERVICIO TECNICO"\` (el sistema enviar\xE1 el mensaje de inmediato al WhatsApp del t\xE9cnico **18492588738** y pausar\xE1 el bot para que el t\xE9cnico tome el control) y responde EXACTAMENTE:
+"\u{1F527} *\xA1Entendido! Ya notificamos a nuestro t\xE9cnico especialista.*
 
-Para evaluarlo bien necesitas pasar por nuestra tienda. Un t\xE9cnico especialista se comunicar\xE1 contigo en breve para coordinar la revisi\xF3n de tu equipo.
+Acabo de enviar tu consulta directamente a nuestro *departamento de servicio t\xE9cnico* para que el t\xE9cnico encargado revise tu caso y se comunique contigo en breve por esta misma v\xEDa.
 
+\u{1F4CD} Taller y tienda f\xEDsica: *Av. Charles de Gaulle No. 133, Santo Domingo Este*.
 \u23F0 Tiempo de respuesta: en los pr\xF3ximos minutos en horario laboral.
 
 \xA1Gracias por contactar a Todo Lapto! \u{1F60A}"
+
+## CASO C \u2014 CUANDO EL CLIENTE PIDE HABLAR CON UNA PERSONA, UN HUMANO, UN ASESOR O UN T\xC9CNICO ("Necesito hablar con una persona", "quiero hablar con alguien", "p\xE1same con el t\xE9cnico", "ponme en contacto con \xE9l")
+1. **ESTRICTAMENTE PROHIBIDO** seguir haciendo preguntas de ventas o enviar cat\xE1logos de laptops cuando el cliente pide hablar con una persona o t\xE9cnico.
+2. Ejecuta obligatoriamente \`notificar_equipo\` con \`tipo: "\u{1F468}\u200D\u{1F527} CLIENTE SOLICITA ATENCI\xD3N DE UNA PERSONA / T\xC9CNICO"\` (enviando la alerta al WhatsApp del t\xE9cnico **18492588738**) y responde EXACTAMENTE:
+"\u{1F468}\u200D\u{1F527} *\xA1Claro que s\xED!*
+
+Acabo de notificar y transferir tu conversaci\xF3n directamente a nuestro *t\xE9cnico especialista y equipo de atenci\xF3n personal* para que te atiendan ahora mismo por esta v\xEDa.
+
+\u23F0 En unos minutos nuestro t\xE9cnico te estar\xE1 respondiendo personalmente. \xA1Gracias por comunicarte con *Todo Lapto*! \u{1F60A}"
 
 ---
 
@@ -11274,6 +11286,139 @@ function resolveCatalogItemAndModelReference(conv, rawUserText, quotedText = "")
   }
   return null;
 }
+function getTechnicianNotificationTargets() {
+  const targets = /* @__PURE__ */ new Set();
+  const cfgTeam = (appConfig.evolution?.teamPhone || process.env.EVOLUTION_TEAM_PHONE || "18492588738").replace(/\D/g, "");
+  if (cfgTeam.length >= 10) {
+    targets.add(cfgTeam.length === 10 ? `1${cfgTeam}` : cfgTeam);
+  }
+  const promptSources = `${appConfig.aiProvider?.systemPrompt || ""}
+${appConfig.aiProvider?.customInstructions || ""}`;
+  const techPhoneRegex = /(?:t[eé]cnico|taller|soporte|reparaci[oó]n|asistencia)[^0-9\n]{0,60}(\+?1?[-\s.]?(?:809|829|849)[-\s.]?\d{3}[-\s.]?\d{4})/gi;
+  let match;
+  while ((match = techPhoneRegex.exec(promptSources)) !== null) {
+    const digits = (match[1] || "").replace(/\D/g, "");
+    if (digits.length >= 10 && !digits.endsWith("8094228738")) {
+      targets.add(digits.length === 10 ? `1${digits}` : digits);
+    }
+  }
+  if (targets.size === 0) {
+    targets.add("18492588738");
+  }
+  return Array.from(targets);
+}
+async function notifyTechnicianAndTeam(alertText) {
+  const targets = getTechnicianNotificationTargets();
+  for (const phone of targets) {
+    await sendEvolutionMessage(phone, alertText).catch(
+      (err) => console.warn(`[Technician Alert Send Notice to ${phone}]:`, err?.message || err)
+    );
+  }
+}
+function autoPauseChatAiForTechnicianHandoff(conv) {
+  conv.aiEnabled = false;
+  aiEnabledBySession.set(conv.sessionId, false);
+  if (conv.customerPhone) {
+    aiEnabledBySession.set(conv.customerPhone, false);
+    aiEnabledBySession.set(`${conv.customerPhone}@s.whatsapp.net`, false);
+  }
+  const contactKeys = getConversationContactKeys(conv);
+  for (const k of contactKeys) {
+    aiEnabledBySession.set(k, false);
+  }
+  savePersistedConversations();
+  syncChatAiEnabledToSupabase(
+    conv.customerPhone,
+    conv.sessionId,
+    conv.customerName,
+    false,
+    appConfig.supabase?.url,
+    appConfig.supabase?.anonKey
+  ).catch(() => {
+  });
+  broadcastEvent("chat_ai_toggled", {
+    sessionId: conv.sessionId,
+    customerPhone: conv.customerPhone,
+    aiEnabled: false
+  });
+  broadcastEvent("conversations_update", { count: conversations.length });
+}
+function resolveHumanOrTechnicianEscalation(conv, targetCustomerMsg, baseCustomerText) {
+  const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
+  const namePart = customerName ? `, ${customerName}` : "";
+  const cleanPhone = (conv?.customerPhone || "").replace(/\D/g, "");
+  const stdPhone = cleanPhone.length >= 10 && cleanPhone.length <= 13 ? cleanPhone.length === 10 ? `1${cleanPhone}` : cleanPhone : "No disponible";
+  const rawText = `${baseCustomerText || ""} ${targetCustomerMsg.quotedMessage?.text || ""}`.trim();
+  const norm = rawText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const recentTranscript = (conv?.messages || []).slice(-8).map((m) => `${m.sender === "customer" ? "Cliente" : "Tienda"}: ${(m.transcription || m.content || "").slice(0, 140)}`).join("\n");
+  const recentHistoryNorm = (conv?.messages || []).slice(-10).map((m) => m.transcription || m.content || "").join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const asksForHumanOrTechnician = /\b(hablar con una persona|hablar con alguien|hablar con un humano|hablar con un tecnico|hablar con el tecnico|hablar con un asesor|hablar con un representante|necesito una persona|necesito hablar con|quiero hablar con|pasame con|comunicame con|ponme en contacto con|atencion personal|atencion humana|agente humano|un tecnico|el tecnico|con una persona|no entend[ií] nada)\b/i.test(
+    norm
+  );
+  const isGeneralRepairQuestion = /\b(reparan|hacen reparaciones|arreglan laptops|arreglan computadoras|tienen servicio tecnico|tienen taller)\b/i.test(
+    norm
+  ) && norm.length < 45;
+  const isSpecificRepairOrWorkshopQuery = /\b(seguimiento al equipo|seguimiento de equipo|seguimiento a la|mi equipo|mi laptop|mi pc|que me dicen de la pc|que me dicen de la laptop|que me dicen del equipo|ya esta lista|ya esta listo|lista para retirar|pasar a retirar|ir a retirarla|ir a retirarlo|el disco que deje|la laptop que deje|el equipo que deje|puerto danado|no lee la ram|no lee las ram|memoria ram nueva o no|se le puso una|que sera lo que tiene|no enciende|no prende|no da video|pantalla rota|pantalla danada|cambiar pantalla|cambiar teclado|cambiar bateria|bisagra|se apaga|se calienta|esto no me abre|no me abre|calibrar|diagnosticando|reparacion|reparar|arreglar)\b/i.test(
+    norm
+  );
+  const hasActiveWorkshopThreadInHistory = /\b(seguimiento al equipo|seguimiento de equipo|aun no esta lista|esta montado|esta armado|estamos diagnosticando|estamos verificando|proceder a armar|no lee las ram|puerto danado|disco que dejaste)\b/i.test(
+    recentHistoryNorm
+  );
+  const hasRecentTechnicianMessages = hasActiveWorkshopThreadInHistory && (conv?.messages || []).slice(-6).some(
+    (m) => m.sender !== "customer" && /\b(diagnosticando|verificando|proceder a armar|no lee las ram|aun no esta lista|esta montado|disco que dejaste)\b/i.test(
+      (m.content || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    )
+  );
+  if (asksForHumanOrTechnician) {
+    const alertText = `\u{1F514} *\u{1F468}\u200D\u{1F527} CLIENTE SOLICITA ATENCI\xD3N DE UNA PERSONA / T\xC9CNICO*
+
+\u{1F464} Cliente: ${conv?.customerName || "WhatsApp"}
+\u{1F4F1} Tel\xE9fono: ${stdPhone}
+\u{1F4AC} Mensaje del cliente: "${baseCustomerText}"
+\u{1F4CB} Contexto reciente:
+${recentTranscript}
+
+\u{1F449} *Acci\xF3n:* La IA fue pausada autom\xE1ticamente en este chat para que el t\xE9cnico o asesor lo atienda directamente.`;
+    const reply = `\u{1F468}\u200D\u{1F527} *\xA1Claro que s\xED${namePart}!*
+
+Acabo de notificar y transferir tu conversaci\xF3n directamente a nuestro *t\xE9cnico especialista y equipo de atenci\xF3n personal* para que te atiendan ahora mismo por esta v\xEDa.
+
+\u23F0 En unos minutos nuestro t\xE9cnico te estar\xE1 respondiendo personalmente. \xA1Gracias por comunicarte con *Todo Lapto*! \u{1F60A}`;
+    return { reply, technicianAlertText: alertText, pauseAi: true };
+  }
+  if (isGeneralRepairQuestion && !isSpecificRepairOrWorkshopQuery && !hasActiveWorkshopThreadInHistory) {
+    const alertText = `\u{1F514} *\u{1F527} CONSULTA DE SERVICIO T\xC9CNICO / REPARACI\xD3N*
+
+\u{1F464} Cliente: ${conv?.customerName || "WhatsApp"}
+\u{1F4F1} Tel\xE9fono: ${stdPhone}
+\u{1F4AC} Mensaje del cliente: "${baseCustomerText}"
+
+\u{1F449} El cliente est\xE1 consultando por reparaci\xF3n de equipos.`;
+    const reply = `\u{1F527} *\xA1S\xED, reparamos laptops y equipos${namePart}!*
+
+\xBFCu\xE1l es el problema con tu equipo? Cu\xE9ntanos los detalles y ya mismo le estoy notificando a nuestro *t\xE9cnico especialista* para que te asista. \u{1F60A}`;
+    return { reply, technicianAlertText: alertText, pauseAi: false };
+  }
+  if (isSpecificRepairOrWorkshopQuery || hasActiveWorkshopThreadInHistory) {
+    const alertText = `\u{1F514} *\u{1F527} SERVICIO T\xC9CNICO / SEGUIMIENTO DE REPARACI\xD3N \u2014 T\xC9CNICO REQUERIDO*
+
+\u{1F464} Cliente: ${conv?.customerName || "WhatsApp"}
+\u{1F4F1} Tel\xE9fono: ${stdPhone}
+\u{1F4AC} Mensaje del cliente: "${baseCustomerText}"
+\u{1F4CB} Historial reciente del caso:
+${recentTranscript}
+
+\u{1F449} *Acci\xF3n:* Por favor responde al cliente sobre su reparaci\xF3n. La IA qued\xF3 pausada en este chat para no interrumpir al t\xE9cnico.`;
+    const reply = hasRecentTechnicianMessages ? `\u{1F527} *\xA1Mensaje recibido${namePart}!* Ya notifiqu\xE9 directamente al *t\xE9cnico* que est\xE1 a cargo de tu equipo con tu consulta para que te confirme y te explique todos los detalles ahora mismo por aqu\xED. \u{1F60A}` : `\u{1F527} *\xA1Entendido${namePart}! Ya notificamos a nuestro t\xE9cnico especialista.*
+
+Acabo de enviar tu mensaje directamente a nuestro *departamento de servicio t\xE9cnico* para que el t\xE9cnico encargado revise tu caso y te responda personalmente en breve por esta misma v\xEDa.
+
+\u{1F4CD} Taller y tienda f\xEDsica: *Av. Charles de Gaulle No. 133, Santo Domingo Este*.
+\u23F0 Tiempo de respuesta: en los pr\xF3ximos minutos en horario laboral. \xA1Gracias por contactar a *Todo Lapto*! \u{1F60A}`;
+    return { reply, technicianAlertText: alertText, pauseAi: true };
+  }
+  return null;
+}
 function resolveDirectProductSelectionOrDiscountReply(conv, targetCustomerMsg, baseCustomerText) {
   const customerName = conv?.customerName && !isGenericContactName(conv.customerName) ? conv.customerName.trim() : "";
   const namePart = customerName ? `, ${customerName}` : "";
@@ -11503,7 +11648,13 @@ function buildMasterSalesSystemInstruction(conv, latestQuery = "") {
   if (isSimpleConversationalMessage(latestQuery, hasQuote)) {
     return buildFastConversationalSystemInstruction(conv);
   }
-  const customMasterPrompt = (appConfig.aiProvider?.systemPrompt || "").trim();
+  let customMasterPrompt = (appConfig.aiProvider?.systemPrompt || "").trim();
+  if (customMasterPrompt && (customMasterPrompt.includes("contin\xFAa enumerando") || !customMasterPrompt.includes("CASO C \u2014 CUANDO EL CLIENTE PIDE HABLAR CON UNA PERSONA"))) {
+    customMasterPrompt = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+    if (appConfig.aiProvider) {
+      appConfig.aiProvider.systemPrompt = OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
+    }
+  }
   const rawTemplate = customMasterPrompt.length > 200 ? customMasterPrompt : OFFICIAL_TODO_LAPTO_MASTER_PROMPT;
   const extraCustomInstructions = (appConfig.aiProvider?.customInstructions || "").trim();
   const cleanPhone = (conv?.customerPhone || "").replace(/\D/g, "");
@@ -11745,7 +11896,7 @@ async function processAndExecuteCrmTools(rawAiResponse, conv) {
 \u{1F4F1} Tel\xE9fono: ${stdPhone || "No disponible"}
 \u{1F4CB} Detalle: ${resumen}${createdOdooOrderId ? `
 \u{1F9FE} Cotizaci\xF3n Odoo: #${createdOdooOrderId}` : ""}`;
-          await sendEvolutionMessage(appConfig.evolution.teamPhone, alertText);
+          await notifyTechnicianAndTeam(alertText);
           toolsExecuted.push("notificar_equipo");
         }
       }
@@ -12231,14 +12382,19 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       messageId: initialMsgId,
       details: `Generando respuesta para: "${baseCustomerText.slice(0, 100)}"`
     });
-    const directSelectionOrDiscount = resolveDirectProductSelectionOrDiscountReply(
+    const humanOrTechEscalation = resolveHumanOrTechnicianEscalation(
       conv,
       targetCustomerMsg,
       baseCustomerText
     );
-    const storeAnswer = resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
-    const directQuotedReply = hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
-    const genericFamily = detectGenericProductFamily(baseCustomerText);
+    const directSelectionOrDiscount = humanOrTechEscalation ? null : resolveDirectProductSelectionOrDiscountReply(
+      conv,
+      targetCustomerMsg,
+      baseCustomerText
+    );
+    const storeAnswer = humanOrTechEscalation ? null : resolveDirectStoreQuestion(baseCustomerText, conv, targetCustomerMsg.quotedMessage?.text);
+    const directQuotedReply = !humanOrTechEscalation && hasQuote ? resolveQuotedMessageDirectReply(conv, targetCustomerMsg) : null;
+    const genericFamily = humanOrTechEscalation ? null : detectGenericProductFamily(baseCustomerText);
     const catalogBlockMatch = systemInstruction.match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) || (genericFamily ? getRelevantProductsHighlight(baseCustomerText, targetCustomerMsg.quotedMessage?.text || "", "").match(/<!-- \[CATALOG_BLOCK_START\] -->\s*([\s\S]*?)\s*<!-- \[CATALOG_BLOCK_END\] -->/) : null);
     const normalizedForIntent = (baseCustomerText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const isRepairOrPickupQuery = /\b(reparacion|reparar|arreglar|taller|lista para|listo para|ir a retirar|retirarla|retirarlo|recoger|recogerla|mi pc|mi laptop|mi equipo|que me dicen de|ya esta lista|ya esta listo)\b/i.test(
@@ -12250,16 +12406,23 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
     const isGenericCategoryInquiry = !storeAnswer && !hasQuote && !isStatusReply && !isRepairOrPickupQuery && !isUseCaseRecommendationQuery && !directSelectionOrDiscount && !isCustomerSellingOrStoreBuyingQuery(baseCustomerText) && !isDiscountInquiry(baseCustomerText) && !isPositionalOrNumberSelection(baseCustomerText) && !hasSpecificModelCodeInText(baseCustomerText) && (targetCustomerMsg.type !== "audio" || Boolean(targetCustomerMsg.transcription)) && targetCustomerMsg.type !== "image" && targetCustomerMsg.type !== "video" && (Boolean(genericFamily) || /\b(catalogo|lista de precios|lista de laptops|que laptops tienen|cuales laptops tienen|cual computadora tienes|cuales computadoras tienes|que computadora tienes|que computadoras tienen|cuales tienen|modelos disponibles|que tienen disponible)\b/i.test(
       normalizedForIntent
     ));
-    if (directSelectionOrDiscount) {
+    if (humanOrTechEscalation) {
+      aiReply = humanOrTechEscalation.reply;
+      providerUsed = "openai";
+      modelUsed = "technician-escalation-engine";
+      toolsExecuted = ["notificar_equipo"];
+      notifyTechnicianAndTeam(humanOrTechEscalation.technicianAlertText).catch(() => {
+      });
+      if (humanOrTechEscalation.pauseAi) {
+        autoPauseChatAiForTechnicianHandoff(conv);
+      }
+    } else if (directSelectionOrDiscount) {
       aiReply = directSelectionOrDiscount.reply;
       providerUsed = "openai";
       modelUsed = directSelectionOrDiscount.advisorAlertText ? "discount-advisor-escalation" : "catalog-selection-engine";
       if (directSelectionOrDiscount.advisorAlertText) {
         toolsExecuted = ["notificar_equipo"];
-        sendEvolutionMessage(
-          appConfig.evolution.teamPhone,
-          directSelectionOrDiscount.advisorAlertText
-        ).catch(() => {
+        notifyTechnicianAndTeam(directSelectionOrDiscount.advisorAlertText).catch(() => {
         });
       }
     } else if (directQuotedReply) {
@@ -12286,21 +12449,26 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
       if (isGenericCategoryInquiry && catalogBlockMatch && isCatalogSectionPresent && candidateReply.length < 500 && catalogBlockMatch[1].length > 800) {
         candidateReply = catalogBlockMatch[1].trim();
       }
-      if (!isGenericCategoryInquiry && (hasQuote || isStatusReply || isRepairOrPickupQuery || baseCustomerText.trim().length < 12) && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 15)) {
-        const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
-        if (fallbackQuote) {
-          candidateReply = fallbackQuote;
+      const hasHallucinatedTemplateCatalog = /\*\(\.\.\.contin[uú]a enumerando/i.test(candidateReply) || /https:\/\/todolapto\.com\.do\/shop\/\.\.\./i.test(candidateReply) || /hp-15-dw1085nr/i.test(candidateReply);
+      if (hasHallucinatedTemplateCatalog || !isGenericCategoryInquiry && !isUseCaseRecommendationQuery && (/Cat[aá]logo completo de laptops/i.test(candidateReply) || (candidateReply.match(/\*\d{1,2}\.\*\s*\*/g) || []).length >= 10)) {
+        const prefixBeforeCatalog = candidateReply.split(/🖥️\s*\*?Cat[aá]logo completo|📦\s*\*?Cat[aá]logo completo/i)[0].trim();
+        if (prefixBeforeCatalog && prefixBeforeCatalog.length >= 25 && !hasHallucinatedTemplateCatalog) {
+          candidateReply = prefixBeforeCatalog;
         } else {
-          const resolvedCtx = resolveCatalogItemAndModelReference(
-            conv,
-            baseCustomerText,
-            targetCustomerMsg.quotedMessage?.text || ""
-          );
-          if (resolvedCtx?.product) {
-            const p = resolvedCtx.product;
-            const posBadge = resolvedCtx.itemNumber ? ` (opci\xF3n *#${resolvedCtx.itemNumber}* de la lista)` : "";
-            const condBadge = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
-            candidateReply = `\xA1Claro que s\xED${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! Te confirmo los detalles de la *${p.name}*${posBadge}:
+          const fallbackQuote = resolveQuotedMessageDirectReply(conv, targetCustomerMsg);
+          if (fallbackQuote) {
+            candidateReply = fallbackQuote;
+          } else {
+            const resolvedCtx = resolveCatalogItemAndModelReference(
+              conv,
+              baseCustomerText,
+              targetCustomerMsg.quotedMessage?.text || ""
+            );
+            if (resolvedCtx?.product) {
+              const p = resolvedCtx.product;
+              const posBadge = resolvedCtx.itemNumber ? ` (opci\xF3n *#${resolvedCtx.itemNumber}* de la lista)` : "";
+              const condBadge = p.condition === "Nuevo" ? "\u2728 Nuevo de Caja (Garant\xEDa 1 a\xF1o)" : "\u267B\uFE0F Reacondicionado Clase A (Garant\xEDa 6 meses)";
+              candidateReply = `\xA1Claro que s\xED${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! Te confirmo los detalles de la *${p.name}*${posBadge}:
 
 \u{1F4BB} *${p.name}*
 \u{1F4B0} *Precio:* RD$${p.list_price.toLocaleString()} _(Impuestos incluidos)_
@@ -12310,8 +12478,9 @@ Responde ahora como el Agente Oficial de Ventas de Todo Lapto${isCatalogSectionP
 ${p.website_url ? `\u{1F517} https://todolapto.com.do${p.website_url}
 ` : ""}
 \xBFDeseas pasar a verla a nuestra tienda en la *Av. Charles de Gaulle No. 133* o prefieres que te coordinemos el env\xEDo a domicilio? \u{1F69A}`;
-          } else {
-            candidateReply = `\xA1Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! \u{1F60A} Cu\xE9ntame qu\xE9 equipo o servicio necesitas para ayudarte de inmediato.`;
+            } else {
+              candidateReply = `\xA1Hola${conv.customerName && !isGenericContactName(conv.customerName) ? `, ${conv.customerName}` : ""}! \u{1F60A} Cu\xE9ntame qu\xE9 equipo o servicio necesitas para ayudarte de inmediato.`;
+            }
           }
         }
       }
